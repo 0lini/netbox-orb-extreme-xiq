@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orb-extreme-xiq"
+version = "0.1.0"
+description = "ExtremeCloud IQ discovery worker for the NetBox Labs Orb Agent (ingests into NetBox via Diode)"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31",
+    # The Orb Agent image already ships the Diode SDK + orb-worker, but pin it
+    # here so the package is testable standalone too. Confirm the exact version
+    # against the orb-agent image you deploy on.
+    "netboxlabs-diode-sdk>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "responses"]
+
+# The import name the worker policy references as `config.package`
+# i.e.  policies.worker.<name>.config.package: orb_extreme_xiq
+[tool.setuptools.packages.find]
+include = ["orb_extreme_xiq*"]
