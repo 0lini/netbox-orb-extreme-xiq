@@ -44,7 +44,10 @@ scaffold does deliberately:
 - `bootstrap.py` — one-time idempotent NetBox schema setup (custom fields + tag).
 - `backend.py` — worker entrypoint + standalone runner.
 - `agent.yaml` — example policy (bootstrap, site mapping, field authority).
-- `test_mapping.py` — offline tests for the mapping logic (no SDK needed).
+- `tests/` — pytest suite: `test_mapper.py`/`test_identity.py` are offline
+  (stubbed SDK, no network); `test_client.py`/`test_bootstrap.py` mock HTTP
+  with `responses`; `test_backend.py` exercises the real Diode SDK/worker
+  contracts end-to-end.
 
 ## First-run flow (mirrors Meraki/ACI)
 
@@ -63,7 +66,8 @@ exactly. Bootstrap **skips gracefully** if no NetBox token is set.
 pip install -e ".[dev]"
 export XIQ_API_TOKEN=...                 # or XIQ_USERNAME / XIQ_PASSWORD
 python -m orb_extreme_xiq.backend        # DRY RUN: fetches from XIQ, maps, prints entities (no Diode push)
-python test_mapping.py                   # offline logic tests (stubbed SDK, no network)
+pytest                                    # full test suite
+ruff check .                              # lint
 ```
 
 The Orb Agent worker (`netboxlabs-orb-worker`) owns the Diode client and the
