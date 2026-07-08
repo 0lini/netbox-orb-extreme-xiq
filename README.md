@@ -60,23 +60,38 @@ exactly. Bootstrap **skips gracefully** if no NetBox token is set.
 ## Develop without the full agent
 
 ```bash
-pip install -e .
+pip install -e ".[dev]"
 export XIQ_API_TOKEN=...                 # or XIQ_USERNAME / XIQ_PASSWORD
-python -m orb_extreme_xiq.backend        # DRY RUN: prints entities it would send
-python test_mapping.py                   # offline logic tests (no network/SDK)
-# add DIODE_TARGET / DIODE_CLIENT_ID / DIODE_CLIENT_SECRET to actually ingest
+python -m orb_extreme_xiq.backend        # DRY RUN: fetches from XIQ, maps, prints entities (no Diode push)
+python test_mapping.py                   # offline logic tests (stubbed SDK, no network)
 ```
 
-## The two things to VERIFY against installed packages
+The Orb Agent worker (`netboxlabs-orb-worker`) owns the Diode client and the
+actual ingest entirely — `Backend.run()` only ever *produces* entities. There
+is no dev-mode "push to Diode" path here by design; run it inside the real
+`orb-agent` container (see `agent.yaml`) to actually ingest.
 
-These are the real maintenance surfaces (Assurance compatibility is free):
+## Worker Backend contract (verified against `netboxlabs-orb-worker` 1.16.0)
 
-1. **Worker Backend class contract** — reshape `class Backend` in `backend.py`
-   to match `netboxlabs-orb-worker` (all logic is in `collect()`, so this is
-   cosmetic). Inspect: `python -c "import worker; print(worker.__file__)"`.
-2. **Diode SDK custom-field / tag kwargs** — `mapper._device_kwargs()` funnels
-   `custom_fields=` and `tags=` through one place; confirm the kwargs for your
-   SDK version: `python -c "import netboxlabs.diode.sdk.ingester as i; help(i.Device)"`.
+`backend.Backend` subclasses `worker.backend.Backend` and implements:
+
+- `describe()` (classmethod) — returns `Metadata(name, app_name, app_version, description)`
+  so the worker can identify the backend before constructing it.
+- `run(self, policy_name, policy, **kwargs) -> Iterable[Entity]` — does the
+  XIQ fetch + mapping and returns the Diode entities for one tick; the
+  PolicyRunner handles scheduling, chunking, and the Diode client itself.
+
+If you're on a different `netboxlabs-orb-worker` version, re-check this
+against the installed package: `python -c "import worker.backend as b, inspect; print(inspect.getsource(b.Backend))"`.
+
+## The one thing to keep VERIFIED against your installed Diode SDK
+
+`mapper._device_kwargs()` / `_device_custom_fields()` funnel `custom_fields=`
+and `tags=` through one place. As of `netboxlabs-diode-sdk` (generated from
+NetBox v4.6.0), `custom_fields` values must be wrapped —
+`CustomFieldValue(text=...)` for the text fields, `CustomFieldValue(json=...)`
+for `xiq_locations` — a plain string raises `ValueError`. Confirm this still
+holds for your SDK version: `python -c "import netboxlabs.diode.sdk.ingester as i; help(i.Device)"`.
 
 ## XIQ auth
 
