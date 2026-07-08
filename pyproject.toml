@@ -9,10 +9,13 @@ description = "ExtremeCloud IQ discovery worker for the NetBox Labs Orb Agent (i
 requires-python = ">=3.10"
 dependencies = [
     "requests>=2.31",
-    # The Orb Agent image already ships the Diode SDK + orb-worker, but pin it
-    # here so the package is testable standalone too. Confirm the exact version
-    # against the orb-agent image you deploy on.
+    # The Orb Agent image already ships these, but pin them here so the
+    # package is testable/runnable standalone too. Confirm the exact versions
+    # against the orb-agent image you deploy on -- the Backend contract
+    # (describe()/run()) and Diode entity kwargs are both generated code that
+    # can move between releases.
     "netboxlabs-diode-sdk>=1.0.0",
+    "netboxlabs-orb-worker>=1.0.0",
 ]
 
 [project.optional-dependencies]
