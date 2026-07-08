@@ -15,10 +15,16 @@ class Interface(Rec): pass
 class IPAddress(Rec): pass
 class Site(Rec): pass
 class Entity(Rec): pass
+class CustomFieldValue(Rec): pass
 for name, cls in dict(Device=Device, DeviceType=DeviceType, Platform=Platform,
                        Manufacturer=Manufacturer, Interface=Interface,
-                       IPAddress=IPAddress, Site=Site, Entity=Entity).items():
+                       IPAddress=IPAddress, Site=Site, Entity=Entity,
+                       CustomFieldValue=CustomFieldValue).items():
     setattr(mapper, name, cls)
+
+def cf(kw):
+    """Unwrap a stubbed CustomFieldValue back to its plain scalar for asserts."""
+    return kw.get("text", kw.get("json"))
 
 # --- fake XIQ data -----------------------------------------------------------
 loc_tree = [{"id": 1, "name": "HQ", "children": [
@@ -28,7 +34,7 @@ idx = mapper.build_location_index(loc_tree)
 
 devices = [
     {"id": 111, "hostname": "ap-lobby", "serial_number": "SN111",
-     "product_type": "AP305C", "device_function": "ACCESS_POINT",
+     "product_type": "AP305C", "device_function": "AP",
      "ip_address": "10.0.0.5", "connected": True, "location_id": 2,
      "software_version": "10.6r3", "network_policy_name": "Corp-WiFi",
      "mac_address": "AA:BB:CC:00:00:11", "org_id": "org-9"},
@@ -50,14 +56,14 @@ devs = [e._kw["device"] for e in ents if "device" in e._kw]
 
 # 1. consolidation: exactly ONE Site entity (both floors -> Corporate-HQ)
 assert len(site_entities) == 1, site_entities
-xiq_locs = json.loads(site_entities[0]._kw["site"]._kw["custom_fields"]["xiq_locations"])
+xiq_locs = json.loads(cf(site_entities[0]._kw["site"]._kw["custom_fields"]["xiq_locations"]._kw))
 assert xiq_locs == ["HQ"], xiq_locs
 print("consolidation OK -> 1 site, xiq_locations:", xiq_locs)
 
 # 2. device carries custom fields (immutable id anchor) + tags + site
 d0 = devs[0]
-assert d0._kw["custom_fields"]["xiq_device_id"] == "111"
-assert d0._kw["custom_fields"]["xiq_network_policy"] == "Corp-WiFi"
+assert cf(d0._kw["custom_fields"]["xiq_device_id"]._kw) == "111"
+assert cf(d0._kw["custom_fields"]["xiq_network_policy"]._kw) == "Corp-WiFi"
 assert d0._kw["site"]._kw["name"] == "Corporate-HQ"
 assert "source:xiq" in d0._kw["tags"] and "xiq-org:org-9" in d0._kw["tags"]
 assert d0._kw["role"] == "wireless-ap"
