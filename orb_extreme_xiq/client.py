@@ -90,7 +90,9 @@ class XiqClient:
         self._raise_for_status(resp)
         return resp.json()
 
-    def get_devices(self, *, location_ids: list[int] | None = None, limit: int = PAGE_LIMIT) -> Iterator[dict]:
+    def get_devices(
+        self, *, location_ids: list[int] | None = None, limit: int = PAGE_LIMIT
+    ) -> Iterator[dict]:
         """Yield every device visible to this account/org, across all pages.
 
         Requests the FULL view so location_id, network_policy_name and the
