@@ -1,0 +1,61 @@
+# Orb Agent config for the ExtremeCloud IQ worker (stock open-source image).
+#
+#   docker run --rm \
+#     -v $PWD:/opt/orb/ \
+#     -e INSTALL_WORKERS_PATH=/opt/orb/workers.txt \
+#     -e DIODE_CLIENT_ID -e DIODE_CLIENT_SECRET \
+#     -e XIQ_API_TOKEN \
+#     -e NETBOX_API_URL -e NETBOX_API_TOKEN \   # only needed while BOOTSTRAP: true
+#     netboxlabs/orb-agent:latest run -c /opt/orb/agent.yaml
+#
+# First-run flow (mirrors Meraki/ACI):
+#   1. Set BOOTSTRAP: true and provide NETBOX_API_URL/NETBOX_API_TOKEN so the
+#      custom fields + source tag get created. Run once.
+#   2. Set BOOTSTRAP: false for all subsequent scheduled runs.
+# Tip: set common.diode.dry_run: true first to inspect JSON before ingesting.
+
+orb:
+  config_manager:
+    active: local
+  backends:
+    worker:
+      common:
+        diode:
+          target: grpc://your-diode-host:8080/diode   # self-hosted Diode, or the
+                                                       # Diode target from an
+                                                       # Assurance-enabled NetBox
+          client_id: ${DIODE_CLIENT_ID}
+          client_secret: ${DIODE_CLIENT_SECRET}
+          agent_name: xiq_agent_1
+          # dry_run: true
+          # dry_run_output_dir: /opt/orb
+  policies:
+    worker:
+      extreme_xiq_worker:
+        config:
+          package: orb_extreme_xiq
+          schedule: "0 2 * * *"            # daily 02:00; omit to run once
+
+          BOOTSTRAP: false                 # true on first run only
+          NETBOX_API_URL: ${NETBOX_API_URL}      # bootstrap only
+          NETBOX_API_TOKEN: ${NETBOX_API_TOKEN}  # bootstrap only
+
+          XIQ_API_TOKEN: ${XIQ_API_TOKEN}
+          # or: XIQ_USERNAME / XIQ_PASSWORD
+
+          name_source: hostname            # or "serial" for max stability
+          default_site: "XIQ-Unmapped"
+
+          # Meraki-style: XIQ location name -> NetBox site name.
+          # Many locations can map to one site (consolidation).
+          location_site_mapping:
+            "HQ - Floor 1": "Corporate-HQ"
+            "HQ - Floor 2": "Corporate-HQ"
+            "Branch A": "SITE-002"
+
+          # Field authority = what XIQ owns (and therefore what Assurance will
+          # flag as drift). Start from the default set and tweak:
+          # field_authority_remove: ["site"]   # let humans own site after create
+          # field_authority_add: ["comments"]
+        scope:
+          sites: ["*"]                     # or ["Corporate-HQ", "SITE-002"]
