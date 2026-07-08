@@ -48,8 +48,8 @@ def _headers(token: str) -> dict:
     return {"Authorization": f"Token {token}", "Content-Type": "application/json"}
 
 
-def _exists(base_url: str, token: str, path: str, name: str) -> bool:
-    resp = requests.get(f"{base_url}{path}", headers=_headers(token), params={"name": name}, timeout=30)
+def _exists(url: str, token: str, name: str) -> bool:
+    resp = requests.get(url, headers=_headers(token), params={"name": name}, timeout=30)
     resp.raise_for_status()
     return resp.json().get("count", 0) > 0
 
@@ -61,12 +61,14 @@ def ensure_schema(netbox_url: str | None, netbox_token: str | None) -> None:
     base = netbox_url.rstrip("/")
     custom_fields_url = f"{base}/api/extras/custom-fields/"
     tags_url = f"{base}/api/extras/tags/"
+
     for custom_field in CUSTOM_FIELDS:
-        if not _exists(base, netbox_token, "/api/extras/custom-fields/", custom_field["name"]):
+        if not _exists(custom_fields_url, netbox_token, custom_field["name"]):
             resp = requests.post(
                 custom_fields_url, headers=_headers(netbox_token), json=custom_field, timeout=30
             )
             resp.raise_for_status()
-    if not _exists(base, netbox_token, "/api/extras/tags/", SOURCE_TAG["name"]):
+
+    if not _exists(tags_url, netbox_token, SOURCE_TAG["name"]):
         resp = requests.post(tags_url, headers=_headers(netbox_token), json=SOURCE_TAG, timeout=30)
         resp.raise_for_status()
