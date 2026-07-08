@@ -26,10 +26,9 @@ def test_build_location_index_flattens_tree_to_root_name():
     ]
     index = build_location_index(tree)
 
-    assert index[1] == {"name": "HQ", "root_name": "HQ", "path": ["HQ"]}
-    assert index[2]["root_name"] == "HQ"
-    assert index[3]["root_name"] == "HQ"
-    assert index[3]["path"] == ["HQ", "Floor 1", "Wing A"]
+    assert index[1] == {"name": "HQ", "root_name": "HQ"}
+    assert index[2] == {"name": "Floor 1", "root_name": "HQ"}
+    assert index[3] == {"name": "Wing A", "root_name": "HQ"}
 
 
 def test_resolve_site_name_uses_mapping_or_default():

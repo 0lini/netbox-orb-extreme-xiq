@@ -17,7 +17,7 @@ from worker.backend import Backend as WorkerBackend
 from worker.models import Config, Metadata, Policy
 
 from . import bootstrap, mapper
-from .client import XiqClient
+from .client import DEFAULT_BASE_URL, XiqClient
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,11 @@ APP_VERSION = "0.1.0"
 
 def _cfg(config, key: str, default=None):
     return getattr(config, key, default) if config is not None else default
+
+
+def _cfg_or_env(config, key: str, *, default=None):
+    """Policy config wins; falls back to the same-named environment variable."""
+    return _cfg(config, key, None) or os.environ.get(key, default)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -54,11 +59,10 @@ def _authority(config) -> frozenset:
 
 def _build_client(config) -> XiqClient:
     return XiqClient(
-        base_url=_cfg(config, "XIQ_API_URL", None)
-        or os.environ.get("XIQ_API_URL", "https://api.extremecloudiq.com"),
-        api_token=_cfg(config, "XIQ_API_TOKEN", None) or os.environ.get("XIQ_API_TOKEN"),
-        username=_cfg(config, "XIQ_USERNAME", None) or os.environ.get("XIQ_USERNAME"),
-        password=_cfg(config, "XIQ_PASSWORD", None) or os.environ.get("XIQ_PASSWORD"),
+        base_url=_cfg_or_env(config, "XIQ_API_URL", default=DEFAULT_BASE_URL),
+        api_token=_cfg_or_env(config, "XIQ_API_TOKEN"),
+        username=_cfg_or_env(config, "XIQ_USERNAME"),
+        password=_cfg_or_env(config, "XIQ_PASSWORD"),
     )
 
 
@@ -80,8 +84,8 @@ class Backend(WorkerBackend):
         if _cfg(config, "BOOTSTRAP", False):
             logger.info("Policy %s: running bootstrap (custom fields + source:xiq tag)", policy_name)
             bootstrap.ensure_schema(
-                _cfg(config, "NETBOX_API_URL", None) or os.environ.get("NETBOX_API_URL"),
-                _cfg(config, "NETBOX_API_TOKEN", None) or os.environ.get("NETBOX_API_TOKEN"),
+                _cfg_or_env(config, "NETBOX_API_URL"),
+                _cfg_or_env(config, "NETBOX_API_TOKEN"),
             )
 
         client = _build_client(config)
@@ -90,7 +94,7 @@ class Backend(WorkerBackend):
         logger.info("Policy %s: fetched %d devices from XIQ", policy_name, len(devices))
 
         scope_sites = _scope_sites(getattr(policy, "scope", None))
-        entities = mapper.devices_to_entities(
+        return mapper.devices_to_entities(
             devices,
             location_index=location_index,
             location_site_mapping=_cfg(config, "location_site_mapping", {}) or {},
@@ -99,7 +103,6 @@ class Backend(WorkerBackend):
             name_source=_cfg(config, "name_source", "hostname"),
             site_scope=set(scope_sites) if scope_sites else None,
         )
-        return entities
 
 
 def _standalone_config() -> dict:
