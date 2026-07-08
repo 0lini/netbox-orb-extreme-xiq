@@ -49,19 +49,17 @@ def device_name(device: dict, name_source: str = "hostname") -> str:
 
 
 def build_location_index(tree: list[dict]) -> dict[int, dict]:
-    """Flatten a `/locations/tree` response into {location_id: {name, root_name, path}}."""
+    """Flatten a `/locations/tree` response into {location_id: {name, root_name}}."""
     index: dict[int, dict] = {}
 
-    def walk(node: dict, root_name: str, path: list[str]) -> None:
+    def walk(node: dict, root_name: str) -> None:
         loc_id = node.get("id")
-        name = node.get("name", "")
-        new_path = [*path, name]
-        index[loc_id] = {"name": name, "root_name": root_name, "path": new_path}
+        index[loc_id] = {"name": node.get("name", ""), "root_name": root_name}
         for child in node.get("children") or []:
-            walk(child, root_name, new_path)
+            walk(child, root_name)
 
     for root in tree or []:
-        walk(root, root.get("name", ""), [])
+        walk(root, root.get("name", ""))
     return index
 
 
