@@ -54,7 +54,8 @@ def _authority(config) -> frozenset:
 
 def _build_client(config) -> XiqClient:
     return XiqClient(
-        base_url=_cfg(config, "XIQ_API_URL", None) or os.environ.get("XIQ_API_URL", "https://api.extremecloudiq.com"),
+        base_url=_cfg(config, "XIQ_API_URL", None)
+        or os.environ.get("XIQ_API_URL", "https://api.extremecloudiq.com"),
         api_token=_cfg(config, "XIQ_API_TOKEN", None) or os.environ.get("XIQ_API_TOKEN"),
         username=_cfg(config, "XIQ_USERNAME", None) or os.environ.get("XIQ_USERNAME"),
         password=_cfg(config, "XIQ_PASSWORD", None) or os.environ.get("XIQ_PASSWORD"),
@@ -70,10 +71,10 @@ class Backend(WorkerBackend):
             name="orb_extreme_xiq",
             app_name=APP_NAME,
             app_version=APP_VERSION,
-            description="ExtremeCloud IQ discovery worker: ingests devices + sites into NetBox via Diode.",
+            description="ExtremeCloud IQ discovery worker: ingests devices + sites into NetBox.",
         )
 
-    def run(self, policy_name: str, policy: Policy, **kwargs) -> Iterable[Entity]:
+    def run(self, policy_name: str, policy: Policy, **kwargs) -> Iterable[Entity]:  # noqa: ARG002
         config = policy.config
 
         if _cfg(config, "BOOTSTRAP", False):

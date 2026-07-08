@@ -19,9 +19,27 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "responses"]
+dev = ["pytest>=8", "responses>=0.25", "ruff>=0.15"]
 
 # The import name the worker policy references as `config.package`
 # i.e.  policies.worker.<name>.config.package: orb_extreme_xiq
 [tool.setuptools.packages.find]
 include = ["orb_extreme_xiq*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "ARG"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["orb_extreme_xiq"]
+
+[tool.ruff.lint.per-file-ignores]
+# Fixture params (e.g. `stub_sdk`) are applied for their monkeypatching side
+# effect, not read in the test body -- the standard pytest fixture pattern.
+"tests/*" = ["ARG001"]
