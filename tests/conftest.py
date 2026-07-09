@@ -82,8 +82,8 @@ def stub_sdk(monkeypatch):
     """
     for name, cls in STUB_CLASSES.items():
         # raising=False: mapper.py only imports the SDK classes it actually
-        # uses, so not every stub (e.g. Interface, IPAddress) is already an
-        # attribute of the module.
+        # uses (e.g. Manufacturer isn't currently imported), so not every
+        # stub here is already an attribute of the module.
         monkeypatch.setattr(mapper, name, cls, raising=False)
     return STUB_CLASSES
 

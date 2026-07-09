@@ -66,6 +66,14 @@ def _devices(entities):
     return [e._kw["device"] for e in entities if "device" in e._kw]
 
 
+def _interfaces(entities):
+    return [e._kw["interface"] for e in entities if "interface" in e._kw]
+
+
+def _ip_addresses(entities):
+    return [e._kw["ip_address"] for e in entities if "ip_address" in e._kw]
+
+
 def test_location_tree_is_nested_under_the_resolved_site(stub_sdk):
     by_name = {loc._kw["name"]: loc for loc in _locations(_map())}
     assert set(by_name) == {"HQ", "Floor 1", "Floor 2"}
@@ -109,6 +117,47 @@ def test_switch_with_no_policy_drops_empty_custom_field_and_is_offline(stub_sdk)
 
     assert "xiq_network_policy" not in switch._kw["custom_fields"]
     assert switch._kw["status"] == "offline"
+
+
+def test_device_with_ip_gets_a_management_interface_and_assigned_ip_address(stub_sdk):
+    entities = _map()
+
+    iface = next(i for i in _interfaces(entities) if i._kw["device"] == "ap-lobby")
+    assert iface._kw["name"] == "mgmt0"
+    assert iface._kw["type"] == "virtual"
+    assert iface._kw["mgmt_only"] is True
+
+    addr = next(a for a in _ip_addresses(entities) if a._kw["device"] == "ap-lobby")
+    assert addr._kw["address"] == "10.0.0.5/32"
+    assert addr._kw["assigned_object_interface"]._kw["name"] == "mgmt0"
+
+
+def test_device_without_ip_gets_no_management_interface(stub_sdk):
+    device_without_ip = {
+        "id": 999,
+        "hostname": "no-ip-switch",
+        "device_function": "SWITCH",
+        "connected": True,
+    }
+    entities = mapper.devices_to_entities(
+        [device_without_ip],
+        location_index=mapper.build_location_index(LOC_TREE),
+        location_site_mapping=LOCATION_SITE_MAPPING,
+        default_site="XIQ-Unmapped",
+    )
+
+    assert _interfaces(entities) == []
+    assert _ip_addresses(entities) == []
+
+
+def test_dropping_primary_ip_from_authority_omits_interface_and_ip_address(stub_sdk):
+    authority = set(mapper.DEFAULT_AUTHORITY) - {"primary_ip"}
+    entities = _map(authority=authority)
+
+    device = _devices(entities)[0]
+    assert "primary_ip4" not in device._kw
+    assert _interfaces(entities) == []
+    assert _ip_addresses(entities) == []
 
 
 def test_dropping_site_from_authority_omits_site_and_location_with_no_redrift(stub_sdk):

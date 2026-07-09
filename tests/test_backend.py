@@ -66,8 +66,8 @@ def test_run_produces_the_location_tree_and_a_device_entity():
 
     entities = list(Backend().run("extreme_xiq_worker", policy))
 
-    # Location tree (root-first) + one Device entity referencing both.
-    assert len(entities) == 3
+    # Location tree (root-first) + Device + its mgmt Interface + IPAddress.
+    assert len(entities) == 5
 
     root_location = entities[0].location
     assert root_location.name == "HQ"
@@ -83,3 +83,12 @@ def test_run_produces_the_location_tree_and_a_device_entity():
     assert device.name == "ap-lobby"
     assert device.site.name == "Corporate-HQ"
     assert device.location.name == "Floor 1"
+
+    interface = entities[3].interface
+    assert interface.name == "mgmt0"
+    assert interface.device.name == "ap-lobby"
+
+    ip_address = entities[4].ip_address
+    assert ip_address.address == "10.0.0.5/32"
+    assert ip_address.assigned_object_interface.name == "mgmt0"
+    assert ip_address.assigned_object_interface.device.name == "ap-lobby"

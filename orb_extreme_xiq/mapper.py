@@ -11,6 +11,12 @@ they're provenance/identity metadata (xiq_device_id, source:xiq), not
 fields a human would meaningfully contest. The "site" authority key also
 covers the Location tree and each Device's `location=`: dropping it hands
 XIQ's *entire* physical-placement story (site + location) to humans.
+
+A device's `primary_ip4` is never a bare address string: NetBox requires a
+device's primary IP to be assigned to one of its own interfaces, so a
+synthetic "mgmt0" Interface + an IPAddress assigned to it are asserted
+alongside the device (matching how the official Mist integration backs
+primary IPs with a real Interface/assigned_object, not a floating address).
 """
 
 from __future__ import annotations
@@ -20,6 +26,8 @@ from netboxlabs.diode.sdk.ingester import (
     Device,
     DeviceType,
     Entity,
+    Interface,
+    IPAddress,
     Location,
     Platform,
     Site,
@@ -35,6 +43,7 @@ __all__ = [
 ]
 
 MANUFACTURER = "Extreme Networks"
+MGMT_INTERFACE_NAME = "mgmt0"
 
 DEFAULT_AUTHORITY = frozenset(
     {
@@ -62,6 +71,25 @@ def _primary_ip(device: dict) -> str | None:
 
 def _cf_text(value: str) -> CustomFieldValue:
     return CustomFieldValue(text=value)
+
+
+def _management_interface_entities(device: dict, *, name: str) -> list[Entity]:
+    """A synthetic mgmt Interface + the IPAddress assigned to it, for `device`.
+
+    XIQ gives us a device's IP but no real port/interface data. NetBox
+    requires a device's primary IP to be assigned to one of its own
+    interfaces, so a bare `primary_ip4="1.2.3.4"` string on Device is not
+    enough -- without this, the address has no assigned_object and can't
+    validly be a primary IP.
+    """
+    ip = _primary_ip(device)
+    if not ip:
+        return []
+    interface = Interface(device=name, name=MGMT_INTERFACE_NAME, type="virtual", mgmt_only=True, enabled=True)
+    ip_address = IPAddress(
+        address=ip, assigned_object_interface=Interface(name=MGMT_INTERFACE_NAME), device=name
+    )
+    return [Entity(interface=interface), Entity(ip_address=ip_address)]
 
 
 def _device_custom_fields(device: dict) -> dict:
@@ -138,8 +166,9 @@ def devices_to_entities(
     site_scope: set[str] | None = None,
 ) -> list:
     """Map XIQ devices to Diode entities: the Location tree each device sits
-    in (nested under its resolved Site, preserving XIQ's hierarchy) plus one
-    Device per device.
+    in (nested under its resolved Site, preserving XIQ's hierarchy), one
+    Device per device, and -- when the device has an IP -- a backing mgmt
+    Interface + IPAddress so `primary_ip4` is a validly assigned address.
     """
     entities = []
     resolved: list[tuple[dict, str | None, int | None]] = []
@@ -175,5 +204,7 @@ def devices_to_entities(
             name_source=name_source,
         )
         entities.append(Entity(device=Device(**kwargs)))
+        if "primary_ip" in authority:
+            entities.extend(_management_interface_entities(device, name=kwargs["name"]))
 
     return entities

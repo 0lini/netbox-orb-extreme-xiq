@@ -33,6 +33,14 @@ scaffold does deliberately:
   Location too is what keeps same-named children ("Floor 1" under both "HQ" and
   "Branch A") from colliding when they consolidate into the same Site. Each
   Device asserts both `site=` and `location=`.
+- **Primary IP backed by a real Interface, not a floating string.** A device's
+  `primary_ip4` in NetBox must be an `IPAddress` assigned to one of that
+  device's own interfaces — a bare address string on `Device` has no
+  `assigned_object` and isn't a valid primary IP. Since XIQ doesn't expose
+  per-device port inventories, each device with an IP gets one synthetic
+  `mgmt0` `Interface` (`type=virtual`, `mgmt_only=true`) and an `IPAddress`
+  assigned to it — the same `assigned_object`-backed pattern the official
+  Mist integration uses for its device management IPs.
 - **Bootstrap step** (`bootstrap.py`). Idempotently creates the custom-field
   definitions + `source:xiq` tag before the first sync — the same first-run
   pattern the official integrations use.
@@ -44,7 +52,7 @@ scaffold does deliberately:
 
 - `client.py` — thin XIQ REST client (token or user/pass, paginated `/devices`, `/locations`).
 - `identity.py` — stable device naming + XIQ location-tree flattening/site resolution.
-- `mapper.py` — XIQ → Diode entities (Location tree + Device) with field-authority enforcement, custom fields, tags.
+- `mapper.py` — XIQ → Diode entities (Location tree, Device, mgmt Interface + IPAddress) with field-authority enforcement, custom fields, tags.
 - `bootstrap.py` — one-time idempotent NetBox schema setup (custom fields + tag).
 - `backend.py` — worker entrypoint + standalone runner.
 - `agent.yaml` — example policy (bootstrap, site mapping, field authority).
@@ -121,6 +129,8 @@ must be wrapped — `CustomFieldValue(text=...)` for all of `xiq_device_id`,
 
 ## Roadmap
 
-- Switch ports → Interface entities (per-device port endpoint).
+- Real per-port switch Interfaces (today's `mgmt0` is a synthetic interface
+  just to back `primary_ip4` — XIQ has no live per-device port-list endpoint
+  in its current OpenAPI spec, so a real port inventory is still open).
 - VLANs / Prefixes from network policies.
 - Move bootstrap custom-field creation to Diode if your SDK supports it.
