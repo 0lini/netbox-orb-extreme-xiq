@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from orb_extreme_xiq import mapper
 
 from .conftest import cf
@@ -47,7 +45,7 @@ DEVICES = [
     },
 ]
 
-LOCATION_SITE_MAPPING = {"HQ": "Corporate-HQ"}  # both floors roll up to HQ -> one site
+LOCATION_SITE_MAPPING = {"HQ": "Corporate-HQ"}
 
 
 def _map(**overrides):
@@ -60,31 +58,46 @@ def _map(**overrides):
     return mapper.devices_to_entities(DEVICES, **kwargs)
 
 
-def _site_entities(entities):
-    return [
-        e for e in entities if "site" in e._kw and getattr(e._kw.get("site"), "_kw", {}).get("custom_fields")
-    ]
+def _locations(entities):
+    return [e._kw["location"] for e in entities if "location" in e._kw]
 
 
 def _devices(entities):
     return [e._kw["device"] for e in entities if "device" in e._kw]
 
 
-def test_consolidates_multiple_locations_into_one_site(stub_sdk):
-    entities = _map()
-    site_entities = _site_entities(entities)
-    assert len(site_entities) == 1
+def test_location_tree_is_nested_under_the_resolved_site(stub_sdk):
+    by_name = {loc._kw["name"]: loc for loc in _locations(_map())}
+    assert set(by_name) == {"HQ", "Floor 1", "Floor 2"}
 
-    xiq_locations_cf = site_entities[0]._kw["site"]._kw["custom_fields"]["xiq_locations"]._kw
-    assert json.loads(cf(xiq_locations_cf)) == ["HQ"]
+    hq = by_name["HQ"]
+    assert hq._kw["site"]._kw["name"] == "Corporate-HQ"
+    assert "parent" not in hq._kw  # root location has no parent Location
+
+    floor1 = by_name["Floor 1"]
+    assert floor1._kw["site"]._kw["name"] == "Corporate-HQ"
+    assert floor1._kw["parent"] == "HQ"
 
 
-def test_device_carries_identity_custom_fields_tags_and_site(stub_sdk):
+def test_location_carries_stable_id_custom_field(stub_sdk):
+    by_name = {loc._kw["name"]: loc for loc in _locations(_map())}
+
+    assert cf(by_name["HQ"]._kw["custom_fields"]["xiq_location_id"]._kw) == "1"
+    assert cf(by_name["Floor 1"]._kw["custom_fields"]["xiq_location_id"]._kw) == "2"
+
+
+def test_device_references_both_site_and_location(stub_sdk):
+    device = _devices(_map())[0]
+
+    assert device._kw["site"]._kw["name"] == "Corporate-HQ"
+    assert device._kw["location"]._kw["name"] == "Floor 1"
+
+
+def test_device_carries_identity_custom_fields_and_tags(stub_sdk):
     device = _devices(_map())[0]
 
     assert cf(device._kw["custom_fields"]["xiq_device_id"]._kw) == "111"
     assert cf(device._kw["custom_fields"]["xiq_network_policy"]._kw) == "Corp-WiFi"
-    assert device._kw["site"]._kw["name"] == "Corporate-HQ"
     assert "source:xiq" in device._kw["tags"]
     assert "xiq-org:org-9" in device._kw["tags"]
     assert device._kw["role"] == "wireless-ap"
@@ -98,18 +111,53 @@ def test_switch_with_no_policy_drops_empty_custom_field_and_is_offline(stub_sdk)
     assert switch._kw["status"] == "offline"
 
 
-def test_dropping_site_from_authority_omits_it_with_no_redrift(stub_sdk):
+def test_dropping_site_from_authority_omits_site_and_location_with_no_redrift(stub_sdk):
     authority = set(mapper.DEFAULT_AUTHORITY) - {"site"}
     entities = _map(authority=authority)
 
-    assert "site" not in _devices(entities)[0]._kw
-    assert not _site_entities(entities)
+    device = _devices(entities)[0]
+    assert "site" not in device._kw
+    assert "location" not in device._kw
+    assert _locations(entities) == []
 
 
-def test_site_scope_filters_devices_and_sites_outside_scope(stub_sdk):
+def test_site_scope_filters_devices_and_their_locations_outside_scope(stub_sdk):
     in_scope = _map(site_scope={"Corporate-HQ"})
-    assert len(_devices(in_scope)) == 2  # both devices resolve into Corporate-HQ
+    assert len(_devices(in_scope)) == 2
+    assert len(_locations(in_scope)) == 3  # HQ, Floor 1, Floor 2
 
     out_of_scope = _map(site_scope={"Some-Other-Site"})
     assert _devices(out_of_scope) == []
-    assert _site_entities(out_of_scope) == []
+    assert _locations(out_of_scope) == []
+
+
+def test_distinct_roots_consolidated_into_one_site_do_not_collide(stub_sdk):
+    """Two same-named child locations under different XIQ roots, both
+    consolidated into the same NetBox site, must stay distinct NetBox
+    Locations -- disambiguated by their different root-location parent.
+    This is the scenario the flat `xiq_locations` JSON field used to lose.
+    """
+    tree = [
+        {"id": 10, "name": "HQ", "children": [{"id": 11, "name": "Floor 1", "children": []}]},
+        {"id": 20, "name": "Branch A", "children": [{"id": 21, "name": "Floor 1", "children": []}]},
+    ]
+    devices = [
+        {"id": 1, "hostname": "sw-hq", "location_id": 11, "device_function": "SWITCH", "connected": True},
+        {"id": 2, "hostname": "sw-branch", "location_id": 21, "device_function": "SWITCH", "connected": True},
+    ]
+    mapping = {"HQ": "Corporate-HQ", "Branch A": "Corporate-HQ"}  # both roots -> one site
+
+    entities = mapper.devices_to_entities(
+        devices,
+        location_index=mapper.build_location_index(tree),
+        location_site_mapping=mapping,
+        default_site="XIQ-Unmapped",
+    )
+
+    floor_ones = [loc for loc in _locations(entities) if loc._kw["name"] == "Floor 1"]
+    assert len(floor_ones) == 2
+    assert {loc._kw["parent"] for loc in floor_ones} == {"HQ", "Branch A"}
+
+    dev_by_name = {d._kw["name"]: d for d in _devices(entities)}
+    assert dev_by_name["sw-hq"]._kw["location"]._kw["name"] == "Floor 1"
+    assert dev_by_name["sw-branch"]._kw["location"]._kw["name"] == "Floor 1"

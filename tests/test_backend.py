@@ -23,7 +23,7 @@ def test_describe_reports_stable_identity():
 
 
 @responses.activate
-def test_run_produces_a_site_and_a_device_entity():
+def test_run_produces_the_location_tree_and_a_device_entity():
     responses.add(
         responses.GET,
         f"{BASE}/locations/tree",
@@ -66,7 +66,20 @@ def test_run_produces_a_site_and_a_device_entity():
 
     entities = list(Backend().run("extreme_xiq_worker", policy))
 
-    assert len(entities) == 2
-    assert entities[0].site.name == "Corporate-HQ"
-    assert entities[1].device.name == "ap-lobby"
-    assert entities[1].device.site.name == "Corporate-HQ"
+    # Location tree (root-first) + one Device entity referencing both.
+    assert len(entities) == 3
+
+    root_location = entities[0].location
+    assert root_location.name == "HQ"
+    assert root_location.site.name == "Corporate-HQ"
+    assert not root_location.HasField("parent")
+
+    leaf_location = entities[1].location
+    assert leaf_location.name == "Floor 1"
+    assert leaf_location.site.name == "Corporate-HQ"
+    assert leaf_location.parent.name == "HQ"
+
+    device = entities[2].device
+    assert device.name == "ap-lobby"
+    assert device.site.name == "Corporate-HQ"
+    assert device.location.name == "Floor 1"

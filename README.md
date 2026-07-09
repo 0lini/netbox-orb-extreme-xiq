@@ -22,13 +22,17 @@ scaffold does deliberately:
   The worker emits *only* fields XIQ owns, so human-owned fields (rack, tenant,
   description) can never generate phantom drift. `site` is XIQ-owned by default
   (Meraki-style); drop it from authority to let humans own it after create.
-- **Stable identity** (`identity.py`). Deterministic device names + an immutable
-  `xiq_device_id` custom field so a device is always correlatable even if its
-  display name changes.
-- **Meraki-style site assignment.** Site is asserted every run from an explicit
-  `location_site_mapping` (+ `default_site`); many XIQ locations can consolidate
-  into one NetBox site, and each site records its XIQ locations in the
-  `xiq_locations` custom field (Meraki does this with `meraki_networks`).
+- **Stable identity** (`identity.py`). Deterministic device names + immutable
+  `xiq_device_id`/`xiq_location_id` custom fields so devices and locations stay
+  correlatable even if their display names change.
+- **Native NetBox Location hierarchy, not a flattened custom field.** Every XIQ
+  location (including the root) becomes a nested NetBox `Location` under its
+  resolved `Site` — `parent=` mirrors XIQ's own tree exactly. The root is what
+  a Site resolves *from* (via `location_site_mapping` + `default_site`, so many
+  XIQ roots can still consolidate into one Site); asserting the root as a real
+  Location too is what keeps same-named children ("Floor 1" under both "HQ" and
+  "Branch A") from colliding when they consolidate into the same Site. Each
+  Device asserts both `site=` and `location=`.
 - **Bootstrap step** (`bootstrap.py`). Idempotently creates the custom-field
   definitions + `source:xiq` tag before the first sync — the same first-run
   pattern the official integrations use.
@@ -39,8 +43,8 @@ scaffold does deliberately:
 ## Layout
 
 - `client.py` — thin XIQ REST client (token or user/pass, paginated `/devices`, `/locations`).
-- `identity.py` — stable device naming + Meraki-style site resolution.
-- `mapper.py` — XIQ → Diode entities with field-authority enforcement, custom fields, tags.
+- `identity.py` — stable device naming + XIQ location-tree flattening/site resolution.
+- `mapper.py` — XIQ → Diode entities (Location tree + Device) with field-authority enforcement, custom fields, tags.
 - `bootstrap.py` — one-time idempotent NetBox schema setup (custom fields + tag).
 - `backend.py` — worker entrypoint + standalone runner.
 - `agent.yaml` — example policy (bootstrap, site mapping, field authority).
@@ -90,12 +94,13 @@ against the installed package: `python -c "import worker.backend as b, inspect; 
 
 ## The one thing to keep VERIFIED against your installed Diode SDK
 
-`mapper._device_kwargs()` / `_device_custom_fields()` funnel `custom_fields=`
-and `tags=` through one place. As of `netboxlabs-diode-sdk` (generated from
-NetBox v4.6.0), `custom_fields` values must be wrapped —
-`CustomFieldValue(text=...)` for the text fields, `CustomFieldValue(json=...)`
-for `xiq_locations` — a plain string raises `ValueError`. Confirm this still
-holds for your SDK version: `python -c "import netboxlabs.diode.sdk.ingester as i; help(i.Device)"`.
+`mapper._device_kwargs()` / `_device_custom_fields()` / `_location_entity()`
+funnel `custom_fields=` and `tags=` through one place. As of
+`netboxlabs-diode-sdk` (generated from NetBox v4.6.0), `custom_fields` values
+must be wrapped — `CustomFieldValue(text=...)` for all of `xiq_device_id`,
+`xiq_network_policy`, and `xiq_location_id` — a plain string raises
+`ValueError`. Confirm this still holds for your SDK version:
+`python -c "import netboxlabs.diode.sdk.ingester as i; help(i.Device)"`.
 
 ## XIQ auth
 

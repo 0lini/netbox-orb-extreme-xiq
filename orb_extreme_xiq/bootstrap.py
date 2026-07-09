@@ -28,11 +28,12 @@ CUSTOM_FIELDS = [
         "description": "The ExtremeCloud IQ network policy assigned to this device.",
     },
     {
-        "name": "xiq_locations",
-        "label": "XIQ Locations",
-        "type": "json",
-        "object_types": ["dcim.site"],
-        "description": "The XIQ root locations consolidated into this NetBox site.",
+        "name": "xiq_location_id",
+        "label": "XIQ Location ID",
+        "type": "text",
+        "object_types": ["dcim.location"],
+        "description": "Immutable XIQ location ID; stable correlation key even after a rename.",
+        "filter_logic": "exact",
     },
 ]
 
