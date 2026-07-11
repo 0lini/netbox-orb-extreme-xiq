@@ -46,6 +46,10 @@ orb:
           name_source: hostname            # or "serial" for max stability
           default_site: "XIQ-Unmapped"
 
+          # INCLUDE_WIRED_PORTS: false     # true to also sync switch ports as
+                                            # Interface entities (1 extra API call
+                                            # per switch; see README)
+
           # Meraki-style: XIQ location name -> NetBox site name.
           # Many locations can map to one site (consolidation).
           location_site_mapping:

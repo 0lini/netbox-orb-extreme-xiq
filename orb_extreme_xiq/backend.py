@@ -94,15 +94,37 @@ class Backend(WorkerBackend):
         logger.info("Policy %s: fetched %d devices from XIQ", policy_name, len(devices))
 
         scope_sites = _scope_sites(getattr(policy, "scope", None))
-        return mapper.devices_to_entities(
+        name_source = _cfg(config, "name_source", "hostname")
+        entities = mapper.devices_to_entities(
             devices,
             location_index=location_index,
             location_site_mapping=_cfg(config, "location_site_mapping", {}) or {},
             default_site=_cfg(config, "default_site", "XIQ-Unmapped"),
             authority=_authority(config),
-            name_source=_cfg(config, "name_source", "hostname"),
+            name_source=name_source,
             site_scope=set(scope_sites) if scope_sites else None,
         )
+
+        if _cfg(config, "INCLUDE_WIRED_PORTS", False):
+            entities.extend(self._port_entities(client, devices, name_source, policy_name))
+
+        return entities
+
+    @staticmethod
+    def _port_entities(
+        client: XiqClient, devices: list[dict], name_source: str, policy_name: str
+    ) -> list[Entity]:
+        """One get_wired_portlist call per switch -- opt-in (INCLUDE_WIRED_PORTS)
+        since it's N extra requests against an undocumented XIQ endpoint.
+        """
+        entities: list[Entity] = []
+        for device in devices:
+            if mapper.role_for(device.get("device_function")) != "network-switch":
+                continue
+            ports = client.get_wired_portlist(device["id"])
+            entities.extend(mapper.ports_to_entities(ports, device=mapper.device_name(device, name_source)))
+        logger.info("Policy %s: mapped %d wired port entities", policy_name, len(entities))
+        return entities
 
 
 def _standalone_config() -> dict:

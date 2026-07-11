@@ -34,6 +34,32 @@ CUSTOM_FIELDS = [
         "object_types": ["dcim.site"],
         "description": "The XIQ root locations consolidated into this NetBox site.",
     },
+    {
+        "name": "xiq_port_id",
+        "label": "XIQ Port ID",
+        "type": "text",
+        "object_types": ["dcim.interface"],
+        "description": "Immutable XIQ port ID; stable correlation key even if the port is renamed.",
+        "filter_logic": "exact",
+    },
+    {
+        "name": "xiq_tagged_vlans",
+        "label": "XIQ Tagged VLANs",
+        "type": "text",
+        "object_types": ["dcim.interface"],
+        "description": (
+            "Raw taggedVlans string from XIQ, preserved as-is. Not wired up as real VLAN "
+            "links: on FLEX-UNI/Fabric-Attach ports this reflects an I-SID mapping, not "
+            "VLAN membership."
+        ),
+    },
+    {
+        "name": "xiq_lldp_neighbor",
+        "label": "XIQ LLDP Neighbor",
+        "type": "text",
+        "object_types": ["dcim.interface"],
+        "description": "lldpSystemName reported by XIQ for whatever is plugged into this port.",
+    },
 ]
 
 SOURCE_TAG = {
