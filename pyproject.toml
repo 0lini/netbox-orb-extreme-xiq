@@ -23,7 +23,7 @@ dependencies = [
     "frozendict~=2.3.4",
     "certifi>=14.5.14",
     "python-dateutil~=2.7.0",
-    "urllib3~=1.26.7",
+    "urllib3~=2.7.0",
     # The Orb Agent image already ships these, but pin them here so the
     # package is testable/runnable standalone too. Confirm the exact versions
     # against the orb-agent image you deploy on -- the Backend contract
