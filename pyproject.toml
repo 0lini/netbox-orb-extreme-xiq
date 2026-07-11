@@ -9,15 +9,21 @@ description = "ExtremeCloud IQ discovery worker for the NetBox Labs Orb Agent (i
 requires-python = ">=3.10"
 dependencies = [
     "requests>=2.31",       # only get_wired_portlist (legacy endpoint) uses this directly
-    "extremecloudiq-api>=25.11.1.post3",  # official SDK (Extreme Networks): devices + locations
-    "frozendict>=2.3",      # query_params type the SDK's oapg-style methods expect
-    # extremecloudiq-api's own metadata pins typing_extensions~=4.3.0, which is
-    # stale enough to break netboxlabs-orb-worker at import time (it needs
-    # typing_extensions.deprecated, added in 4.5.0). Verified extremecloudiq-api
-    # itself imports and runs fine against a modern typing_extensions despite
-    # that pin -- force one here so both packages get a version that actually
-    # works. Re-check this override next time either dependency bumps its pin.
-    "typing_extensions>=4.12,<5",
+    # extremecloudiq-api ([project.optional-dependencies] xiq-sdk, below) is
+    # NOT listed here on purpose -- its metadata pins typing-extensions~=4.3.0,
+    # which is a hard, unresolvable conflict with netboxlabs-orb-worker's own
+    # typing-extensions~=4.5 (confirmed: `pip install extremecloudiq-api
+    # netboxlabs-orb-worker` alone, with nothing from this project involved,
+    # already fails with ResolutionImpossible -- the ranges genuinely don't
+    # overlap). Declaring extremecloudiq-api as a normal dependency here would
+    # make every `pip install -e .` fail outright. Install it separately with
+    # `--no-deps` (see "Develop without the full agent" in the README) --
+    # these three cover what it actually needs at runtime, at versions that
+    # don't conflict with anything else in this project.
+    "frozendict~=2.3.4",
+    "certifi>=14.5.14",
+    "python-dateutil~=2.7.0",
+    "urllib3~=1.26.7",
     # The Orb Agent image already ships these, but pin them here so the
     # package is testable/runnable standalone too. Confirm the exact versions
     # against the orb-agent image you deploy on -- the Backend contract
@@ -29,6 +35,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "responses>=0.25", "ruff>=0.15"]
+# Version-tracking only -- NEVER `pip install ".[xiq-sdk]"` normally, it will
+# hit the same ResolutionImpossible conflict explained above. Always install
+# this exact version with `--no-deps` instead: see the README.
+xiq-sdk = ["extremecloudiq-api==25.11.1.post3"]
 
 # The import name the worker policy references as `config.package`
 # i.e.  policies.worker.<name>.config.package: orb_extreme_xiq

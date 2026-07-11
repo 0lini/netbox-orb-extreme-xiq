@@ -90,11 +90,33 @@ exactly. Bootstrap **skips gracefully** if no NetBox token is set.
 
 ```bash
 pip install -e ".[dev]"
+pip install --no-deps "extremecloudiq-api==25.11.1.post3"  # see note below -- must be separate
 export XIQ_API_TOKEN=...                 # or XIQ_USERNAME / XIQ_PASSWORD
 python -m orb_extreme_xiq.backend        # DRY RUN: fetches from XIQ, maps, prints entities (no Diode push)
 pytest                                    # full test suite
 ruff check .                              # lint
 ```
+
+**Why two install commands:** `extremecloudiq-api`'s metadata requires
+`typing-extensions~=4.3.0`; `netboxlabs-orb-worker`'s requires `~=4.5`. Those
+ranges don't overlap at all, so `pip install extremecloudiq-api
+netboxlabs-orb-worker` fails with `ResolutionImpossible` even with nothing
+else from this project involved -- confirmed directly. There is no dependency
+declaration that fixes this (that's *why* `extremecloudiq-api` isn't in
+`pyproject.toml`'s normal `dependencies`), so it must always be installed
+separately with `--no-deps`, which skips checking its own declared
+dependencies -- the packages it actually needs at runtime (`frozendict`,
+`certifi`, `python-dateutil`, `urllib3`) are covered by this project's normal
+dependencies at versions that don't conflict with anything else.
+
+**Deploying via the real Orb Agent container:** this project's own install
+(`pip install -e .`/`pip install .`, e.g. via `workers.txt`'s
+`INSTALL_WORKERS_PATH` mechanism) only covers the normal dependencies. Unless
+you've verified that mechanism supports a post-install hook, you'll need to
+separately run the same `pip install --no-deps "extremecloudiq-api==25.11.1.post3"`
+inside the container (e.g. a custom Dockerfile layer, or an entrypoint
+wrapper) before the worker can actually import `extremecloudiq` -- this
+hasn't been verified against a real orb-agent image.
 
 The Orb Agent worker (`netboxlabs-orb-worker`) owns the Diode client and the
 actual ingest entirely — `Backend.run()` only ever *produces* entities. There
@@ -121,8 +143,8 @@ schema-validated response bodies), which is why `client.py` calls every
 endpoint with `skip_deserialization=True` and parses `result.response.data`
 as plain JSON itself rather than using the SDK's own deserialization -- far
 less ceremony, and the SDK still owns URL building, query serialization, the
-Bearer header, and status-based `ApiException`s. Two real bugs found while
-integrating it, both re-check-worthy on a version bump:
+Bearer header, and status-based `ApiException`s. Three real bugs found while
+integrating it, all re-check-worthy on a version bump:
 
 - `Configuration(access_token=...)` is a no-op — its `__init__` unconditionally
   sets `self.access_token = None` regardless of what you pass in. Set the
@@ -136,10 +158,15 @@ integrating it, both re-check-worthy on a version bump:
   raises `NotImplementedError` rather than silently sending a broken request.
   (`expand_children=True`, the only value this worker needs, is simply
   omitted from the query string since it's XIQ's own server-side default.)
-- Also pins `typing_extensions~=4.3.0` in its own metadata, which is stale
-  enough to break `netboxlabs-orb-worker` at import time (`typing_extensions.deprecated`
-  was added in 4.5.0). `pyproject.toml` forces `typing_extensions>=4.12,<5` —
-  confirmed the SDK itself still imports and runs fine against that.
+- Its metadata pins `typing-extensions~=4.3.0`, which directly conflicts with
+  `netboxlabs-orb-worker`'s own `~=4.5` pin -- the ranges don't overlap at
+  all, so pip can never install both together normally (confirmed: `pip
+  install extremecloudiq-api netboxlabs-orb-worker` alone fails with
+  `ResolutionImpossible`, nothing from this project involved). That's why
+  `extremecloudiq-api` isn't a normal dependency in `pyproject.toml` -- see
+  "Develop without the full agent" above for the required `--no-deps` install
+  step, and its "Deploying via the real Orb Agent container" note for the
+  unresolved risk that entails there.
 
 ## The one thing to keep VERIFIED against your installed Diode SDK
 
