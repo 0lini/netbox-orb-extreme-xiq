@@ -13,6 +13,15 @@
 #      custom fields + source tag get created. Run once.
 #   2. Set BOOTSTRAP: false for all subsequent scheduled runs.
 # Tip: set common.diode.dry_run: true first to inspect JSON before ingesting.
+#
+# IMPORTANT -- extremecloudiq-api install: `workers.txt`'s INSTALL_WORKERS_PATH
+# mechanism installs this worker's normal dependencies only. extremecloudiq-api
+# can't be one of those (its typing-extensions pin directly conflicts with
+# netboxlabs-orb-worker's -- see the README's "Quirks in extremecloudiq-api"
+# section), so it needs `pip install --no-deps "extremecloudiq-api==25.11.1.post3"`
+# run separately inside the container -- e.g. a custom Dockerfile layer or
+# entrypoint wrapper -- before this worker can actually import `extremecloudiq`.
+# Not yet verified against a real orb-agent image.
 
 orb:
   config_manager:
@@ -45,6 +54,10 @@ orb:
 
           name_source: hostname            # or "serial" for max stability
           default_site: "XIQ-Unmapped"
+
+          # INCLUDE_WIRED_PORTS: false     # true to also sync switch ports as
+                                            # Interface entities (1 extra API call
+                                            # per switch; see README)
 
           # Meraki-style: XIQ location name -> NetBox site name.
           # Many locations can map to one site (consolidation).
