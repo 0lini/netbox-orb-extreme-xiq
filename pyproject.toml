@@ -20,7 +20,7 @@ dependencies = [
     # `--no-deps` (see "Develop without the full agent" in the README) --
     # these three cover what it actually needs at runtime, at versions that
     # don't conflict with anything else in this project.
-    "frozendict~=2.3.4",
+    "frozendict~=2.4.7",
     "certifi>=14.5.14",
     "python-dateutil~=2.7.0",
     "urllib3~=1.26.7",
