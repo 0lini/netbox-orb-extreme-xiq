@@ -4,16 +4,37 @@ Unlike test_mapper.py, this deliberately does NOT stub the Diode SDK -- it
 exercises the real protobuf Entity/Device/Site classes plus the real
 worker.models.Policy/Config, to catch drift against the installed
 netboxlabs-diode-sdk / netboxlabs-orb-worker versions early.
+
+XIQ itself is mocked at the SDK Api-class boundary (see test_client.py's
+docstring for why: the official SDK talks HTTP via urllib3, not `requests`,
+so `responses` can't intercept it).
 """
 
 from __future__ import annotations
 
-import responses
+import json
+from dataclasses import dataclass
+
+from extremecloudiq.apis.tags.device_api import DeviceApi
+from extremecloudiq.apis.tags.location_api import LocationApi
 from worker.models import Config, Policy
 
 from orb_extreme_xiq.backend import Backend
 
-BASE = "https://api.extremecloudiq.com"
+
+@dataclass
+class FakeHttpResponse:
+    data: bytes
+    status: int = 200
+
+
+@dataclass
+class FakeApiResponse:
+    response: FakeHttpResponse
+
+
+def json_response(payload) -> FakeApiResponse:
+    return FakeApiResponse(response=FakeHttpResponse(data=json.dumps(payload).encode()))
 
 
 def test_describe_reports_stable_identity():
@@ -22,37 +43,38 @@ def test_describe_reports_stable_identity():
     assert metadata.name == "orb_extreme_xiq"
 
 
-@responses.activate
-def test_run_produces_a_site_and_a_device_entity():
-    responses.add(
-        responses.GET,
-        f"{BASE}/locations/tree",
-        json=[{"id": 1, "name": "HQ", "children": [{"id": 2, "name": "Floor 1", "children": []}]}],
-        status=200,
+def test_run_produces_a_site_and_a_device_entity(monkeypatch):
+    monkeypatch.setattr(
+        LocationApi,
+        "get_location_tree",
+        lambda self, **kw: json_response(
+            [{"id": 1, "name": "HQ", "children": [{"id": 2, "name": "Floor 1", "children": []}]}]
+        ),
     )
-    responses.add(
-        responses.GET,
-        f"{BASE}/devices",
-        json={
-            "page": 1,
-            "count": 1,
-            "total_pages": 1,
-            "total_count": 1,
-            "data": [
-                {
-                    "id": 111,
-                    "hostname": "ap-lobby",
-                    "serial_number": "SN111",
-                    "product_type": "AP305C",
-                    "device_function": "AP",
-                    "ip_address": "10.0.0.5",
-                    "connected": True,
-                    "location_id": 2,
-                    "org_id": 9,
-                }
-            ],
-        },
-        status=200,
+    monkeypatch.setattr(
+        DeviceApi,
+        "list_devices",
+        lambda self, **kw: json_response(
+            {
+                "page": 1,
+                "count": 1,
+                "total_pages": 1,
+                "total_count": 1,
+                "data": [
+                    {
+                        "id": 111,
+                        "hostname": "ap-lobby",
+                        "serial_number": "SN111",
+                        "product_type": "AP305C",
+                        "device_function": "AP",
+                        "ip_address": "10.0.0.5",
+                        "connected": True,
+                        "location_id": 2,
+                        "org_id": 9,
+                    }
+                ],
+            }
+        ),
     )
 
     config = Config(

@@ -14,8 +14,17 @@ fields a human would meaningfully contest.
 from __future__ import annotations
 
 import json
+import re
 
-from netboxlabs.diode.sdk.ingester import CustomFieldValue, Device, DeviceType, Entity, Platform, Site
+from netboxlabs.diode.sdk.ingester import (
+    CustomFieldValue,
+    Device,
+    DeviceType,
+    Entity,
+    Interface,
+    Platform,
+    Site,
+)
 
 from .identity import build_location_index, device_name, resolve_site_name, role_for
 
@@ -24,6 +33,7 @@ __all__ = [
     "MANUFACTURER",
     "build_location_index",
     "devices_to_entities",
+    "ports_to_entities",
 ]
 
 MANUFACTURER = "Extreme Networks"
@@ -143,4 +153,59 @@ def devices_to_entities(
         kwargs = _device_kwargs(device, site_name=site_name, authority=authority, name_source=name_source)
         entities.append(Entity(device=Device(**kwargs)))
 
+    return entities
+
+
+_SPEED_RE = re.compile(r"^SPEED_(\d+)([MG])$")
+
+_DUPLEX_BY_TRANSMISSION_MODE = {"Full-duplex": "full", "Half-duplex": "half"}
+
+
+def _speed_kbps(port_speed: str | None) -> int | None:
+    """Parse e.g. 'SPEED_1000M' -> 1_000_000 Kbps. 'SPEED_AUTO' and unknown values -> None."""
+    match = _SPEED_RE.match(port_speed or "")
+    if not match:
+        return None
+    value, unit = match.groups()
+    return int(value) * (1_000_000 if unit == "G" else 1_000)
+
+
+def _port_custom_fields(port: dict) -> dict:
+    custom_fields = {"xiq_port_id": _cf_text(str(port["id"]))}
+    tagged_vlans = port.get("taggedVlans")
+    if tagged_vlans:
+        custom_fields["xiq_tagged_vlans"] = _cf_text(tagged_vlans)
+    lldp_system_name = port.get("lldpSystemName")
+    if lldp_system_name:
+        custom_fields["xiq_lldp_neighbor"] = _cf_text(lldp_system_name)
+    return custom_fields
+
+
+def ports_to_entities(ports: list[dict], *, device: str) -> list:
+    """Map one switch's wired portlist (client.get_wired_portlist) to Interface entities.
+
+    `mode` and `type` are deliberately not asserted: on FLEX-UNI/Fabric-Attach
+    deployments a port is mapped straight into an I-SID rather than a VLAN, so
+    portMode/taggedVlans don't describe real port configuration there, and
+    XIQ doesn't expose I-SID membership through any documented API endpoint
+    to assert instead. taggedVlans is preserved as a raw custom field so the
+    data isn't lost, rather than wired up as real (and potentially wrong)
+    VLAN links.
+    """
+    entities = []
+    for port in ports:
+        entities.append(
+            Entity(
+                interface=Interface(
+                    device=device,
+                    name=port["ifName"],
+                    enabled=port.get("status") == "UP",
+                    speed=_speed_kbps(port.get("portSpeed")),
+                    duplex=_DUPLEX_BY_TRANSMISSION_MODE.get(port.get("transmissionMode")),
+                    description=port.get("ifAlias") or None,
+                    custom_fields=_port_custom_fields(port),
+                    tags=["source:xiq"],
+                )
+            )
+        )
     return entities
