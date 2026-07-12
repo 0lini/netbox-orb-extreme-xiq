@@ -1,17 +1,18 @@
 """XIQ -> Diode entities: basic device/site/location inventory + interfaces.
 
-This intentionally asserts a small, fixed set of fields (name, serial,
-status, site, location) rather than a configurable one -- ownership of
-anything not listed here (rack, description, platform, ...) stays with
-NetBox/humans.
+Asserts name, serial, status, site, location, device_type/manufacturer,
+platform, description, and primary_ip4 whenever XIQ reports the underlying
+field -- all unconditionally (no configurable field-authority system, no
+opt-in flags), matching the rest of this worker's "just always sync what's
+available" convention.
 
-`custom_fields` and `tags` are always emitted alongside the fixed field set
--- they're provenance metadata (extreme/xiq/discovered tags,
-xiq_network_policy), not fields a human would meaningfully contest. Identity
-relies on the native `serial` field (see `_device_kwargs`) rather than a
-separate immutable ID custom field -- neither the real Cisco Meraki
-integration nor NetBox Labs' generic discovery backends carry one; they rely
-on native `serial` the same way.
+`custom_fields` and `tags` are always emitted alongside -- they're
+provenance metadata (extreme/xiq/discovered tags, xiq_network_policy), not
+fields a human would meaningfully contest. Identity relies on the native
+`serial` field (see `_device_kwargs`) rather than a separate immutable ID
+custom field -- neither the real Cisco Meraki integration nor NetBox Labs'
+generic discovery backends carry one; they rely on native `serial` the
+same way.
 """
 
 from __future__ import annotations
@@ -21,9 +22,11 @@ import re
 from netboxlabs.diode.sdk.ingester import (
     CustomFieldValue,
     Device,
+    DeviceType,
     Entity,
     Interface,
     Location,
+    Platform,
     Site,
     WirelessLAN,
 )
@@ -38,6 +41,8 @@ __all__ = [
     "radios_to_entities",
 ]
 
+MANUFACTURER = "Extreme Networks"
+
 # Vendor/product/lifecycle tags, mirroring the flat-tag pattern NetBox Labs'
 # own Cisco Meraki integration uses (e.g. "cisco", "meraki", "discovered")
 # rather than one namespaced "source:xiq" tag. Derived from bootstrap.TAGS so
@@ -47,6 +52,13 @@ PROVENANCE_TAGS = [tag["name"] for tag in bootstrap.TAGS]
 
 def _status_for(device: dict) -> str:
     return "active" if device.get("connected") else "offline"
+
+
+def _primary_ip4(device: dict) -> str | None:
+    ip = device.get("ip_address")
+    if not ip:
+        return None
+    return ip if "/" in ip else f"{ip}/32"
 
 
 def _cf_text(value: str) -> CustomFieldValue:
@@ -72,6 +84,16 @@ def _device_kwargs(device: dict, *, site_name: str, location: Location | None, n
     }
     if location is not None:
         kwargs["location"] = location
+    if device.get("product_type"):
+        kwargs["device_type"] = DeviceType(model=device["product_type"], manufacturer=MANUFACTURER)
+        kwargs["manufacturer"] = MANUFACTURER
+    if device.get("software_version"):
+        kwargs["platform"] = Platform(name=device["software_version"], manufacturer=MANUFACTURER)
+    if device.get("description"):
+        kwargs["description"] = device["description"]
+    primary_ip4 = _primary_ip4(device)
+    if primary_ip4:
+        kwargs["primary_ip4"] = primary_ip4
     return kwargs
 
 
