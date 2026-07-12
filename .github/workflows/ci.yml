@@ -61,5 +61,13 @@ jobs:
       - name: Install package + dev dependencies
         run: pip install -e ".[dev]"
 
+      - name: Install extremecloudiq-api (separately, see pyproject.toml)
+        # Needed even though this job only runs test_openapi_contract.py:
+        # pytest -m contract still has to *collect* every file under tests/
+        # before filtering by marker, and test_backend.py/test_client.py
+        # import extremecloudiq unconditionally at module level -- without
+        # this, collection itself fails before the marker filter ever runs.
+        run: pip install --no-deps "extremecloudiq-api==25.11.1.post3"
+
       - name: Contract check against live XIQ OpenAPI spec
         run: pytest -v -m contract
