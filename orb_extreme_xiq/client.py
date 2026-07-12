@@ -3,9 +3,10 @@
 Covers the read paths this worker needs:
   - GET /devices                              (via the official `extremecloudiq-api` SDK)
   - GET /locations/tree                       (via the official `extremecloudiq-api` SDK)
+  - GET /devices/radio-information             (via the official `extremecloudiq-api` SDK)
   - GET /xiq/v0/monitor/device/wired/portlist (per-switch wired port telemetry)
 
-The first two are documented in the current XIQ OpenAPI spec and covered by
+The first three are documented in the current XIQ OpenAPI spec and covered by
 the official generated SDK (https://github.com/extremenetworks/ExtremeCloudIQ-SDK-Python,
 PyPI: extremecloudiq-api). That SDK is generated in OpenAPI Generator's
 "oapg" style: request/response bodies are schema-validated Schema objects
@@ -42,7 +43,8 @@ from extremecloudiq.exceptions import ApiException
 
 DEFAULT_BASE_URL = "https://api.extremecloudiq.com"
 LEGACY_BASE_URL = "https://cloudapi.extremecloudiq.com"
-PAGE_LIMIT = 100  # XIQ's documented max for the `limit` query param
+PAGE_LIMIT = 100  # XIQ's documented max for the `limit` query param on /devices
+RADIO_PAGE_LIMIT = 50  # XIQ's documented max for /devices/radio-information (lower than /devices)
 
 
 class XiqApiError(RuntimeError):
@@ -167,6 +169,29 @@ class XiqClient:
         if parent_id is not None:
             params["parentId"] = parent_id
         return self._call(self._location_api.get_location_tree, query_params=frozendict.frozendict(params))
+
+    def get_radio_information(
+        self, *, device_ids: list[int], limit: int = RADIO_PAGE_LIMIT
+    ) -> Iterator[dict]:
+        """Yield one {device_id, radios: [...]} record per AP in device_ids, across all pages.
+
+        includeDisabledRadio can't be set to True: same boolean-query-param
+        serialization bug as get_location_tree's expand_children (see its
+        docstring). False (enabled radios only, XIQ's own server-side
+        default) is what this worker wants anyway, so it's simply omitted
+        rather than routed around.
+        """
+        page = 1
+        while True:
+            params: dict = {"page": page, "limit": limit, "deviceIds": device_ids}
+            payload = self._call(
+                self._device_api.list_devices_radio_information, query_params=frozendict.frozendict(params)
+            )
+            yield from payload.get("data", [])
+            total_pages = payload.get("total_pages", page)
+            if page >= total_pages:
+                break
+            page += 1
 
     def get_wired_portlist(self, device_id: int) -> list[dict]:
         """Return the wired port list for one switch device (see module docstring)."""

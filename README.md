@@ -48,12 +48,14 @@ Assurance license is enabled — with **zero code changes** to this worker. So
 
 ## Layout
 
-- `client.py` — thin XIQ client: paginated `/devices` and `/locations/tree` via
-  the official `extremecloudiq-api` SDK (token or user/pass), plus a plain
-  `requests` call for the legacy per-switch `/xiq/v0/monitor/device/wired/portlist`
-  endpoint the SDK doesn't cover.
+- `client.py` — thin XIQ client: paginated `/devices`, `/locations/tree` and
+  `/devices/radio-information` via the official `extremecloudiq-api` SDK
+  (token or user/pass), plus a plain `requests` call for the legacy
+  per-switch `/xiq/v0/monitor/device/wired/portlist` endpoint the SDK
+  doesn't cover.
 - `identity.py` — stable device naming + direct (1:1) site resolution.
-- `mapper.py` — XIQ → Diode entities: fixed basic device/site fields, custom fields, tags.
+- `mapper.py` — XIQ → Diode entities: fixed basic device/site fields, custom
+  fields, tags, plus switch-port and AP-radio/WLAN Interface sync.
 - `bootstrap.py` — one-time idempotent NetBox schema setup (custom fields + tags).
 - `backend.py` — worker entrypoint + standalone runner.
 - `agent.yaml` — example policy (bootstrap, site mapping, field authority).
@@ -235,6 +237,50 @@ doesn't expose I-SID membership to assert instead. VLAN data (`taggedVlans`)
 isn't currently mapped at all, rather than wired up as a real (and
 potentially wrong) VLAN link.
 
+## Wireless AP radios and WLANs
+
+Every device whose `device_function` is an AP (see
+`identity.AP_DEVICE_FUNCTIONS` / `identity.is_ap`) has its radios fetched via
+one bulk `GET /devices/radio-information` call covering every AP in the same
+sync (`deviceIds` query param) rather than one call per device, since XIQ
+exposes it that way. Each radio maps to a NetBox `Interface`: `name`,
+`type` (from `mode`, e.g. `_11ax_5g` → `ieee802.11ax`; `_11be_*`/Wi-Fi 7 has
+no confirmed NetBox choice as of this writing, left unset), `rf_role` (always
+`"ap"`), `tx_power` (from `power`), `primary_mac_address` (from
+`mac_address`), and `rf_channel_frequency`/`rf_channel_width` computed from
+`channel_number`/`frequency`/`channel_width` via the standard IEEE 802.11
+channel-numbering formulas (not an XIQ-specific guess). NetBox's `rf_channel`
+string field (e.g. `"5g-36-5180-20"`) isn't asserted -- its exact valid format
+wasn't confirmed against a live NetBox instance, and getting a channel
+identifier subtly wrong seemed worse than leaving it unset.
+
+Each radio's currently-broadcast SSIDs (`wlans[]` in the API response)
+become NetBox `WirelessLAN` entities, deduped by SSID name across every AP in
+the sync, and linked from the radio `Interface` via NetBox's native
+`wireless_lans` field. `auth_type` is mapped from `ssid_security_type`
+(`TYPE_802DOT1X` → `wpa-enterprise`, `PSK`/`PPSK` → `wpa-personal`, `WEP` →
+`wep`, anything else including `OPEN`/`ENHANCED_OPEN` → `open`, mirroring the
+real Cisco Meraki integration's own any-other-value-is-open fallback).
+`auth_cipher` (AES/TKIP-level detail) is **not** set -- that would require an
+additional `GET /ssids` call this worker doesn't make (a candidate for later,
+see Roadmap). `status` is always asserted as `"active"`: the per-radio
+`ssid_status` field (`OPEN`/`CLOSED`) reads as broadcast visibility (hidden
+vs. advertised SSID), not the SSID's own enabled/disabled configuration state,
+so it isn't used for this. WLANs aren't site-scoped (no `scope_site`): unlike
+a Meraki network, a XIQ network policy isn't inherently 1:1 with one site, and
+the same SSID can legitimately broadcast from APs in different sites.
+
+**Not yet verified against a live XIQ tenant.** Every field name and enum
+value above comes from XIQ's documented OpenAPI spec, not a real recorded
+response -- this project's own established practice (see `test_mapper.py`'s
+recorded-response fixtures for the device/port paths) is to confirm mapper
+assumptions against real API output before trusting them, and that
+verification step is still outstanding here specifically for
+`/devices/radio-information`. Spot-check a real response's field names
+(`radios[].name`/`mac_address`/`mode`/`frequency`/`channel_number`/
+`channel_width`/`power`, `radios[].wlans[].ssid`/`network_policy_name`/
+`ssid_security_type`) before relying on this in production.
+
 ## Roadmap
 
 This project deliberately starts with a small, fixed field set. Candidates
@@ -249,3 +295,9 @@ for later, once the basics are proven out:
 - I-SID / Fabric-Attach service mapping, if XIQ ever exposes it via a documented endpoint.
 - VLANs / Prefixes from network policies.
 - Move bootstrap custom-field creation to Diode if your SDK supports it.
+- Verify the AP radio/WLAN sync field mapping against a real recorded
+  `/devices/radio-information` response (see that section above).
+- `auth_cipher` on synced WLANs, via an additional `GET /ssids` call for
+  `access_security.encryption_method` (CCMP/TKIP/...) -- not fetched today.
+- NetBox's `rf_channel` string field on radio Interfaces, once its exact
+  valid format is confirmed against a live NetBox instance.
