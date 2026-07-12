@@ -97,8 +97,7 @@ class Backend(WorkerBackend):
             site_scope=set(scope_sites) if scope_sites else None,
         )
 
-        if _cfg(config, "INCLUDE_WIRED_PORTS", False):
-            entities.extend(self._port_entities(client, devices, name_source, policy_name))
+        entities.extend(self._port_entities(client, devices, name_source, policy_name))
 
         return entities
 
@@ -106,9 +105,7 @@ class Backend(WorkerBackend):
     def _port_entities(
         client: XiqClient, devices: list[dict], name_source: str, policy_name: str
     ) -> list[Entity]:
-        """One get_wired_portlist call per switch -- opt-in (INCLUDE_WIRED_PORTS)
-        since it's N extra requests against an undocumented XIQ endpoint.
-        """
+        """One get_wired_portlist call per switch."""
         entities: list[Entity] = []
         for device in devices:
             if not is_switch(device.get("device_function")):

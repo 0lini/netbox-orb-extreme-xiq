@@ -203,11 +203,10 @@ this still holds for your SDK version: `python -c "import netboxlabs.diode.sdk.i
 | `default_site` | site for devices with a missing/unresolvable location |
 | `name_source` | `hostname` (default) or `serial` |
 | `scope.sites` | limit sync to specific resolved sites |
-| `INCLUDE_WIRED_PORTS` | also sync switch ports as Interface entities (default `false`; opt-in since it's one extra API call per switch, against the undocumented legacy endpoint above) |
 
-## Wired switch ports (`INCLUDE_WIRED_PORTS`)
+## Wired switch ports
 
-When enabled, every device whose `device_function` is a switch (see
+Every device whose `device_function` is a switch (see
 `identity.SWITCH_DEVICE_FUNCTIONS` / `identity.is_switch`) gets one `get_wired_portlist` call,
 mapped to NetBox `Interface` entities: `name`, link state (`mark_connected`),
 `speed` (parsed from `portSpeed`, Kbps), `duplex`, `description` (`ifAlias`), plus

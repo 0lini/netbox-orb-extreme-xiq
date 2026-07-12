@@ -93,9 +93,9 @@ def test_run_produces_a_site_and_a_device_entity(monkeypatch):
     assert entities[1].device.site.name == "Floor 1"
 
 
-def test_run_with_include_wired_ports_maps_switch_interfaces(monkeypatch):
-    """Exercises the INCLUDE_WIRED_PORTS path end to end, including the
-    switch-detection check (identity.is_switch) that only this path calls.
+def test_run_maps_switch_interfaces(monkeypatch):
+    """Exercises wired-port sync end to end, including the switch-detection
+    check (identity.is_switch) that only this path calls.
 
     Includes an AP alongside the switch so this also acts as a regression
     test: switch-detection must key off the device's raw device_function
@@ -153,7 +153,6 @@ def test_run_with_include_wired_ports_maps_switch_interfaces(monkeypatch):
         BOOTSTRAP=False,
         XIQ_API_TOKEN="tok",
         default_site="XIQ-Unmapped",
-        INCLUDE_WIRED_PORTS=True,
     )
     policy = Policy(config=config, scope={"sites": ["*"]})
 

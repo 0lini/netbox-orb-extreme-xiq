@@ -20,8 +20,8 @@ SWITCH_DEVICE_FUNCTIONS = frozenset({"SWITCH", "SWITCH_HAC", "SWITCH_DELL"})
 
 # XiqDeviceFunction enum values (xcloudiq-openapi.yaml) -> NetBox device role slug.
 ROLE_BY_DEVICE_FUNCTION = {
-    **dict.fromkeys(SWITCH_DEVICE_FUNCTIONS, "network-switch"),
-    "AP": "wireless-ap",
+    **dict.fromkeys(SWITCH_DEVICE_FUNCTIONS, "Switch"),
+    "AP": "Wireless AP",
     "ROUTER": "router",
     "ROUTER_AS_L2_VPN_GATEWAY": "router",
     "ROUTER_AS_L3_VPN_GATEWAY": "router",

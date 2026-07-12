@@ -57,9 +57,9 @@ def test_device_name_serial_source_prefers_serial_over_hostname():
 
 
 def test_role_for_known_and_unknown_device_functions():
-    assert role_for("AP") == "wireless-ap"
-    assert role_for("SWITCH") == "network-switch"
-    assert role_for("SWITCH_HAC") == "network-switch"
+    assert role_for("AP") == "Wireless AP"
+    assert role_for("SWITCH") == "Switch"
+    assert role_for("SWITCH_HAC") == "Switch"
     assert role_for("ROUTER") == "router"
     assert role_for("SOMETHING_NEW") == "network-device"
     assert role_for(None) == "network-device"
