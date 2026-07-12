@@ -22,7 +22,7 @@ dependencies = [
     # don't conflict with anything else in this project.
     "frozendict~=2.4.7",
     "certifi>=14.5.14",
-    "python-dateutil~=2.7.0",
+    "python-dateutil~=2.9.0.post0",
     "urllib3~=2.7.0",
     # The Orb Agent image already ships these, but pin them here so the
     # package is testable/runnable standalone too. Confirm the exact versions
