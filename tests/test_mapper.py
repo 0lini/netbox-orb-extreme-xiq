@@ -73,9 +73,9 @@ def test_devices_map_directly_to_their_own_xiq_location_as_site(stub_sdk):
 def test_device_carries_identity_custom_fields_tags_site_and_status(stub_sdk):
     device = _devices(_map())[0]
 
-    assert cf(device._kw["custom_fields"]["xiq_device_id"]._kw) == "111"
+    assert cf(device._kw["custom_fields"]["xiq_network_policy"]._kw) == "Corp-WiFi"
     assert device._kw["site"]._kw["name"] == "Floor 1"
-    assert device._kw["tags"] == ["source:xiq"]
+    assert device._kw["tags"] == ["extreme-networks", "xiq", "discovered"]
     assert device._kw["status"] == "active"
     assert "role" not in device._kw
     assert "device_type" not in device._kw
@@ -83,9 +83,10 @@ def test_device_carries_identity_custom_fields_tags_site_and_status(stub_sdk):
     assert "primary_ip4" not in device._kw
 
 
-def test_offline_device_status(stub_sdk):
+def test_switch_with_no_policy_drops_empty_custom_field_and_is_offline(stub_sdk):
     switch = _devices(_map())[1]
 
+    assert "xiq_network_policy" not in switch._kw["custom_fields"]
     assert switch._kw["status"] == "offline"
 
 
@@ -128,20 +129,23 @@ def _interfaces(entities):
     return [e._kw["interface"] for e in entities]
 
 
-def test_ports_to_entities_maps_link_state_speed_and_duplex(stub_sdk):
+def test_ports_to_entities_maps_link_state_speed_duplex_and_type(stub_sdk):
     interfaces = _interfaces(mapper.ports_to_entities(PORTS, device="sw-idf1"))
 
     up_port = interfaces[0]
     assert up_port._kw["device"] == "sw-idf1"
     assert up_port._kw["name"] == "1/1"
-    assert up_port._kw["enabled"] is True
+    assert up_port._kw["mark_connected"] is True
+    assert "enabled" not in up_port._kw  # XIQ has no admin-state signal; not asserted
     assert up_port._kw["speed"] == 1_000_000
     assert up_port._kw["duplex"] == "full"
+    assert up_port._kw["type"] == "1000base-t"  # guessed from SPEED_1000M
 
     down_port = interfaces[1]
-    assert down_port._kw["enabled"] is False
+    assert down_port._kw["mark_connected"] is False
     assert down_port._kw["speed"] is None  # SPEED_AUTO isn't a real link speed
     assert down_port._kw["duplex"] is None  # "N/A" has no netbox equivalent
+    assert down_port._kw["type"] is None  # SPEED_AUTO has no known type mapping
 
 
 def test_ports_to_entities_carries_identity_custom_fields_and_tags(stub_sdk):
@@ -149,17 +153,16 @@ def test_ports_to_entities_carries_identity_custom_fields_and_tags(stub_sdk):
 
     up_port_cf = interfaces[0]._kw["custom_fields"]
     assert cf(up_port_cf["xiq_port_id"]._kw) == "2166175345772344"
-    assert interfaces[0]._kw["tags"] == ["source:xiq"]
+    assert interfaces[0]._kw["tags"] == ["extreme-networks", "xiq", "discovered"]
 
     down_port_cf = interfaces[1]._kw["custom_fields"]
     assert cf(down_port_cf["xiq_port_id"]._kw) == "2166175345772421"
     assert interfaces[1]._kw["description"] == "uplink to core"
 
 
-def test_ports_to_entities_does_not_assert_mode_or_type(stub_sdk):
-    """mode/type are intentionally left unset -- see ports_to_entities docstring
+def test_ports_to_entities_does_not_assert_mode(stub_sdk):
+    """mode is intentionally left unset -- see ports_to_entities docstring
     (FLEX-UNI/Fabric-Attach ports map into an I-SID, not a VLAN)."""
     interfaces = _interfaces(mapper.ports_to_entities(PORTS, device="sw-idf1"))
 
     assert "mode" not in interfaces[0]._kw
-    assert "type" not in interfaces[0]._kw

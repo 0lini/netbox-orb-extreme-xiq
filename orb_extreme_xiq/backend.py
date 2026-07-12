@@ -18,7 +18,7 @@ from worker.models import Config, Metadata, Policy
 
 from . import bootstrap, mapper
 from .client import DEFAULT_BASE_URL, XiqClient
-from .identity import role_for
+from .identity import device_name, is_switch
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ class Backend(WorkerBackend):
         config = policy.config
 
         if _cfg(config, "BOOTSTRAP", False):
-            logger.info("Policy %s: running bootstrap (custom fields + source:xiq tag)", policy_name)
+            logger.info("Policy %s: running bootstrap (custom fields + provenance tags)", policy_name)
             bootstrap.ensure_schema(
                 _cfg_or_env(config, "NETBOX_API_URL"),
                 _cfg_or_env(config, "NETBOX_API_TOKEN"),
@@ -97,8 +97,7 @@ class Backend(WorkerBackend):
             site_scope=set(scope_sites) if scope_sites else None,
         )
 
-        if _cfg(config, "INCLUDE_WIRED_PORTS", False):
-            entities.extend(self._port_entities(client, devices, name_source, policy_name))
+        entities.extend(self._port_entities(client, devices, name_source, policy_name))
 
         return entities
 
@@ -106,15 +105,13 @@ class Backend(WorkerBackend):
     def _port_entities(
         client: XiqClient, devices: list[dict], name_source: str, policy_name: str
     ) -> list[Entity]:
-        """One get_wired_portlist call per switch -- opt-in (INCLUDE_WIRED_PORTS)
-        since it's N extra requests against an undocumented XIQ endpoint.
-        """
+        """One get_wired_portlist call per switch."""
         entities: list[Entity] = []
         for device in devices:
-            if role_for(device.get("device_function")) != "network-switch":
+            if not is_switch(device.get("device_function")):
                 continue
             ports = client.get_wired_portlist(device["id"])
-            entities.extend(mapper.ports_to_entities(ports, device=mapper.device_name(device, name_source)))
+            entities.extend(mapper.ports_to_entities(ports, device=device_name(device, name_source)))
         logger.info("Policy %s: mapped %d wired port entities", policy_name, len(entities))
         return entities
 

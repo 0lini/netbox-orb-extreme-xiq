@@ -10,7 +10,7 @@
 #
 # First-run flow (mirrors Meraki/ACI):
 #   1. Set BOOTSTRAP: true and provide NETBOX_API_URL/NETBOX_API_TOKEN so the
-#      custom fields + source tag get created. Run once.
+#      custom fields + provenance tags get created. Run once.
 #   2. Set BOOTSTRAP: false for all subsequent scheduled runs.
 # Tip: set common.diode.dry_run: true first to inspect JSON before ingesting.
 #
@@ -54,10 +54,6 @@ orb:
 
           name_source: hostname            # or "serial" for max stability
           default_site: "XIQ-Unmapped"
-
-          # INCLUDE_WIRED_PORTS: false     # true to also sync switch ports as
-                                            # Interface entities (1 extra API call
-                                            # per switch; see README)
 
           # XIQ locations map 1:1 to NetBox sites (same name); default_site
           # is used only when a device's location is missing/unresolvable.

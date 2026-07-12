@@ -5,6 +5,7 @@ from __future__ import annotations
 from orb_extreme_xiq.identity import (
     build_location_index,
     device_name,
+    is_switch,
     resolve_site_name,
     role_for,
 )
@@ -56,9 +57,18 @@ def test_device_name_serial_source_prefers_serial_over_hostname():
 
 
 def test_role_for_known_and_unknown_device_functions():
-    assert role_for("AP") == "wireless-ap"
-    assert role_for("SWITCH") == "network-switch"
-    assert role_for("SWITCH_HAC") == "network-switch"
+    assert role_for("AP") == "Wireless AP"
+    assert role_for("SWITCH") == "Switch"
+    assert role_for("SWITCH_HAC") == "Switch"
     assert role_for("ROUTER") == "router"
     assert role_for("SOMETHING_NEW") == "network-device"
     assert role_for(None) == "network-device"
+
+
+def test_is_switch_matches_every_switch_device_function_case_insensitively():
+    assert is_switch("SWITCH")
+    assert is_switch("switch_hac")
+    assert is_switch("SWITCH_DELL")
+    assert not is_switch("AP")
+    assert not is_switch("ROUTER")
+    assert not is_switch(None)
