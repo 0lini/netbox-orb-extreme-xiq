@@ -59,6 +59,33 @@ def is_ap(device_function: str | None) -> bool:
     return _device_function_in(device_function, AP_DEVICE_FUNCTIONS)
 
 
+# XIQ prefixes product_type with "FabricEngine_" for any switch running
+# Fabric Engine OS (e.g. "FabricEngine_5320_48P_8XE"). The NetBox Device
+# Type Library's (netbox-community/devicetype-library, device-types/Extreme
+# Networks/) convention for these is "<model>-FabricEngine" -- confirmed
+# directly against the library for several models (e.g. model:
+# 5320-48P-8XE-FabricEngine) -- so the prefix moves to a suffix and
+# underscores become hyphens, always, for every FabricEngine_-prefixed code.
+_FABRIC_ENGINE_PREFIX = "FabricEngine_"
+
+
+def device_type_model_for(product_type: str | None) -> str | None:
+    """Map a XIQ product_type to its NetBox Device Type Library model name.
+
+    product_type values without the FabricEngine_ prefix (e.g. "VSP_SWITCH",
+    a generic code that doesn't identify a specific physical model at all,
+    unlike the precise FabricEngine_* SKUs) are passed through unchanged --
+    there's no signal that they need any suffix, and guessing one would
+    misrepresent real hardware.
+    """
+    if not product_type:
+        return None
+    if product_type.startswith(_FABRIC_ENGINE_PREFIX):
+        model = product_type[len(_FABRIC_ENGINE_PREFIX) :].replace("_", "-")
+        return f"{model}-FabricEngine"
+    return product_type
+
+
 def device_name(device: dict, name_source: str = "hostname") -> str:
     """Deterministic device name; falls back to serial/service tag/MAC/id."""
     serial = device.get("serial_number") or device.get("service_tag")

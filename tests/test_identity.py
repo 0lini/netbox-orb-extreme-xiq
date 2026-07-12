@@ -5,6 +5,7 @@ from __future__ import annotations
 from orb_extreme_xiq.identity import (
     build_location_index,
     device_name,
+    device_type_model_for,
     expand_location_paths,
     is_ap,
     is_switch,
@@ -109,3 +110,20 @@ def test_is_ap_matches_only_the_ap_device_function_case_insensitively():
     assert not is_ap("SWITCH")
     assert not is_ap("ROUTER")
     assert not is_ap(None)
+
+
+def test_device_type_model_for_moves_fabricengine_prefix_to_a_suffix():
+    # Confirmed against netbox-community/devicetype-library's Extreme
+    # Networks device types, e.g. model: 5320-48P-8XE-FabricEngine.
+    assert device_type_model_for("FabricEngine_5320_48P_8XE") == "5320-48P-8XE-FabricEngine"
+    assert device_type_model_for("FabricEngine_5520_48T") == "5520-48T-FabricEngine"
+    assert device_type_model_for("FabricEngine_7520_48Y_8C") == "7520-48Y-8C-FabricEngine"
+    assert device_type_model_for("FabricEngine_7720_32C") == "7720-32C-FabricEngine"
+
+
+def test_device_type_model_for_passes_through_codes_without_the_prefix():
+    # VSP_SWITCH is a generic XIQ code that doesn't identify a specific
+    # physical model -- no signal it should get a -FabricEngine suffix.
+    assert device_type_model_for("VSP_SWITCH") == "VSP_SWITCH"
+    assert device_type_model_for(None) is None
+    assert device_type_model_for("") is None

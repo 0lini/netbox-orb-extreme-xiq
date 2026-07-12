@@ -142,6 +142,17 @@ def test_device_with_unknown_location_gets_default_site_and_no_location(stub_sdk
     assert "location" not in device_entity._kw
 
 
+def test_device_type_model_goes_through_the_fabricengine_suffix_mapping(stub_sdk):
+    device = mapper.devices_to_entities(
+        [{**DEVICES[0], "product_type": "FabricEngine_5320_48P_8XE"}],
+        location_index=mapper.build_location_index(LOC_TREE),
+        default_site="XIQ-Unmapped",
+    )
+    device_entity = _devices(device)[0]
+
+    assert device_entity._kw["device_type"]._kw["model"] == "5320-48P-8XE-FabricEngine"
+
+
 def test_site_scope_filters_devices_and_sites_outside_scope(stub_sdk):
     in_scope = _map(site_scope={"HQ"})
     assert len(_devices(in_scope)) == 2
