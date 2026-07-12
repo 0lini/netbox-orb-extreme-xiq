@@ -59,16 +59,7 @@ orb:
                                             # Interface entities (1 extra API call
                                             # per switch; see README)
 
-          # Meraki-style: XIQ location name -> NetBox site name.
-          # Many locations can map to one site (consolidation).
-          location_site_mapping:
-            "HQ - Floor 1": "Corporate-HQ"
-            "HQ - Floor 2": "Corporate-HQ"
-            "Branch A": "SITE-002"
-
-          # Field authority = what XIQ owns (and therefore what Assurance will
-          # flag as drift). Start from the default set and tweak:
-          # field_authority_remove: ["site"]   # let humans own site after create
-          # field_authority_add: ["comments"]
+          # XIQ locations map 1:1 to NetBox sites (same name); default_site
+          # is used only when a device's location is missing/unresolvable.
         scope:
-          sites: ["*"]                     # or ["Corporate-HQ", "SITE-002"]
+          sites: ["*"]                     # or ["HQ - Floor 1", "Branch A"]
