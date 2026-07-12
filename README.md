@@ -10,14 +10,16 @@ Agent Pro / private registry required.
 XIQ cloud API ─► orb_extreme_xiq (collector + mapper) ─► Diode ─► NetBox (+Assurance if licensed)
 ```
 
-## Scope: basic inventory only (for now)
+## Scope
 
-This worker deliberately keeps a small footprint: devices (name, serial,
-status, site, location) and, optionally, their interfaces. It does **not**
-assert device_type, platform, description, or primary IP — those stay
-entirely NetBox/human-owned. This keeps the field set, the custom fields,
-and the mapping code small and easy to reason about. See the Roadmap for
-what's intentionally left out for now.
+This worker asserts a fixed set of Device fields whenever XIQ reports the
+underlying data — name, serial, status, site, location, device_type +
+manufacturer, platform, description, primary IP — plus switch ports and
+AP radios/WLANs. There's no configurable field-authority system: a field
+is either always asserted when XIQ has the data, or never asserted at all.
+Fields with no XIQ equivalent (rack, tenant, comments, asset_tag, position,
+...) stay entirely NetBox/human-owned. See the Roadmap for what's
+intentionally left out for now.
 
 ## Assurance-ready by design
 
@@ -26,9 +28,10 @@ against. Any source that ingests via Diode surfaces as deviations once an
 Assurance license is enabled — with **zero code changes** to this worker. So
 "future-proofing" just means producing clean, stable Diode output:
 
-- **Fixed, minimal field set.** The worker only ever asserts name, serial,
-  status, and site — never rack, tenant, description, etc. — so human-owned
-  fields can never generate phantom drift.
+- **Fixed field set.** The worker only ever asserts fields XIQ actually
+  reports (name, serial, status, site, location, device_type, platform,
+  description, primary IP) — never rack, tenant, comments, etc. — so
+  human-owned fields can never generate phantom drift.
 - **Stable identity** (`identity.py`). Deterministic device names; `serial` is
   asserted natively on the NetBox Device rather than via a separate immutable
   ID custom field -- neither the real Cisco Meraki integration nor NetBox
@@ -288,15 +291,8 @@ verification step is still outstanding here specifically for
 
 ## Roadmap
 
-This project deliberately starts with a small, fixed field set. Candidates
-for later, once the basics are proven out:
-
-- Optional/configurable fields beyond name/serial/status/site (device_type,
-  platform, description, primary IP) — likely via a field-authority-style
-  opt-in again, not on by default.
-- `xiq_tagged_vlans` / `xiq_lldp_neighbor` port custom fields, and
-  consolidating multiple XIQ locations into one NetBox site, if a deployment
-  needs either.
+- `xiq_tagged_vlans` / `xiq_lldp_neighbor` port custom fields, if a
+  deployment needs either.
 - I-SID / Fabric-Attach service mapping, if XIQ ever exposes it via a documented endpoint.
 - VLANs / Prefixes from network policies.
 - Move bootstrap custom-field creation to Diode if your SDK supports it.

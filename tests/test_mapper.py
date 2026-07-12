@@ -37,6 +37,7 @@ DEVICES = [
         "network_policy_name": "Corp-WiFi",
         "mac_address": "AA:BB:CC:00:00:11",
         "org_id": "org-9",
+        "description": "Lobby AP",
     },
     {
         "id": 222,
@@ -102,9 +103,23 @@ def test_device_carries_identity_custom_fields_tags_site_location_and_status(stu
     assert device._kw["tags"] == ["extreme-networks", "xiq", "discovered"]
     assert device._kw["status"] == "active"
     assert "role" not in device._kw
-    assert "device_type" not in device._kw
-    assert "platform" not in device._kw
-    assert "primary_ip4" not in device._kw
+    assert device._kw["device_type"]._kw["model"] == "AP305C"
+    assert device._kw["device_type"]._kw["manufacturer"] == "Extreme Networks"
+    assert device._kw["manufacturer"] == "Extreme Networks"
+    assert device._kw["platform"]._kw["name"] == "10.6r3"
+    assert device._kw["description"] == "Lobby AP"
+    assert device._kw["primary_ip4"] == "10.0.0.5/32"
+
+
+def test_device_without_software_version_or_description_omits_them(stub_sdk):
+    switch = _devices(_map())[1]
+
+    # 5420F product_type is present in the fixture, so device_type/manufacturer
+    # are still asserted; only fields with no underlying XIQ data are omitted.
+    assert switch._kw["device_type"]._kw["model"] == "5420F"
+    assert "platform" not in switch._kw
+    assert "description" not in switch._kw
+    assert switch._kw["primary_ip4"] == "10.0.0.6/32"
 
 
 def test_switch_with_no_policy_drops_empty_custom_field_and_is_offline(stub_sdk):
