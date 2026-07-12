@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from orb_extreme_xiq import mapper
 
 from .conftest import cf
@@ -47,13 +45,10 @@ DEVICES = [
     },
 ]
 
-LOCATION_SITE_MAPPING = {"HQ": "Corporate-HQ"}  # both floors roll up to HQ -> one site
-
 
 def _map(**overrides):
     kwargs = {
         "location_index": mapper.build_location_index(LOC_TREE),
-        "location_site_mapping": LOCATION_SITE_MAPPING,
         "default_site": "XIQ-Unmapped",
     }
     kwargs.update(overrides)
@@ -61,54 +56,42 @@ def _map(**overrides):
 
 
 def _site_entities(entities):
-    return [
-        e for e in entities if "site" in e._kw and getattr(e._kw.get("site"), "_kw", {}).get("custom_fields")
-    ]
+    return [e._kw["site"] for e in entities if "site" in e._kw]
 
 
 def _devices(entities):
     return [e._kw["device"] for e in entities if "device" in e._kw]
 
 
-def test_consolidates_multiple_locations_into_one_site(stub_sdk):
+def test_devices_map_directly_to_their_own_xiq_location_as_site(stub_sdk):
     entities = _map()
     site_entities = _site_entities(entities)
-    assert len(site_entities) == 1
 
-    xiq_locations_cf = site_entities[0]._kw["site"]._kw["custom_fields"]["xiq_locations"]._kw
-    assert json.loads(cf(xiq_locations_cf)) == ["HQ"]
+    assert {s._kw["name"] for s in site_entities} == {"Floor 1", "Floor 2"}
 
 
-def test_device_carries_identity_custom_fields_tags_and_site(stub_sdk):
+def test_device_carries_identity_custom_fields_tags_site_and_status(stub_sdk):
     device = _devices(_map())[0]
 
     assert cf(device._kw["custom_fields"]["xiq_device_id"]._kw) == "111"
-    assert cf(device._kw["custom_fields"]["xiq_network_policy"]._kw) == "Corp-WiFi"
-    assert device._kw["site"]._kw["name"] == "Corporate-HQ"
-    assert "source:xiq" in device._kw["tags"]
-    assert "xiq-org:org-9" in device._kw["tags"]
-    assert device._kw["role"] == "wireless-ap"
+    assert device._kw["site"]._kw["name"] == "Floor 1"
+    assert device._kw["tags"] == ["source:xiq"]
     assert device._kw["status"] == "active"
+    assert "role" not in device._kw
+    assert "device_type" not in device._kw
+    assert "platform" not in device._kw
+    assert "primary_ip4" not in device._kw
 
 
-def test_switch_with_no_policy_drops_empty_custom_field_and_is_offline(stub_sdk):
+def test_offline_device_status(stub_sdk):
     switch = _devices(_map())[1]
 
-    assert "xiq_network_policy" not in switch._kw["custom_fields"]
     assert switch._kw["status"] == "offline"
 
 
-def test_dropping_site_from_authority_omits_it_with_no_redrift(stub_sdk):
-    authority = set(mapper.DEFAULT_AUTHORITY) - {"site"}
-    entities = _map(authority=authority)
-
-    assert "site" not in _devices(entities)[0]._kw
-    assert not _site_entities(entities)
-
-
 def test_site_scope_filters_devices_and_sites_outside_scope(stub_sdk):
-    in_scope = _map(site_scope={"Corporate-HQ"})
-    assert len(_devices(in_scope)) == 2  # both devices resolve into Corporate-HQ
+    in_scope = _map(site_scope={"Floor 1", "Floor 2"})
+    assert len(_devices(in_scope)) == 2
 
     out_of_scope = _map(site_scope={"Some-Other-Site"})
     assert _devices(out_of_scope) == []
@@ -166,13 +149,10 @@ def test_ports_to_entities_carries_identity_custom_fields_and_tags(stub_sdk):
 
     up_port_cf = interfaces[0]._kw["custom_fields"]
     assert cf(up_port_cf["xiq_port_id"]._kw) == "2166175345772344"
-    assert cf(up_port_cf["xiq_tagged_vlans"]._kw) == "500,867"
-    assert "xiq_lldp_neighbor" not in up_port_cf  # blank lldpSystemName -> omitted
     assert interfaces[0]._kw["tags"] == ["source:xiq"]
 
     down_port_cf = interfaces[1]._kw["custom_fields"]
-    assert cf(down_port_cf["xiq_lldp_neighbor"]._kw) == "core-sw-01"
-    assert "xiq_tagged_vlans" not in down_port_cf  # blank taggedVlans -> omitted
+    assert cf(down_port_cf["xiq_port_id"]._kw) == "2166175345772421"
     assert interfaces[1]._kw["description"] == "uplink to core"
 
 
