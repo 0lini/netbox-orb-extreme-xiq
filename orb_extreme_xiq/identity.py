@@ -45,14 +45,18 @@ def role_for(device_function: str | None) -> str:
     return ROLE_BY_DEVICE_FUNCTION.get(device_function.upper(), DEFAULT_ROLE)
 
 
+def _device_function_in(device_function: str | None, functions: frozenset[str]) -> bool:
+    return bool(device_function) and device_function.upper() in functions
+
+
 def is_switch(device_function: str | None) -> bool:
     """Whether a XIQ device_function is a switch (see SWITCH_DEVICE_FUNCTIONS)."""
-    return bool(device_function) and device_function.upper() in SWITCH_DEVICE_FUNCTIONS
+    return _device_function_in(device_function, SWITCH_DEVICE_FUNCTIONS)
 
 
 def is_ap(device_function: str | None) -> bool:
     """Whether a XIQ device_function is an access point (see AP_DEVICE_FUNCTIONS)."""
-    return bool(device_function) and device_function.upper() in AP_DEVICE_FUNCTIONS
+    return _device_function_in(device_function, AP_DEVICE_FUNCTIONS)
 
 
 def device_name(device: dict, name_source: str = "hostname") -> str:
@@ -104,3 +108,23 @@ def resolve_location(
     if entry is None:
         return default_site, []
     return entry["site_name"], entry["location_path"]
+
+
+def expand_location_paths(
+    paths: set[tuple[str, tuple[str, ...]]],
+) -> list[tuple[str, tuple[str, ...]]]:
+    """Expand a set of (site_name, location_path) tuples into every distinct
+    (site_name, ancestor_path) pair needed to represent the full nested
+    hierarchy -- one entry per Building/Floor/etc. level actually in use,
+    deduped, with every path's ancestors ordered before itself so a caller
+    can thread `parent` references through the result in a single pass.
+    """
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+    ancestors: list[tuple[str, tuple[str, ...]]] = []
+    for site_name, path in sorted(paths):
+        for depth in range(1, len(path) + 1):
+            key = (site_name, path[:depth])
+            if key not in seen:
+                seen.add(key)
+                ancestors.append(key)
+    return ancestors

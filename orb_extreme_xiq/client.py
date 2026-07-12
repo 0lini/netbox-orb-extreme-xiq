@@ -114,19 +114,30 @@ class XiqClient:
         401 (mirrors the legacy-endpoint retry below) before giving up.
         """
         self._ensure_token()
-        try:
-            result = fn(skip_deserialization=True, **kwargs)
-        except ApiException as exc:
-            if exc.status == 401 and self._username and self._password:
-                self._token_expiry = 0.0
-                self._login()
-                try:
-                    result = fn(skip_deserialization=True, **kwargs)
-                except ApiException as retry_exc:
-                    raise XiqApiError(f"XIQ API error {retry_exc.status}: {retry_exc.body}") from retry_exc
-            else:
+        for attempt in (1, 2):
+            try:
+                result = fn(skip_deserialization=True, **kwargs)
+                break
+            except ApiException as exc:
+                if attempt == 1 and exc.status == 401 and self._username and self._password:
+                    self._token_expiry = 0.0
+                    self._login()
+                    continue
                 raise XiqApiError(f"XIQ API error {exc.status}: {exc.body}") from exc
         return json.loads(result.response.data)
+
+    def _paginate(self, fn, params: dict) -> Iterator[dict]:
+        """Yield every item across all pages of a paginated list endpoint.
+        `params` must already include the first "page" and "limit"."""
+        page = params["page"]
+        while True:
+            payload = self._call(fn, query_params=frozendict.frozendict(params))
+            yield from payload.get("data", [])
+            total_pages = payload.get("total_pages", page)
+            if page >= total_pages:
+                break
+            page += 1
+            params = {**params, "page": page}
 
     def get_devices(
         self, *, location_ids: list[int] | None = None, limit: int = PAGE_LIMIT
@@ -137,17 +148,10 @@ class XiqClient:
         other fields the mapper needs are present (the default BASIC view
         omits them).
         """
-        page = 1
-        while True:
-            params: dict = {"page": page, "limit": limit, "views": ["FULL"]}
-            if location_ids:
-                params["locationIds"] = location_ids
-            payload = self._call(self._device_api.list_devices, query_params=frozendict.frozendict(params))
-            yield from payload.get("data", [])
-            total_pages = payload.get("total_pages", page)
-            if page >= total_pages:
-                break
-            page += 1
+        params: dict = {"page": 1, "limit": limit, "views": ["FULL"]}
+        if location_ids:
+            params["locationIds"] = location_ids
+        yield from self._paginate(self._device_api.list_devices, params)
 
     def get_location_tree(self, *, parent_id: int | None = None, expand_children: bool = True) -> list[dict]:
         """Return the XIQ location hierarchy as nested {id, name, children} dicts.
@@ -181,17 +185,8 @@ class XiqClient:
         default) is what this worker wants anyway, so it's simply omitted
         rather than routed around.
         """
-        page = 1
-        while True:
-            params: dict = {"page": page, "limit": limit, "deviceIds": device_ids}
-            payload = self._call(
-                self._device_api.list_devices_radio_information, query_params=frozendict.frozendict(params)
-            )
-            yield from payload.get("data", [])
-            total_pages = payload.get("total_pages", page)
-            if page >= total_pages:
-                break
-            page += 1
+        params: dict = {"page": 1, "limit": limit, "deviceIds": device_ids}
+        yield from self._paginate(self._device_api.list_devices_radio_information, params)
 
     def get_wired_portlist(self, device_id: int) -> list[dict]:
         """Return the wired port list for one switch device (see module docstring)."""
