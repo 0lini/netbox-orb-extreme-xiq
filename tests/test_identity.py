@@ -7,42 +7,44 @@ from orb_extreme_xiq.identity import (
     device_name,
     is_ap,
     is_switch,
-    resolve_site_name,
+    resolve_location,
     role_for,
 )
 
-
-def test_build_location_index_flattens_tree_to_flat_names():
-    tree = [
-        {
-            "id": 1,
-            "name": "HQ",
-            "children": [
-                {
-                    "id": 2,
-                    "name": "Floor 1",
-                    "children": [{"id": 3, "name": "Wing A", "children": []}],
-                },
-            ],
-        }
-    ]
-    index = build_location_index(tree)
-
-    assert index == {1: "HQ", 2: "Floor 1", 3: "Wing A"}
+TREE = [
+    {
+        "id": 1,
+        "name": "HQ",
+        "children": [
+            {
+                "id": 2,
+                "name": "Building A",
+                "children": [{"id": 3, "name": "Floor 1", "children": []}],
+            },
+        ],
+    }
+]
 
 
-def test_resolve_site_name_maps_location_directly_to_site():
-    index = build_location_index(
-        [{"id": 1, "name": "HQ", "children": [{"id": 2, "name": "Floor 1", "children": []}]}]
-    )
+def test_build_location_index_carries_site_name_and_nested_location_path():
+    index = build_location_index(TREE)
 
-    assert resolve_site_name(2, index, "XIQ-Unmapped") == "Floor 1"
-    assert resolve_site_name(1, index, "XIQ-Unmapped") == "HQ"
+    assert index[1] == {"site_name": "HQ", "location_path": []}
+    assert index[2] == {"site_name": "HQ", "location_path": ["Building A"]}
+    assert index[3] == {"site_name": "HQ", "location_path": ["Building A", "Floor 1"]}
 
 
-def test_resolve_site_name_falls_back_for_unknown_location():
-    assert resolve_site_name(999, {}, "XIQ-Unmapped") == "XIQ-Unmapped"
-    assert resolve_site_name(None, {}, "XIQ-Unmapped") == "XIQ-Unmapped"
+def test_resolve_location_returns_site_and_nested_path():
+    index = build_location_index(TREE)
+
+    assert resolve_location(1, index, "XIQ-Unmapped") == ("HQ", [])
+    assert resolve_location(2, index, "XIQ-Unmapped") == ("HQ", ["Building A"])
+    assert resolve_location(3, index, "XIQ-Unmapped") == ("HQ", ["Building A", "Floor 1"])
+
+
+def test_resolve_location_falls_back_for_unknown_location():
+    assert resolve_location(999, {}, "XIQ-Unmapped") == ("XIQ-Unmapped", [])
+    assert resolve_location(None, {}, "XIQ-Unmapped") == ("XIQ-Unmapped", [])
 
 
 def test_device_name_prefers_hostname_then_falls_back():
