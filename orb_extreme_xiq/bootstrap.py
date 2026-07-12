@@ -1,4 +1,4 @@
-"""One-time idempotent NetBox schema setup: custom fields + the source tag.
+"""One-time idempotent NetBox schema setup: custom fields + provenance tags.
 
 Uses the NetBox REST API directly (not Diode) because field *definitions*
 are schema, not data, and this path works regardless of Diode SDK version.
@@ -13,29 +13,48 @@ import requests
 
 CUSTOM_FIELDS = [
     {
-        "name": "xiq_device_id",
-        "label": "XIQ Device ID",
+        "name": "xiq_network_policy",
+        "label": "XIQ Network Policy",
         "type": "text",
         "object_types": ["dcim.device"],
-        "description": "Immutable XIQ device ID; stable correlation key even after a rename.",
-        "filter_logic": "exact",
+        "description": "The ExtremeCloud IQ network policy assigned to this device.",
     },
     {
         "name": "xiq_port_id",
         "label": "XIQ Port ID",
         "type": "text",
         "object_types": ["dcim.interface"],
-        "description": "Immutable XIQ port ID; stable correlation key even if the port is renamed.",
+        "description": (
+            "Immutable XIQ port ID (cloud-global, not per-device); stable correlation "
+            "key even if the port is renamed."
+        ),
         "filter_logic": "exact",
     },
 ]
 
-SOURCE_TAG = {
-    "name": "source:xiq",
-    "slug": "source-xiq",
-    "color": "2196f3",
-    "description": "Objects synced from ExtremeCloud IQ via orb-extreme-xiq.",
-}
+# Vendor/product/lifecycle tags, matching the pattern NetBox Labs' own Cisco
+# Meraki integration uses (separate flat tags -- e.g. "cisco", "meraki",
+# "discovered" -- rather than one namespaced tag).
+TAGS = [
+    {
+        "name": "extreme-networks",
+        "slug": "extreme-networks",
+        "color": "2196f3",
+        "description": "Objects synced from Extreme Networks via orb-extreme-xiq.",
+    },
+    {
+        "name": "xiq",
+        "slug": "xiq",
+        "color": "2196f3",
+        "description": "Objects synced from ExtremeCloud IQ via orb-extreme-xiq.",
+    },
+    {
+        "name": "discovered",
+        "slug": "discovered",
+        "color": "9e9e9e",
+        "description": "Objects created by automated discovery rather than manually.",
+    },
+]
 
 
 def _headers(token: str) -> dict:
@@ -49,7 +68,7 @@ def _exists(url: str, token: str, name: str) -> bool:
 
 
 def ensure_schema(netbox_url: str | None, netbox_token: str | None) -> None:
-    """Idempotently create the custom-field definitions and source:xiq tag."""
+    """Idempotently create the custom-field definitions and provenance tags."""
     if not netbox_url or not netbox_token:
         return
     base = netbox_url.rstrip("/")
@@ -63,6 +82,7 @@ def ensure_schema(netbox_url: str | None, netbox_token: str | None) -> None:
             )
             resp.raise_for_status()
 
-    if not _exists(tags_url, netbox_token, SOURCE_TAG["name"]):
-        resp = requests.post(tags_url, headers=_headers(netbox_token), json=SOURCE_TAG, timeout=30)
-        resp.raise_for_status()
+    for tag in TAGS:
+        if not _exists(tags_url, netbox_token, tag["name"]):
+            resp = requests.post(tags_url, headers=_headers(netbox_token), json=tag, timeout=30)
+            resp.raise_for_status()

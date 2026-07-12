@@ -95,35 +95,48 @@ def test_run_produces_a_site_and_a_device_entity(monkeypatch):
 
 def test_run_with_include_wired_ports_maps_switch_interfaces(monkeypatch):
     """Exercises the INCLUDE_WIRED_PORTS path end to end, including the
-    switch-role check (identity.role_for) that only this path calls.
+    switch-detection check (identity.is_switch) that only this path calls.
+
+    Includes an AP alongside the switch so this also acts as a regression
+    test: switch-detection must key off the device's raw device_function
+    (identity.is_switch), not off role_for()'s display string -- comparing
+    against the display string is fragile since it silently breaks if that
+    string is ever renamed without updating the comparison too.
     """
-    monkeypatch.setattr(
-        LocationApi, "get_location_tree", lambda self, **kw: json_response([])
-    )
+    monkeypatch.setattr(LocationApi, "get_location_tree", lambda self, **kw: json_response([]))
     monkeypatch.setattr(
         DeviceApi,
         "list_devices",
         lambda self, **kw: json_response(
             {
                 "page": 1,
-                "count": 1,
+                "count": 2,
                 "total_pages": 1,
-                "total_count": 1,
+                "total_count": 2,
                 "data": [
+                    {
+                        "id": 111,
+                        "hostname": "ap-lobby",
+                        "serial_number": "SN111",
+                        "device_function": "AP",
+                        "connected": True,
+                    },
                     {
                         "id": 222,
                         "hostname": "sw-idf1",
                         "serial_number": "SN222",
                         "device_function": "SWITCH",
                         "connected": True,
-                    }
+                    },
                 ],
             }
         ),
     )
-    monkeypatch.setattr(
-        "orb_extreme_xiq.client.XiqClient.get_wired_portlist",
-        lambda self, device_id: [
+    portlist_calls = []
+
+    def fake_get_wired_portlist(self, device_id):
+        portlist_calls.append(device_id)
+        return [
             {
                 "id": 1,
                 "ifName": "1/1",
@@ -131,8 +144,9 @@ def test_run_with_include_wired_ports_maps_switch_interfaces(monkeypatch):
                 "portSpeed": "SPEED_1000M",
                 "transmissionMode": "Full-duplex",
             }
-        ],
-    )
+        ]
+
+    monkeypatch.setattr("orb_extreme_xiq.client.XiqClient.get_wired_portlist", fake_get_wired_portlist)
 
     config = Config(
         package="orb_extreme_xiq",
@@ -149,3 +163,5 @@ def test_run_with_include_wired_ports_maps_switch_interfaces(monkeypatch):
     assert len(interfaces) == 1
     assert interfaces[0].device.name == "sw-idf1"
     assert interfaces[0].name == "1/1"
+    # get_wired_portlist is only ever called for the switch, never the AP.
+    assert portlist_calls == [222]
