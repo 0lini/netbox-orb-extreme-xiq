@@ -13,11 +13,11 @@ XIQ cloud API ─► orb_extreme_xiq (collector + mapper) ─► Diode ─► Ne
 ## Scope: basic inventory only (for now)
 
 This worker deliberately keeps a small footprint: devices (name, serial,
-status, site) and, optionally, their interfaces. It does **not** assert
-device_type, platform, description, or primary IP — those stay entirely
-NetBox/human-owned. This keeps the field set, the custom fields, and the
-mapping code small and easy to reason about. See the Roadmap for what's
-intentionally left out for now.
+status, site, location) and, optionally, their interfaces. It does **not**
+assert device_type, platform, description, or primary IP — those stay
+entirely NetBox/human-owned. This keeps the field set, the custom fields,
+and the mapping code small and easy to reason about. See the Roadmap for
+what's intentionally left out for now.
 
 ## Assurance-ready by design
 
@@ -34,9 +34,13 @@ Assurance license is enabled — with **zero code changes** to this worker. So
   ID custom field -- neither the real Cisco Meraki integration nor NetBox
   Labs' generic discovery backends carry one; they rely on the native
   `serial` field the same way.
-- **Direct site mapping.** Each XIQ location a device belongs to becomes a
-  NetBox site of the same name (1:1); `default_site` is used only when a
-  device's location is missing or unresolvable.
+- **Site + nested Location from XIQ's own hierarchy.** The root of a
+  device's XIQ location tree (Site -> Building -> Floor, ...) becomes its
+  NetBox site; everything below the root becomes a chain of nested NetBox
+  Location entities (e.g. Building -> Floor), and the device is assigned to
+  the most specific one. `default_site` is used only when a device's
+  location is missing or unresolvable, in which case no Location is
+  asserted either.
 - **Bootstrap step** (`bootstrap.py`). Idempotently creates the custom-field
   definitions + `extreme-networks`/`xiq`/`discovered` tags before the first
   sync — the same first-run pattern the official integrations use.
@@ -53,9 +57,10 @@ Assurance license is enabled — with **zero code changes** to this worker. So
   (token or user/pass), plus a plain `requests` call for the legacy
   per-switch `/xiq/v0/monitor/device/wired/portlist` endpoint the SDK
   doesn't cover.
-- `identity.py` — stable device naming + direct (1:1) site resolution.
-- `mapper.py` — XIQ → Diode entities: fixed basic device/site fields, custom
-  fields, tags, plus switch-port and AP-radio/WLAN Interface sync.
+- `identity.py` — stable device naming + site/nested-Location resolution.
+- `mapper.py` — XIQ → Diode entities: fixed basic device/site/location
+  fields, custom fields, tags, plus switch-port and AP-radio/WLAN Interface
+  sync.
 - `bootstrap.py` — one-time idempotent NetBox schema setup (custom fields + tags).
 - `backend.py` — worker entrypoint + standalone runner.
 - `agent.yaml` — example policy (bootstrap, site mapping, field authority).

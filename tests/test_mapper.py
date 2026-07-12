@@ -11,8 +11,14 @@ LOC_TREE = [
         "id": 1,
         "name": "HQ",
         "children": [
-            {"id": 2, "name": "Floor 1", "children": []},
-            {"id": 3, "name": "Floor 2", "children": []},
+            {
+                "id": 2,
+                "name": "Building A",
+                "children": [
+                    {"id": 3, "name": "Floor 1", "children": []},
+                    {"id": 4, "name": "Floor 2", "children": []},
+                ],
+            }
         ],
     }
 ]
@@ -26,7 +32,7 @@ DEVICES = [
         "device_function": "AP",
         "ip_address": "10.0.0.5",
         "connected": True,
-        "location_id": 2,
+        "location_id": 3,
         "software_version": "10.6r3",
         "network_policy_name": "Corp-WiFi",
         "mac_address": "AA:BB:CC:00:00:11",
@@ -40,7 +46,7 @@ DEVICES = [
         "device_function": "SWITCH",
         "ip_address": "10.0.0.6",
         "connected": False,
-        "location_id": 3,
+        "location_id": 4,
         "org_id": "org-9",
     },
 ]
@@ -59,22 +65,40 @@ def _site_entities(entities):
     return [e._kw["site"] for e in entities if "site" in e._kw]
 
 
+def _location_entities(entities):
+    return [e._kw["location"] for e in entities if "location" in e._kw]
+
+
 def _devices(entities):
     return [e._kw["device"] for e in entities if "device" in e._kw]
 
 
-def test_devices_map_directly_to_their_own_xiq_location_as_site(stub_sdk):
+def test_devices_map_to_the_root_xiq_location_as_site(stub_sdk):
     entities = _map()
     site_entities = _site_entities(entities)
 
-    assert {s._kw["name"] for s in site_entities} == {"Floor 1", "Floor 2"}
+    assert {s._kw["name"] for s in site_entities} == {"HQ"}
 
 
-def test_device_carries_identity_custom_fields_tags_site_and_status(stub_sdk):
+def test_nested_locations_are_deduped_and_carry_parent_and_site(stub_sdk):
+    entities = _map()
+    locations = {loc._kw["name"]: loc for loc in _location_entities(entities)}
+
+    assert set(locations) == {"Building A", "Floor 1", "Floor 2"}
+    assert locations["Building A"]._kw["site"] == "HQ"
+    assert locations["Building A"]._kw["parent"] is None
+    assert locations["Floor 1"]._kw["site"] == "HQ"
+    assert locations["Floor 1"]._kw["parent"]._kw["name"] == "Building A"
+    assert locations["Floor 2"]._kw["parent"]._kw["name"] == "Building A"
+
+
+def test_device_carries_identity_custom_fields_tags_site_location_and_status(stub_sdk):
     device = _devices(_map())[0]
 
     assert cf(device._kw["custom_fields"]["xiq_network_policy"]._kw) == "Corp-WiFi"
-    assert device._kw["site"]._kw["name"] == "Floor 1"
+    assert device._kw["site"]._kw["name"] == "HQ"
+    assert device._kw["location"]._kw["name"] == "Floor 1"
+    assert device._kw["location"]._kw["parent"]._kw["name"] == "Building A"
     assert device._kw["tags"] == ["extreme-networks", "xiq", "discovered"]
     assert device._kw["status"] == "active"
     assert "role" not in device._kw
@@ -88,15 +112,29 @@ def test_switch_with_no_policy_drops_empty_custom_field_and_is_offline(stub_sdk)
 
     assert "xiq_network_policy" not in switch._kw["custom_fields"]
     assert switch._kw["status"] == "offline"
+    assert switch._kw["location"]._kw["name"] == "Floor 2"
+
+
+def test_device_with_unknown_location_gets_default_site_and_no_location(stub_sdk):
+    device = mapper.devices_to_entities(
+        [{**DEVICES[0], "location_id": 999}],
+        location_index=mapper.build_location_index(LOC_TREE),
+        default_site="XIQ-Unmapped",
+    )
+    device_entity = _devices(device)[0]
+
+    assert device_entity._kw["site"]._kw["name"] == "XIQ-Unmapped"
+    assert "location" not in device_entity._kw
 
 
 def test_site_scope_filters_devices_and_sites_outside_scope(stub_sdk):
-    in_scope = _map(site_scope={"Floor 1", "Floor 2"})
+    in_scope = _map(site_scope={"HQ"})
     assert len(_devices(in_scope)) == 2
 
     out_of_scope = _map(site_scope={"Some-Other-Site"})
     assert _devices(out_of_scope) == []
     assert _site_entities(out_of_scope) == []
+    assert _location_entities(out_of_scope) == []
 
 
 PORTS = [

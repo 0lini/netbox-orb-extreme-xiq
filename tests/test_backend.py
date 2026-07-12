@@ -59,7 +59,7 @@ def test_describe_reports_stable_identity():
     assert metadata.name == "orb_extreme_xiq"
 
 
-def test_run_produces_a_site_and_a_device_entity(monkeypatch):
+def test_run_produces_a_site_a_location_and_a_device_entity(monkeypatch):
     _mock_no_wired_ports(monkeypatch)
     _mock_no_radios(monkeypatch)
     monkeypatch.setattr(
@@ -105,10 +105,13 @@ def test_run_produces_a_site_and_a_device_entity(monkeypatch):
 
     entities = list(Backend().run("extreme_xiq_worker", policy))
 
-    assert len(entities) == 2
-    assert entities[0].site.name == "Floor 1"
-    assert entities[1].device.name == "ap-lobby"
-    assert entities[1].device.site.name == "Floor 1"
+    assert len(entities) == 3
+    assert entities[0].site.name == "HQ"
+    assert entities[1].location.name == "Floor 1"
+    assert entities[1].location.site.name == "HQ"
+    assert entities[2].device.name == "ap-lobby"
+    assert entities[2].device.site.name == "HQ"
+    assert entities[2].device.location.name == "Floor 1"
 
 
 def test_run_maps_switch_interfaces(monkeypatch):

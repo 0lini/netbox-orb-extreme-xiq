@@ -55,7 +55,9 @@ orb:
           name_source: hostname            # or "serial" for max stability
           default_site: "XIQ-Unmapped"
 
-          # XIQ locations map 1:1 to NetBox sites (same name); default_site
-          # is used only when a device's location is missing/unresolvable.
+          # The root of a device's XIQ location tree becomes its NetBox site;
+          # everything below it (building, floor, ...) becomes nested NetBox
+          # Location entities. default_site is used only when a device's
+          # location is missing/unresolvable (no Location is set either).
         scope:
           sites: ["*"]                     # or ["HQ - Floor 1", "Branch A"]

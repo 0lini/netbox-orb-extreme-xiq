@@ -1,8 +1,9 @@
-"""XIQ -> Diode entities: basic device/site inventory + interfaces.
+"""XIQ -> Diode entities: basic device/site/location inventory + interfaces.
 
 This intentionally asserts a small, fixed set of fields (name, serial,
-status, site) rather than a configurable one -- ownership of anything not
-listed here (rack, description, platform, ...) stays with NetBox/humans.
+status, site, location) rather than a configurable one -- ownership of
+anything not listed here (rack, description, platform, ...) stays with
+NetBox/humans.
 
 `custom_fields` and `tags` are always emitted alongside the fixed field set
 -- they're provenance metadata (extreme/xiq/discovered tags,
@@ -17,9 +18,17 @@ from __future__ import annotations
 
 import re
 
-from netboxlabs.diode.sdk.ingester import CustomFieldValue, Device, Entity, Interface, Site, WirelessLAN
+from netboxlabs.diode.sdk.ingester import (
+    CustomFieldValue,
+    Device,
+    Entity,
+    Interface,
+    Location,
+    Site,
+    WirelessLAN,
+)
 
-from .identity import build_location_index, device_name, resolve_site_name
+from .identity import build_location_index, device_name, resolve_location
 
 __all__ = [
     "build_location_index",
@@ -50,8 +59,20 @@ def _device_custom_fields(device: dict) -> dict:
     return custom_fields
 
 
-def _device_kwargs(device: dict, *, site_name: str, name_source: str) -> dict:
-    return {
+def _location_chain(site_name: str, location_path: list[str]) -> Location:
+    """Build the nested Location for the last element of location_path,
+    threading `parent` up through each preceding element (e.g. Building ->
+    Floor). Returns the most specific (last) Location; every ancestor is
+    reachable through its `parent` chain.
+    """
+    location = None
+    for name in location_path:
+        location = Location(name=name, site=site_name, parent=location)
+    return location
+
+
+def _device_kwargs(device: dict, *, site_name: str, location_path: list[str], name_source: str) -> dict:
+    kwargs = {
         "name": device_name(device, name_source),
         "serial": device.get("serial_number") or device.get("service_tag") or None,
         "status": _status_for(device),
@@ -59,6 +80,9 @@ def _device_kwargs(device: dict, *, site_name: str, name_source: str) -> dict:
         "custom_fields": _device_custom_fields(device),
         "tags": PROVENANCE_TAGS,
     }
+    if location_path:
+        kwargs["location"] = _location_chain(site_name, location_path)
+    return kwargs
 
 
 def devices_to_entities(
@@ -69,25 +93,40 @@ def devices_to_entities(
     name_source: str = "hostname",
     site_scope: set[str] | None = None,
 ) -> list:
-    """Map XIQ devices to Diode entities: one Site per XIQ location (1:1)
-    plus one Device per device.
+    """Map XIQ devices to Diode entities: one Site per XIQ site, one nested
+    Location per Building/Floor (etc.) level actually in use, plus one
+    Device per device.
     """
     entities = []
-    resolved: list[tuple[dict, str]] = []
+    resolved: list[tuple[dict, str, list[str]]] = []
     site_names: set[str] = set()
+    location_paths: set[tuple[str, tuple[str, ...]]] = set()
 
     for device in devices:
-        site_name = resolve_site_name(device.get("location_id"), location_index, default_site)
+        site_name, location_path = resolve_location(device.get("location_id"), location_index, default_site)
         if site_scope and site_name not in site_scope:
             continue
-        resolved.append((device, site_name))
+        resolved.append((device, site_name, location_path))
         site_names.add(site_name)
+        if location_path:
+            location_paths.add((site_name, tuple(location_path)))
 
     for site_name in sorted(site_names):
         entities.append(Entity(site=Site(name=site_name)))
 
-    for device, site_name in resolved:
-        kwargs = _device_kwargs(device, site_name=site_name, name_source=name_source)
+    seen_locations: set[tuple[str, tuple[str, ...]]] = set()
+    for site_name, path in sorted(location_paths):
+        for depth in range(1, len(path) + 1):
+            key = (site_name, path[:depth])
+            if key in seen_locations:
+                continue
+            seen_locations.add(key)
+            entities.append(Entity(location=_location_chain(site_name, list(path[:depth]))))
+
+    for device, site_name, location_path in resolved:
+        kwargs = _device_kwargs(
+            device, site_name=site_name, location_path=location_path, name_source=name_source
+        )
         entities.append(Entity(device=Device(**kwargs)))
 
     return entities
