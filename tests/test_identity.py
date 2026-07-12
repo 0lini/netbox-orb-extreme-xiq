@@ -10,7 +10,7 @@ from orb_extreme_xiq.identity import (
 )
 
 
-def test_build_location_index_flattens_tree_to_root_name():
+def test_build_location_index_flattens_tree_to_flat_names():
     tree = [
         {
             "id": 1,
@@ -26,23 +26,21 @@ def test_build_location_index_flattens_tree_to_root_name():
     ]
     index = build_location_index(tree)
 
-    assert index[1] == {"name": "HQ", "root_name": "HQ"}
-    assert index[2] == {"name": "Floor 1", "root_name": "HQ"}
-    assert index[3] == {"name": "Wing A", "root_name": "HQ"}
+    assert index == {1: "HQ", 2: "Floor 1", 3: "Wing A"}
 
 
-def test_resolve_site_name_uses_mapping_or_default():
+def test_resolve_site_name_maps_location_directly_to_site():
     index = build_location_index(
         [{"id": 1, "name": "HQ", "children": [{"id": 2, "name": "Floor 1", "children": []}]}]
     )
 
-    assert resolve_site_name(2, index, {"HQ": "Corporate-HQ"}, "XIQ-Unmapped") == ("Corporate-HQ", "HQ")
-    assert resolve_site_name(2, index, {}, "XIQ-Unmapped") == ("XIQ-Unmapped", "HQ")
+    assert resolve_site_name(2, index, "XIQ-Unmapped") == "Floor 1"
+    assert resolve_site_name(1, index, "XIQ-Unmapped") == "HQ"
 
 
 def test_resolve_site_name_falls_back_for_unknown_location():
-    assert resolve_site_name(999, {}, {"HQ": "Corporate-HQ"}, "XIQ-Unmapped") == ("XIQ-Unmapped", None)
-    assert resolve_site_name(None, {}, {"HQ": "Corporate-HQ"}, "XIQ-Unmapped") == ("XIQ-Unmapped", None)
+    assert resolve_site_name(999, {}, "XIQ-Unmapped") == "XIQ-Unmapped"
+    assert resolve_site_name(None, {}, "XIQ-Unmapped") == "XIQ-Unmapped"
 
 
 def test_device_name_prefers_hostname_then_falls_back():

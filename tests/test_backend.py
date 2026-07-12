@@ -82,13 +82,70 @@ def test_run_produces_a_site_and_a_device_entity(monkeypatch):
         BOOTSTRAP=False,
         XIQ_API_TOKEN="tok",
         default_site="XIQ-Unmapped",
-        location_site_mapping={"HQ": "Corporate-HQ"},
     )
     policy = Policy(config=config, scope={"sites": ["*"]})
 
     entities = list(Backend().run("extreme_xiq_worker", policy))
 
     assert len(entities) == 2
-    assert entities[0].site.name == "Corporate-HQ"
+    assert entities[0].site.name == "Floor 1"
     assert entities[1].device.name == "ap-lobby"
-    assert entities[1].device.site.name == "Corporate-HQ"
+    assert entities[1].device.site.name == "Floor 1"
+
+
+def test_run_with_include_wired_ports_maps_switch_interfaces(monkeypatch):
+    """Exercises the INCLUDE_WIRED_PORTS path end to end, including the
+    switch-role check (identity.role_for) that only this path calls.
+    """
+    monkeypatch.setattr(
+        LocationApi, "get_location_tree", lambda self, **kw: json_response([])
+    )
+    monkeypatch.setattr(
+        DeviceApi,
+        "list_devices",
+        lambda self, **kw: json_response(
+            {
+                "page": 1,
+                "count": 1,
+                "total_pages": 1,
+                "total_count": 1,
+                "data": [
+                    {
+                        "id": 222,
+                        "hostname": "sw-idf1",
+                        "serial_number": "SN222",
+                        "device_function": "SWITCH",
+                        "connected": True,
+                    }
+                ],
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "orb_extreme_xiq.client.XiqClient.get_wired_portlist",
+        lambda self, device_id: [
+            {
+                "id": 1,
+                "ifName": "1/1",
+                "status": "UP",
+                "portSpeed": "SPEED_1000M",
+                "transmissionMode": "Full-duplex",
+            }
+        ],
+    )
+
+    config = Config(
+        package="orb_extreme_xiq",
+        BOOTSTRAP=False,
+        XIQ_API_TOKEN="tok",
+        default_site="XIQ-Unmapped",
+        INCLUDE_WIRED_PORTS=True,
+    )
+    policy = Policy(config=config, scope={"sites": ["*"]})
+
+    entities = list(Backend().run("extreme_xiq_worker", policy))
+
+    interfaces = [e.interface for e in entities if e.HasField("interface")]
+    assert len(interfaces) == 1
+    assert interfaces[0].device.name == "sw-idf1"
+    assert interfaces[0].name == "1/1"
