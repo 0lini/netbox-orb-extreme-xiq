@@ -53,22 +53,16 @@ orb:
           # or: XIQ_USERNAME / XIQ_PASSWORD
 
           name_source: hostname            # or "serial" for max stability
-          default_site: "XIQ-Unmapped"
+          default_site: "XIQ-Unmapped"     # fallback only -- devices normally get
+                                            # their real XIQ site name (see README)
 
           # INCLUDE_WIRED_PORTS: false     # true to also sync switch ports as
                                             # Interface entities (1 extra API call
                                             # per switch; see README)
-
-          # Meraki-style: XIQ location name -> NetBox site name.
-          # Many locations can map to one site (consolidation).
-          location_site_mapping:
-            "HQ - Floor 1": "Corporate-HQ"
-            "HQ - Floor 2": "Corporate-HQ"
-            "Branch A": "SITE-002"
 
           # Field authority = what XIQ owns (and therefore what Assurance will
           # flag as drift). Start from the default set and tweak:
           # field_authority_remove: ["site"]   # let humans own site after create
           # field_authority_add: ["comments"]
         scope:
-          sites: ["*"]                     # or ["Corporate-HQ", "SITE-002"]
+          sites: ["*"]                     # or specific XIQ site names

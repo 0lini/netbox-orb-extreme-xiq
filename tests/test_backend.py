@@ -70,7 +70,6 @@ def test_run_produces_a_site_and_a_device_entity(monkeypatch):
                         "ip_address": "10.0.0.5",
                         "connected": True,
                         "location_id": 2,
-                        "org_id": 9,
                     }
                 ],
             }
@@ -82,13 +81,12 @@ def test_run_produces_a_site_and_a_device_entity(monkeypatch):
         BOOTSTRAP=False,
         XIQ_API_TOKEN="tok",
         default_site="XIQ-Unmapped",
-        location_site_mapping={"HQ": "Corporate-HQ"},
     )
     policy = Policy(config=config, scope={"sites": ["*"]})
 
     entities = list(Backend().run("extreme_xiq_worker", policy))
 
     assert len(entities) == 2
-    assert entities[0].site.name == "Corporate-HQ"
+    assert entities[0].site.name == "HQ"
     assert entities[1].device.name == "ap-lobby"
-    assert entities[1].device.site.name == "Corporate-HQ"
+    assert entities[1].device.site.name == "HQ"

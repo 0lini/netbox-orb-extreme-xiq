@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from orb_extreme_xiq import mapper
 
 from .conftest import cf
@@ -32,7 +30,6 @@ DEVICES = [
         "software_version": "10.6r3",
         "network_policy_name": "Corp-WiFi",
         "mac_address": "AA:BB:CC:00:00:11",
-        "org_id": "org-9",
     },
     {
         "id": 222,
@@ -43,17 +40,12 @@ DEVICES = [
         "ip_address": "10.0.0.6",
         "connected": False,
         "location_id": 3,
-        "org_id": "org-9",
     },
 ]
-
-LOCATION_SITE_MAPPING = {"HQ": "Corporate-HQ"}  # both floors roll up to HQ -> one site
-
 
 def _map(**overrides):
     kwargs = {
         "location_index": mapper.build_location_index(LOC_TREE),
-        "location_site_mapping": LOCATION_SITE_MAPPING,
         "default_site": "XIQ-Unmapped",
     }
     kwargs.update(overrides)
@@ -61,32 +53,27 @@ def _map(**overrides):
 
 
 def _site_entities(entities):
-    return [
-        e for e in entities if "site" in e._kw and getattr(e._kw.get("site"), "_kw", {}).get("custom_fields")
-    ]
+    return [e for e in entities if "site" in e._kw]
 
 
 def _devices(entities):
     return [e._kw["device"] for e in entities if "device" in e._kw]
 
 
-def test_consolidates_multiple_locations_into_one_site(stub_sdk):
+def test_dedupes_devices_under_the_same_root_location_into_one_site(stub_sdk):
     entities = _map()
     site_entities = _site_entities(entities)
     assert len(site_entities) == 1
-
-    xiq_locations_cf = site_entities[0]._kw["site"]._kw["custom_fields"]["xiq_locations"]._kw
-    assert json.loads(cf(xiq_locations_cf)) == ["HQ"]
+    assert site_entities[0]._kw["site"]._kw["name"] == "HQ"
 
 
 def test_device_carries_identity_custom_fields_tags_and_site(stub_sdk):
     device = _devices(_map())[0]
 
-    assert cf(device._kw["custom_fields"]["xiq_device_id"]._kw) == "111"
     assert cf(device._kw["custom_fields"]["xiq_network_policy"]._kw) == "Corp-WiFi"
-    assert device._kw["site"]._kw["name"] == "Corporate-HQ"
-    assert "source:xiq" in device._kw["tags"]
-    assert "xiq-org:org-9" in device._kw["tags"]
+    assert device._kw["serial"] == "SN111"
+    assert device._kw["site"]._kw["name"] == "HQ"
+    assert device._kw["tags"] == ["extreme-networks", "xiq", "discovered"]
     assert device._kw["role"] == "wireless-ap"
     assert device._kw["status"] == "active"
 
@@ -107,8 +94,8 @@ def test_dropping_site_from_authority_omits_it_with_no_redrift(stub_sdk):
 
 
 def test_site_scope_filters_devices_and_sites_outside_scope(stub_sdk):
-    in_scope = _map(site_scope={"Corporate-HQ"})
-    assert len(_devices(in_scope)) == 2  # both devices resolve into Corporate-HQ
+    in_scope = _map(site_scope={"HQ"})
+    assert len(_devices(in_scope)) == 2  # both devices resolve into HQ
 
     out_of_scope = _map(site_scope={"Some-Other-Site"})
     assert _devices(out_of_scope) == []
@@ -124,8 +111,6 @@ PORTS = [
         "portSpeed": "SPEED_1000M",
         "transmissionMode": "Full-duplex",
         "portMode": "Trunk",
-        "taggedVlans": "500,867",
-        "lldpSystemName": "",
     },
     {
         "id": 2166175345772421,
@@ -135,8 +120,6 @@ PORTS = [
         "portSpeed": "SPEED_AUTO",
         "transmissionMode": "N/A",
         "portMode": "Trunk",
-        "taggedVlans": "",
-        "lldpSystemName": "core-sw-01",
     },
 ]
 
@@ -151,35 +134,32 @@ def test_ports_to_entities_maps_link_state_speed_and_duplex(stub_sdk):
     up_port = interfaces[0]
     assert up_port._kw["device"] == "sw-idf1"
     assert up_port._kw["name"] == "1/1"
-    assert up_port._kw["enabled"] is True
+    assert up_port._kw["mark_connected"] is True
+    assert "enabled" not in up_port._kw  # XIQ has no admin-state signal; not asserted
     assert up_port._kw["speed"] == 1_000_000
     assert up_port._kw["duplex"] == "full"
+    assert up_port._kw["type"] == "1000base-t"  # guessed from SPEED_1000M
 
     down_port = interfaces[1]
-    assert down_port._kw["enabled"] is False
+    assert down_port._kw["mark_connected"] is False
     assert down_port._kw["speed"] is None  # SPEED_AUTO isn't a real link speed
     assert down_port._kw["duplex"] is None  # "N/A" has no netbox equivalent
+    assert down_port._kw["type"] is None  # SPEED_AUTO has no known type mapping
 
 
-def test_ports_to_entities_carries_identity_custom_fields_and_tags(stub_sdk):
+def test_ports_to_entities_carries_custom_fields_and_tags(stub_sdk):
     interfaces = _interfaces(mapper.ports_to_entities(PORTS, device="sw-idf1"))
 
     up_port_cf = interfaces[0]._kw["custom_fields"]
     assert cf(up_port_cf["xiq_port_id"]._kw) == "2166175345772344"
-    assert cf(up_port_cf["xiq_tagged_vlans"]._kw) == "500,867"
-    assert "xiq_lldp_neighbor" not in up_port_cf  # blank lldpSystemName -> omitted
-    assert interfaces[0]._kw["tags"] == ["source:xiq"]
+    assert interfaces[0]._kw["tags"] == ["extreme-networks", "xiq", "discovered"]
 
-    down_port_cf = interfaces[1]._kw["custom_fields"]
-    assert cf(down_port_cf["xiq_lldp_neighbor"]._kw) == "core-sw-01"
-    assert "xiq_tagged_vlans" not in down_port_cf  # blank taggedVlans -> omitted
     assert interfaces[1]._kw["description"] == "uplink to core"
 
 
-def test_ports_to_entities_does_not_assert_mode_or_type(stub_sdk):
-    """mode/type are intentionally left unset -- see ports_to_entities docstring
+def test_ports_to_entities_does_not_assert_mode(stub_sdk):
+    """mode is intentionally left unset -- see ports_to_entities docstring
     (FLEX-UNI/Fabric-Attach ports map into an I-SID, not a VLAN)."""
     interfaces = _interfaces(mapper.ports_to_entities(PORTS, device="sw-idf1"))
 
     assert "mode" not in interfaces[0]._kw
-    assert "type" not in interfaces[0]._kw

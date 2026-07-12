@@ -82,7 +82,7 @@ class Backend(WorkerBackend):
         config = policy.config
 
         if _cfg(config, "BOOTSTRAP", False):
-            logger.info("Policy %s: running bootstrap (custom fields + source:xiq tag)", policy_name)
+            logger.info("Policy %s: running bootstrap (custom fields + provenance tags)", policy_name)
             bootstrap.ensure_schema(
                 _cfg_or_env(config, "NETBOX_API_URL"),
                 _cfg_or_env(config, "NETBOX_API_TOKEN"),
@@ -98,7 +98,6 @@ class Backend(WorkerBackend):
         entities = mapper.devices_to_entities(
             devices,
             location_index=location_index,
-            location_site_mapping=_cfg(config, "location_site_mapping", {}) or {},
             default_site=_cfg(config, "default_site", "XIQ-Unmapped"),
             authority=_authority(config),
             name_source=name_source,
@@ -119,7 +118,7 @@ class Backend(WorkerBackend):
         """
         entities: list[Entity] = []
         for device in devices:
-            if mapper.role_for(device.get("device_function")) != "network-switch":
+            if mapper.role_for(device.get("device_function")) != "Switch":
                 continue
             ports = client.get_wired_portlist(device["id"])
             entities.extend(mapper.ports_to_entities(ports, device=mapper.device_name(device, name_source)))
@@ -138,7 +137,7 @@ def _standalone_config() -> dict:
         "XIQ_PASSWORD": os.environ.get("XIQ_PASSWORD"),
         "name_source": os.environ.get("XIQ_NAME_SOURCE", "hostname"),
         "default_site": os.environ.get("XIQ_DEFAULT_SITE", "XIQ-Unmapped"),
-        "location_site_mapping": {},
+        "INCLUDE_WIRED_PORTS": _env_bool("INCLUDE_WIRED_PORTS", False),
     }
 
 

@@ -1,11 +1,11 @@
-"""Stable device naming + Meraki-style site resolution for XIQ devices.
+"""Stable device naming + site resolution for XIQ devices.
 
-XIQ's location hierarchy (Location -> Building -> Floor, or similar) is
-finer-grained than a NetBox Site should usually be. `build_location_index`
-flattens the tree returned by `/locations/tree` so every location resolves
-to the *root* location it descends from -- the XIQ equivalent of a Meraki
-network -- which is what `location_site_mapping` keys against. That's how
-many XIQ locations consolidate into one NetBox site.
+XIQ's location hierarchy is always Site -> Building -> Floor
+(`XiqLocationType`). `build_location_index` flattens the tree returned by
+`/locations/tree` so every location resolves to the *root* location it
+descends from -- XIQ's own site name -- which `resolve_site_name` uses
+directly as the NetBox site name. Multiple XIQ locations (buildings/floors)
+under the same site therefore consolidate into one NetBox site automatically.
 """
 
 from __future__ import annotations
@@ -13,9 +13,9 @@ from __future__ import annotations
 # XiqDeviceFunction enum values (xcloudiq-openapi.yaml) -> NetBox device role slug.
 ROLE_BY_DEVICE_FUNCTION = {
     "AP": "wireless-ap",
-    "SWITCH": "network-switch",
-    "SWITCH_HAC": "network-switch",
-    "SWITCH_DELL": "network-switch",
+    "SWITCH": "Switch",
+    "SWITCH_HAC": "Switch",
+    "SWITCH_DELL": "Switch",
     "ROUTER": "router",
     "ROUTER_AS_L2_VPN_GATEWAY": "router",
     "ROUTER_AS_L3_VPN_GATEWAY": "router",
@@ -66,10 +66,13 @@ def build_location_index(tree: list[dict]) -> dict[int, dict]:
 def resolve_site_name(
     location_id: int | None,
     location_index: dict[int, dict],
-    location_site_mapping: dict[str, str],
     default_site: str,
 ) -> tuple[str, str | None]:
     """Resolve a device's XIQ location_id to a NetBox site name.
+
+    XIQ's own location hierarchy is Site -> Building -> Floor, so the root
+    location a device's location_id descends from *is* its XIQ site name --
+    used directly as the NetBox site name, no separate mapping table needed.
 
     Returns (site_name, xiq_root_location_name). The root location name is
     None when the location is unknown (missing/stale location_id), in which
@@ -79,4 +82,4 @@ def resolve_site_name(
     if entry is None:
         return default_site, None
     root_name = entry["root_name"]
-    return location_site_mapping.get(root_name, default_site), root_name
+    return root_name, root_name

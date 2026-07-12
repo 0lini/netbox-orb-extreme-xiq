@@ -31,18 +31,17 @@ def test_build_location_index_flattens_tree_to_root_name():
     assert index[3] == {"name": "Wing A", "root_name": "HQ"}
 
 
-def test_resolve_site_name_uses_mapping_or_default():
+def test_resolve_site_name_uses_xiq_root_location_name():
     index = build_location_index(
         [{"id": 1, "name": "HQ", "children": [{"id": 2, "name": "Floor 1", "children": []}]}]
     )
 
-    assert resolve_site_name(2, index, {"HQ": "Corporate-HQ"}, "XIQ-Unmapped") == ("Corporate-HQ", "HQ")
-    assert resolve_site_name(2, index, {}, "XIQ-Unmapped") == ("XIQ-Unmapped", "HQ")
+    assert resolve_site_name(2, index, "XIQ-Unmapped") == ("HQ", "HQ")
 
 
 def test_resolve_site_name_falls_back_for_unknown_location():
-    assert resolve_site_name(999, {}, {"HQ": "Corporate-HQ"}, "XIQ-Unmapped") == ("XIQ-Unmapped", None)
-    assert resolve_site_name(None, {}, {"HQ": "Corporate-HQ"}, "XIQ-Unmapped") == ("XIQ-Unmapped", None)
+    assert resolve_site_name(999, {}, "XIQ-Unmapped") == ("XIQ-Unmapped", None)
+    assert resolve_site_name(None, {}, "XIQ-Unmapped") == ("XIQ-Unmapped", None)
 
 
 def test_device_name_prefers_hostname_then_falls_back():
@@ -59,8 +58,8 @@ def test_device_name_serial_source_prefers_serial_over_hostname():
 
 def test_role_for_known_and_unknown_device_functions():
     assert role_for("AP") == "wireless-ap"
-    assert role_for("SWITCH") == "network-switch"
-    assert role_for("SWITCH_HAC") == "network-switch"
+    assert role_for("SWITCH") == "Switch"
+    assert role_for("SWITCH_HAC") == "Switch"
     assert role_for("ROUTER") == "router"
     assert role_for("SOMETHING_NEW") == "network-device"
     assert role_for(None) == "network-device"
