@@ -18,6 +18,7 @@ from worker.models import Config, Metadata, Policy
 
 from . import bootstrap, mapper
 from .client import DEFAULT_BASE_URL, XiqClient
+from .identity import role_for
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +49,6 @@ def _scope_sites(scope) -> list[str] | None:
     if not sites or sites == ["*"]:
         return None
     return list(sites)
-
-
-def _authority(config) -> frozenset:
-    base = set(_cfg(config, "field_authority", None) or mapper.DEFAULT_AUTHORITY)
-    base -= set(_cfg(config, "field_authority_remove", None) or [])
-    base |= set(_cfg(config, "field_authority_add", None) or [])
-    return frozenset(base)
 
 
 def _build_client(config) -> XiqClient:
@@ -98,9 +92,7 @@ class Backend(WorkerBackend):
         entities = mapper.devices_to_entities(
             devices,
             location_index=location_index,
-            location_site_mapping=_cfg(config, "location_site_mapping", {}) or {},
             default_site=_cfg(config, "default_site", "XIQ-Unmapped"),
-            authority=_authority(config),
             name_source=name_source,
             site_scope=set(scope_sites) if scope_sites else None,
         )
@@ -119,7 +111,7 @@ class Backend(WorkerBackend):
         """
         entities: list[Entity] = []
         for device in devices:
-            if mapper.role_for(device.get("device_function")) != "network-switch":
+            if role_for(device.get("device_function")) != "network-switch":
                 continue
             ports = client.get_wired_portlist(device["id"])
             entities.extend(mapper.ports_to_entities(ports, device=mapper.device_name(device, name_source)))
@@ -138,7 +130,6 @@ def _standalone_config() -> dict:
         "XIQ_PASSWORD": os.environ.get("XIQ_PASSWORD"),
         "name_source": os.environ.get("XIQ_NAME_SOURCE", "hostname"),
         "default_site": os.environ.get("XIQ_DEFAULT_SITE", "XIQ-Unmapped"),
-        "location_site_mapping": {},
     }
 
 

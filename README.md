@@ -10,25 +10,31 @@ Agent Pro / private registry required.
 XIQ cloud API ─► orb_extreme_xiq (collector + mapper) ─► Diode ─► NetBox (+Assurance if licensed)
 ```
 
+## Scope: basic inventory only (for now)
+
+This worker deliberately keeps a small footprint: devices (name, serial,
+status, site) and, optionally, their interfaces. It does **not** assert
+device_type, platform, description, or primary IP — those stay entirely
+NetBox/human-owned. This keeps the field set, the custom fields, and the
+mapping code small and easy to reason about. See the Roadmap for what's
+intentionally left out for now.
+
 ## Assurance-ready by design
 
 Assurance is a **consumer-side** feature: there's no separate API to code
 against. Any source that ingests via Diode surfaces as deviations once an
 Assurance license is enabled — with **zero code changes** to this worker. So
-"future-proofing" just means producing clean, stable Diode output, which this
-scaffold does deliberately:
+"future-proofing" just means producing clean, stable Diode output:
 
-- **Field authority** (`mapper.DEFAULT_AUTHORITY`, overridable in policy config).
-  The worker emits *only* fields XIQ owns, so human-owned fields (rack, tenant,
-  description) can never generate phantom drift. `site` is XIQ-owned by default
-  (Meraki-style); drop it from authority to let humans own it after create.
+- **Fixed, minimal field set.** The worker only ever asserts name, serial,
+  status, and site — never rack, tenant, description, etc. — so human-owned
+  fields can never generate phantom drift.
 - **Stable identity** (`identity.py`). Deterministic device names + an immutable
   `xiq_device_id` custom field so a device is always correlatable even if its
   display name changes.
-- **Meraki-style site assignment.** Site is asserted every run from an explicit
-  `location_site_mapping` (+ `default_site`); many XIQ locations can consolidate
-  into one NetBox site, and each site records its XIQ locations in the
-  `xiq_locations` custom field (Meraki does this with `meraki_networks`).
+- **Direct site mapping.** Each XIQ location a device belongs to becomes a
+  NetBox site of the same name (1:1); `default_site` is used only when a
+  device's location is missing or unresolvable.
 - **Bootstrap step** (`bootstrap.py`). Idempotently creates the custom-field
   definitions + `source:xiq` tag before the first sync — the same first-run
   pattern the official integrations use.
@@ -42,8 +48,8 @@ scaffold does deliberately:
   the official `extremecloudiq-api` SDK (token or user/pass), plus a plain
   `requests` call for the legacy per-switch `/xiq/v0/monitor/device/wired/portlist`
   endpoint the SDK doesn't cover.
-- `identity.py` — stable device naming + Meraki-style site resolution.
-- `mapper.py` — XIQ → Diode entities with field-authority enforcement, custom fields, tags.
+- `identity.py` — stable device naming + direct (1:1) site resolution.
+- `mapper.py` — XIQ → Diode entities: fixed basic device/site fields, custom fields, tags.
 - `bootstrap.py` — one-time idempotent NetBox schema setup (custom fields + tag).
 - `backend.py` — worker entrypoint + standalone runner.
 - `agent.yaml` — example policy (bootstrap, site mapping, field authority).
@@ -173,9 +179,8 @@ integrating it, all re-check-worthy on a version bump:
 `mapper._device_kwargs()` / `_device_custom_fields()` funnel `custom_fields=`
 and `tags=` through one place. As of `netboxlabs-diode-sdk` (generated from
 NetBox v4.6.0), `custom_fields` values must be wrapped —
-`CustomFieldValue(text=...)` for the text fields, `CustomFieldValue(json=...)`
-for `xiq_locations` — a plain string raises `ValueError`. Confirm this still
-holds for your SDK version: `python -c "import netboxlabs.diode.sdk.ingester as i; help(i.Device)"`.
+`CustomFieldValue(text=...)` — a plain string raises `ValueError`. Confirm
+this still holds for your SDK version: `python -c "import netboxlabs.diode.sdk.ingester as i; help(i.Device)"`.
 
 ## XIQ auth
 
@@ -191,10 +196,8 @@ holds for your SDK version: `python -c "import netboxlabs.diode.sdk.ingester as 
 | key | meaning |
 |-----|---------|
 | `BOOTSTRAP` | run schema setup before sync (first run only) |
-| `location_site_mapping` | XIQ location name → NetBox site name (consolidation) |
-| `default_site` | site for unmapped locations |
+| `default_site` | site for devices with a missing/unresolvable location |
 | `name_source` | `hostname` (default) or `serial` |
-| `field_authority` / `_add` / `_remove` | what XIQ owns (= what Assurance flags) |
 | `scope.sites` | limit sync to specific resolved sites |
 | `INCLUDE_WIRED_PORTS` | also sync switch ports as Interface entities (default `false`; opt-in since it's one extra API call per switch, against the undocumented legacy endpoint above) |
 
@@ -203,21 +206,26 @@ holds for your SDK version: `python -c "import netboxlabs.diode.sdk.ingester as 
 When enabled, every device whose `device_function` maps to the `network-switch`
 role (see `identity.ROLE_BY_DEVICE_FUNCTION`) gets one `get_wired_portlist` call,
 mapped to NetBox `Interface` entities: `name`, link state (`enabled`), `speed`
-(parsed from `portSpeed`, Kbps), `duplex`, `description` (`ifAlias`), plus
-`xiq_port_id` / `xiq_tagged_vlans` / `xiq_lldp_neighbor` custom fields (created
-by `BOOTSTRAP`, same as the device-level ones).
+(parsed from `portSpeed`, Kbps), `duplex`, `description` (`ifAlias`), plus an
+`xiq_port_id` custom field (created by `BOOTSTRAP`, same as the device-level one).
 
 `mode` and NetBox's `type` are deliberately **not** asserted. On FLEX-UNI /
 Fabric-Attach deployments, a port is mapped straight into an I-SID rather than
 a VLAN — `portMode`/`taggedVlans` don't describe real port configuration
 there, and this endpoint (and every other documented XIQ API path, as of this
-writing) doesn't expose I-SID membership to assert instead. `taggedVlans` is
-kept as a raw `xiq_tagged_vlans` custom field so the data isn't lost, rather
-than wired up as a real (and potentially wrong) VLAN link.
+writing) doesn't expose I-SID membership to assert instead.
 
 ## Roadmap
 
-- ~~Switch ports → Interface entities (per-device port endpoint).~~ Done via `INCLUDE_WIRED_PORTS`.
+This project deliberately starts with a small, fixed field set. Candidates
+for later, once the basics are proven out:
+
+- Optional/configurable fields beyond name/serial/status/site (device_type,
+  platform, description, primary IP) — likely via a field-authority-style
+  opt-in again, not on by default.
+- `xiq_tagged_vlans` / `xiq_lldp_neighbor` port custom fields, and
+  consolidating multiple XIQ locations into one NetBox site, if a deployment
+  needs either.
 - I-SID / Fabric-Attach service mapping, if XIQ ever exposes it via a documented endpoint.
 - VLANs / Prefixes from network policies.
 - Move bootstrap custom-field creation to Diode if your SDK supports it.
