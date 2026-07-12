@@ -55,10 +55,6 @@ orb:
           name_source: hostname            # or "serial" for max stability
           default_site: "XIQ-Unmapped"
 
-          # INCLUDE_WIRED_PORTS: false     # true to also sync switch ports as
-                                            # Interface entities (1 extra API call
-                                            # per switch; see README)
-
           # XIQ locations map 1:1 to NetBox sites (same name); default_site
           # is used only when a device's location is missing/unresolvable.
         scope:
