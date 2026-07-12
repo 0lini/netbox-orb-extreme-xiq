@@ -32,7 +32,13 @@ from netboxlabs.diode.sdk.ingester import (
 )
 
 from . import bootstrap
-from .identity import build_location_index, device_name, expand_location_paths, resolve_location
+from .identity import (
+    build_location_index,
+    device_name,
+    device_type_model_for,
+    expand_location_paths,
+    resolve_location,
+)
 
 __all__ = [
     "build_location_index",
@@ -85,7 +91,9 @@ def _device_kwargs(device: dict, *, site_name: str, location: Location | None, n
     if location is not None:
         kwargs["location"] = location
     if device.get("product_type"):
-        kwargs["device_type"] = DeviceType(model=device["product_type"], manufacturer=MANUFACTURER)
+        kwargs["device_type"] = DeviceType(
+            model=device_type_model_for(device["product_type"]), manufacturer=MANUFACTURER
+        )
         kwargs["manufacturer"] = MANUFACTURER
     if device.get("software_version"):
         kwargs["platform"] = Platform(name=device["software_version"], manufacturer=MANUFACTURER)

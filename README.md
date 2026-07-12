@@ -214,6 +214,24 @@ this still holds for your SDK version: `python -c "import netboxlabs.diode.sdk.i
 | `name_source` | `hostname` (default) or `serial` |
 | `scope.sites` | limit sync to specific resolved sites |
 
+## Device type model mapping (`identity.device_type_model_for`)
+
+XIQ's `product_type` prefixes `FabricEngine_` onto the model code for any
+switch running Fabric Engine OS (e.g. `FabricEngine_5320_48P_8XE`). The
+[NetBox Device Type Library](https://github.com/netbox-community/devicetype-library)'s
+own convention for these (`device-types/Extreme Networks/`) puts that
+marker at the *end* instead — confirmed directly against the library, e.g.
+`5320-48P-8XE-FabricEngine.yaml`'s `model: 5320-48P-8XE-FabricEngine` — so
+`device_type_model_for` moves the prefix to a suffix and turns underscores
+into hyphens (`FabricEngine_5320_48P_8XE` -> `5320-48P-8XE-FabricEngine`),
+for every `FabricEngine_`-prefixed code, regardless of whether that exact
+model already has a file in the public library.
+
+`product_type` values without the prefix (e.g. `VSP_SWITCH`, a generic XIQ
+code that doesn't identify a specific physical model at all, unlike the
+precise `FabricEngine_*` SKUs) are passed through unchanged rather than
+guessed at.
+
 ## Wired switch ports
 
 Every device whose `device_function` is a switch (see
