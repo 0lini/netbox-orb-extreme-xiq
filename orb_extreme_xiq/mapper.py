@@ -28,7 +28,8 @@ from netboxlabs.diode.sdk.ingester import (
     WirelessLAN,
 )
 
-from .identity import build_location_index, device_name, resolve_location
+from . import bootstrap
+from .identity import build_location_index, device_name, expand_location_paths, resolve_location
 
 __all__ = [
     "build_location_index",
@@ -39,8 +40,9 @@ __all__ = [
 
 # Vendor/product/lifecycle tags, mirroring the flat-tag pattern NetBox Labs'
 # own Cisco Meraki integration uses (e.g. "cisco", "meraki", "discovered")
-# rather than one namespaced "source:xiq" tag.
-PROVENANCE_TAGS = ["extreme-networks", "xiq", "discovered"]
+# rather than one namespaced "source:xiq" tag. Derived from bootstrap.TAGS so
+# the two can't drift apart.
+PROVENANCE_TAGS = [tag["name"] for tag in bootstrap.TAGS]
 
 
 def _status_for(device: dict) -> str:
@@ -51,37 +53,25 @@ def _cf_text(value: str) -> CustomFieldValue:
     return CustomFieldValue(text=value)
 
 
-def _device_custom_fields(device: dict) -> dict:
+def _network_policy_custom_fields(obj: dict) -> dict:
     custom_fields = {}
-    network_policy = device.get("network_policy_name")
+    network_policy = obj.get("network_policy_name")
     if network_policy:
         custom_fields["xiq_network_policy"] = _cf_text(network_policy)
     return custom_fields
 
 
-def _location_chain(site_name: str, location_path: list[str]) -> Location:
-    """Build the nested Location for the last element of location_path,
-    threading `parent` up through each preceding element (e.g. Building ->
-    Floor). Returns the most specific (last) Location; every ancestor is
-    reachable through its `parent` chain.
-    """
-    location = None
-    for name in location_path:
-        location = Location(name=name, site=site_name, parent=location)
-    return location
-
-
-def _device_kwargs(device: dict, *, site_name: str, location_path: list[str], name_source: str) -> dict:
+def _device_kwargs(device: dict, *, site_name: str, location: Location | None, name_source: str) -> dict:
     kwargs = {
         "name": device_name(device, name_source),
         "serial": device.get("serial_number") or device.get("service_tag") or None,
         "status": _status_for(device),
         "site": Site(name=site_name),
-        "custom_fields": _device_custom_fields(device),
+        "custom_fields": _network_policy_custom_fields(device),
         "tags": PROVENANCE_TAGS,
     }
-    if location_path:
-        kwargs["location"] = _location_chain(site_name, location_path)
+    if location is not None:
+        kwargs["location"] = location
     return kwargs
 
 
@@ -114,19 +104,19 @@ def devices_to_entities(
     for site_name in sorted(site_names):
         entities.append(Entity(site=Site(name=site_name)))
 
-    seen_locations: set[tuple[str, tuple[str, ...]]] = set()
-    for site_name, path in sorted(location_paths):
-        for depth in range(1, len(path) + 1):
-            key = (site_name, path[:depth])
-            if key in seen_locations:
-                continue
-            seen_locations.add(key)
-            entities.append(Entity(location=_location_chain(site_name, list(path[:depth]))))
+    # expand_location_paths orders every path's ancestors before itself, so a
+    # single pass can thread `parent` through a cache instead of rebuilding
+    # each prefix's chain from scratch (O(total locations), not O(depth^2)).
+    location_cache: dict[tuple[str, tuple[str, ...]], Location] = {}
+    for site_name, path in expand_location_paths(location_paths):
+        parent = location_cache.get((site_name, path[:-1])) if len(path) > 1 else None
+        location = Location(name=path[-1], site=site_name, parent=parent)
+        location_cache[(site_name, path)] = location
+        entities.append(Entity(location=location))
 
     for device, site_name, location_path in resolved:
-        kwargs = _device_kwargs(
-            device, site_name=site_name, location_path=location_path, name_source=name_source
-        )
+        location = location_cache.get((site_name, tuple(location_path))) if location_path else None
+        kwargs = _device_kwargs(device, site_name=site_name, location=location, name_source=name_source)
         entities.append(Entity(device=Device(**kwargs)))
 
     return entities
@@ -284,14 +274,6 @@ _AUTH_TYPE_BY_SECURITY_TYPE = {
 }
 
 
-def _wlan_custom_fields(wlan: dict) -> dict:
-    custom_fields = {}
-    network_policy = wlan.get("network_policy_name")
-    if network_policy:
-        custom_fields["xiq_network_policy"] = _cf_text(network_policy)
-    return custom_fields
-
-
 def _wlan_kwargs(ssid: str, wlan: dict) -> dict:
     return {
         "ssid": ssid,
@@ -307,9 +289,20 @@ def _wlan_kwargs(ssid: str, wlan: dict) -> dict:
         # (CCMP/TKIP/...) -- only the fuller /ssids endpoint's
         # access_security.encryption_method would, and this worker doesn't
         # call it (see README).
-        "custom_fields": _wlan_custom_fields(wlan),
+        "custom_fields": _network_policy_custom_fields(wlan),
         "tags": PROVENANCE_TAGS,
     }
+
+
+def _record_wlan(wlans: dict[str, dict], wlan: dict) -> str | None:
+    """Record `wlan` in the cross-AP dedup dict `wlans` (first-seen wins,
+    see radios_to_entities) and return its ssid, or None if it has none.
+    """
+    ssid = wlan.get("ssid")
+    if not ssid:
+        return None
+    wlans.setdefault(ssid, wlan)
+    return ssid
 
 
 def radios_to_entities(radio_infos: list[dict], *, device_names: dict[int, str]) -> list:
@@ -336,13 +329,7 @@ def radios_to_entities(radio_infos: list[dict], *, device_names: dict[int, str])
         if device is None:
             continue
         for radio in radio_info.get("radios") or []:
-            ssids = []
-            for wlan in radio.get("wlans") or []:
-                ssid = wlan.get("ssid")
-                if not ssid:
-                    continue
-                ssids.append(ssid)
-                wlans.setdefault(ssid, wlan)
+            ssids = [ssid for wlan in radio.get("wlans") or [] if (ssid := _record_wlan(wlans, wlan))]
             radio_kwargs_list.append(_radio_kwargs(radio, device=device, ssids=ssids))
 
     entities = [Entity(wireless_lan=WirelessLAN(**_wlan_kwargs(ssid, wlan))) for ssid, wlan in wlans.items()]

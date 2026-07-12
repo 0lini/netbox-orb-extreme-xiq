@@ -5,6 +5,7 @@ from __future__ import annotations
 from orb_extreme_xiq.identity import (
     build_location_index,
     device_name,
+    expand_location_paths,
     is_ap,
     is_switch,
     resolve_location,
@@ -45,6 +46,31 @@ def test_resolve_location_returns_site_and_nested_path():
 def test_resolve_location_falls_back_for_unknown_location():
     assert resolve_location(999, {}, "XIQ-Unmapped") == ("XIQ-Unmapped", [])
     assert resolve_location(None, {}, "XIQ-Unmapped") == ("XIQ-Unmapped", [])
+
+
+def test_expand_location_paths_orders_ancestors_before_descendants_and_dedupes():
+    paths = {
+        ("HQ", ("Building A", "Floor 1")),
+        ("HQ", ("Building A", "Floor 2")),
+    }
+
+    expanded = expand_location_paths(paths)
+
+    assert expanded == [
+        ("HQ", ("Building A",)),
+        ("HQ", ("Building A", "Floor 1")),
+        ("HQ", ("Building A", "Floor 2")),
+    ]
+
+
+def test_expand_location_paths_handles_disjoint_sites_and_empty_input():
+    paths = {("HQ", ("Building A",)), ("Branch", ("Building B",))}
+
+    assert expand_location_paths(paths) == [
+        ("Branch", ("Building B",)),
+        ("HQ", ("Building A",)),
+    ]
+    assert expand_location_paths(set()) == []
 
 
 def test_device_name_prefers_hostname_then_falls_back():

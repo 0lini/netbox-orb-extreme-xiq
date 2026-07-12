@@ -67,22 +67,17 @@ def _exists(url: str, token: str, name: str) -> bool:
     return resp.json().get("count", 0) > 0
 
 
+def _ensure_all(url: str, token: str, definitions: list[dict]) -> None:
+    for definition in definitions:
+        if not _exists(url, token, definition["name"]):
+            resp = requests.post(url, headers=_headers(token), json=definition, timeout=30)
+            resp.raise_for_status()
+
+
 def ensure_schema(netbox_url: str | None, netbox_token: str | None) -> None:
     """Idempotently create the custom-field definitions and provenance tags."""
     if not netbox_url or not netbox_token:
         return
     base = netbox_url.rstrip("/")
-    custom_fields_url = f"{base}/api/extras/custom-fields/"
-    tags_url = f"{base}/api/extras/tags/"
-
-    for custom_field in CUSTOM_FIELDS:
-        if not _exists(custom_fields_url, netbox_token, custom_field["name"]):
-            resp = requests.post(
-                custom_fields_url, headers=_headers(netbox_token), json=custom_field, timeout=30
-            )
-            resp.raise_for_status()
-
-    for tag in TAGS:
-        if not _exists(tags_url, netbox_token, tag["name"]):
-            resp = requests.post(tags_url, headers=_headers(netbox_token), json=tag, timeout=30)
-            resp.raise_for_status()
+    _ensure_all(f"{base}/api/extras/custom-fields/", netbox_token, CUSTOM_FIELDS)
+    _ensure_all(f"{base}/api/extras/tags/", netbox_token, TAGS)
