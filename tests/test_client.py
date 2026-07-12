@@ -65,6 +65,27 @@ def test_get_devices_paginates_until_last_page(monkeypatch):
     assert [d["id"] for d in devices] == [1, 2, 3]
 
 
+def test_get_radio_information_paginates_and_sends_device_ids(monkeypatch):
+    pages = [
+        json_response({"data": [{"device_id": 1, "radios": []}], "total_pages": 2}),
+        json_response({"data": [{"device_id": 2, "radios": []}], "total_pages": 2}),
+    ]
+    seen_params = []
+
+    def fake_list(self, **kw):
+        seen_params.append(kw["query_params"])
+        return pages.pop(0)
+
+    monkeypatch.setattr(DeviceApi, "list_devices_radio_information", fake_list)
+
+    client = XiqClient(api_token="tok123")
+    radio_infos = list(client.get_radio_information(device_ids=[1, 2]))
+
+    assert [r["device_id"] for r in radio_infos] == [1, 2]
+    assert all(p["deviceIds"] == [1, 2] for p in seen_params)
+    assert [p["page"] for p in seen_params] == [1, 2]
+
+
 def test_get_location_tree_returns_nested_payload(monkeypatch):
     monkeypatch.setattr(
         LocationApi,
