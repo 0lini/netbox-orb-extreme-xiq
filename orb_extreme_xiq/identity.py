@@ -18,10 +18,13 @@ from __future__ import annotations
 # error).
 SWITCH_DEVICE_FUNCTIONS = frozenset({"SWITCH", "SWITCH_HAC", "SWITCH_DELL"})
 
+# Same reasoning as SWITCH_DEVICE_FUNCTIONS above, for wireless-radio sync.
+AP_DEVICE_FUNCTIONS = frozenset({"AP"})
+
 # XiqDeviceFunction enum values (xcloudiq-openapi.yaml) -> NetBox device role slug.
 ROLE_BY_DEVICE_FUNCTION = {
     **dict.fromkeys(SWITCH_DEVICE_FUNCTIONS, "Switch"),
-    "AP": "Wireless AP",
+    **dict.fromkeys(AP_DEVICE_FUNCTIONS, "Wireless AP"),
     "ROUTER": "router",
     "ROUTER_AS_L2_VPN_GATEWAY": "router",
     "ROUTER_AS_L3_VPN_GATEWAY": "router",
@@ -41,6 +44,11 @@ def role_for(device_function: str | None) -> str:
 def is_switch(device_function: str | None) -> bool:
     """Whether a XIQ device_function is a switch (see SWITCH_DEVICE_FUNCTIONS)."""
     return bool(device_function) and device_function.upper() in SWITCH_DEVICE_FUNCTIONS
+
+
+def is_ap(device_function: str | None) -> bool:
+    """Whether a XIQ device_function is an access point (see AP_DEVICE_FUNCTIONS)."""
+    return bool(device_function) and device_function.upper() in AP_DEVICE_FUNCTIONS
 
 
 def device_name(device: dict, name_source: str = "hostname") -> str:

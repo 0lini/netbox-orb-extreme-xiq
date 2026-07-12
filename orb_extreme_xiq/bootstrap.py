@@ -16,8 +16,8 @@ CUSTOM_FIELDS = [
         "name": "xiq_network_policy",
         "label": "XIQ Network Policy",
         "type": "text",
-        "object_types": ["dcim.device"],
-        "description": "The ExtremeCloud IQ network policy assigned to this device.",
+        "object_types": ["dcim.device", "wireless.wirelesslan"],
+        "description": "The ExtremeCloud IQ network policy assigned to this device or WLAN.",
     },
     {
         "name": "xiq_port_id",
