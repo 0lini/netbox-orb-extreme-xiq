@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 
-from netboxlabs.diode.sdk.ingester import CustomFieldValue, Device, Entity, Interface, Site
+from netboxlabs.diode.sdk.ingester import CustomFieldValue, Device, Entity, Interface, Site, WirelessLAN
 
 from .identity import build_location_index, device_name, resolve_site_name
 
@@ -25,6 +25,7 @@ __all__ = [
     "build_location_index",
     "devices_to_entities",
     "ports_to_entities",
+    "radios_to_entities",
 ]
 
 # Vendor/product/lifecycle tags, mirroring the flat-tag pattern NetBox Labs'
@@ -174,4 +175,137 @@ def ports_to_entities(ports: list[dict], *, device: str) -> list:
                 )
             )
         )
+    return entities
+
+
+# XiqRadio.mode (xcloudiq-openapi.yaml) -> NetBox Interface type. _11be_* (WiFi
+# 7) has no confirmed NetBox InterfaceTypeChoices entry as of this writing --
+# left unmapped (type unset) rather than guessing at a value NetBox might reject.
+_RADIO_TYPE_BY_MODE = {
+    "_11a": "ieee802.11a",
+    "_11bg": "ieee802.11g",
+    "_11an": "ieee802.11n",
+    "_11ng": "ieee802.11n",
+    "_11ac": "ieee802.11ac",
+    "_11ax_2g": "ieee802.11ax",
+    "_11ax_5g": "ieee802.11ax",
+    "_11ax_6g": "ieee802.11ax",
+}
+
+_CHANNEL_WIDTH_MHZ = {
+    "MHZ_20": 20.0,
+    "MHZ_40": 40.0,
+    "MHZ_80": 80.0,
+    "MHZ_160": 160.0,
+    "MHZ_320": 320.0,
+}
+
+
+def _channel_frequency_mhz(frequency_band: str | None, channel_number: int | None) -> float | None:
+    """Channel-center-frequency in MHz from XIQ's band label + channel number,
+    via the standard IEEE 802.11 channel-numbering formulas (not XIQ-specific,
+    so this doesn't need live-API verification the way field *names* do):
+    2.4GHz = 2407 + 5*channel (channel 14, Japan-only 802.11b, is the sole
+    exception at 2484 MHz and isn't special-cased here); 5GHz = 5000 + 5*channel;
+    6GHz = 5950 + 5*channel.
+    """
+    if channel_number is None:
+        return None
+    offset = {"2.4GHz": 2407.0, "5GHz": 5000.0, "6GHz": 5950.0}.get(frequency_band)
+    if offset is None:
+        return None
+    return offset + 5.0 * channel_number
+
+
+def _radio_kwargs(radio: dict, *, device: str, ssids: list[str]) -> dict:
+    return {
+        "device": device,
+        "name": radio["name"],
+        "type": _RADIO_TYPE_BY_MODE.get(radio.get("mode")),
+        "rf_role": "ap",
+        "tx_power": radio.get("power"),
+        "primary_mac_address": radio.get("mac_address") or None,
+        "rf_channel_frequency": _channel_frequency_mhz(radio.get("frequency"), radio.get("channel_number")),
+        "rf_channel_width": _CHANNEL_WIDTH_MHZ.get(radio.get("channel_width")),
+        "wireless_lans": ssids,
+        "tags": PROVENANCE_TAGS,
+    }
+
+
+# XiqWirelessWlan.ssid_security_type (xcloudiq-openapi.yaml) -> NetBox
+# WirelessLAN auth_type. Any unrecognized/missing value falls back to "open",
+# mirroring the real Cisco Meraki integration's own fallback convention.
+_AUTH_TYPE_BY_SECURITY_TYPE = {
+    "OPEN": "open",
+    "ENHANCED_OPEN": "open",
+    "PPSK": "wpa-personal",
+    "PSK": "wpa-personal",
+    "WEP": "wep",
+    "TYPE_802DOT1X": "wpa-enterprise",
+}
+
+
+def _wlan_custom_fields(wlan: dict) -> dict:
+    custom_fields = {}
+    network_policy = wlan.get("network_policy_name")
+    if network_policy:
+        custom_fields["xiq_network_policy"] = _cf_text(network_policy)
+    return custom_fields
+
+
+def _wlan_kwargs(ssid: str, wlan: dict) -> dict:
+    return {
+        "ssid": ssid,
+        # All WLANs seen here are currently broadcasting on a live radio, so
+        # "active" is a safe default -- unlike Meraki/Mist, this data comes
+        # from XiqWirelessWlan (nested per-radio broadcast info), which
+        # doesn't carry the SSID's own configured enabled/disabled state
+        # (`ssid_status` here is OPEN/CLOSED, which reads as broadcast
+        # visibility, not enabled/disabled, so it isn't used for this).
+        "status": "active",
+        "auth_type": _AUTH_TYPE_BY_SECURITY_TYPE.get(wlan.get("ssid_security_type"), "open"),
+        # auth_cipher isn't set: XiqWirelessWlan doesn't carry cipher detail
+        # (CCMP/TKIP/...) -- only the fuller /ssids endpoint's
+        # access_security.encryption_method would, and this worker doesn't
+        # call it (see README).
+        "custom_fields": _wlan_custom_fields(wlan),
+        "tags": PROVENANCE_TAGS,
+    }
+
+
+def radios_to_entities(radio_infos: list[dict], *, device_names: dict[int, str]) -> list:
+    """Map /devices/radio-information records to Interface (one per radio)
+    and WirelessLAN (one per unique SSID, deduped across every AP) entities.
+
+    device_names maps a XIQ device id to the NetBox device name it was
+    already mapped to (see identity.device_name) -- radio_infos entries for
+    any id not present here (e.g. filtered out by site_scope) are skipped.
+
+    WLANs aren't site-scoped: XIQ network policies (unlike Meraki networks)
+    aren't inherently 1:1 with a site, and a single SSID can broadcast from
+    APs across many sites, so there's no single correct scope_site to assert.
+    If the same SSID name is seen with a different network_policy_name on
+    different radios, the first one encountered wins (documented behavior,
+    not expected to matter in practice -- SSID names are broadcast-visible
+    and organizations avoid reusing one across unrelated policies).
+    """
+    wlans: dict[str, dict] = {}
+    radio_kwargs_list = []
+
+    for radio_info in radio_infos:
+        device = device_names.get(radio_info.get("device_id"))
+        if device is None:
+            continue
+        for radio in radio_info.get("radios") or []:
+            ssids = []
+            for wlan in radio.get("wlans") or []:
+                ssid = wlan.get("ssid")
+                if not ssid:
+                    continue
+                ssids.append(ssid)
+                wlans.setdefault(ssid, wlan)
+            radio_kwargs_list.append(_radio_kwargs(radio, device=device, ssids=ssids))
+
+    entities = [Entity(wireless_lan=WirelessLAN(**_wlan_kwargs(ssid, wlan))) for ssid, wlan in wlans.items()]
+    entities.extend(Entity(interface=Interface(**kwargs)) for kwargs in radio_kwargs_list)
     return entities

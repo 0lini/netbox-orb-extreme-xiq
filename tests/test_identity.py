@@ -5,6 +5,7 @@ from __future__ import annotations
 from orb_extreme_xiq.identity import (
     build_location_index,
     device_name,
+    is_ap,
     is_switch,
     resolve_site_name,
     role_for,
@@ -72,3 +73,11 @@ def test_is_switch_matches_every_switch_device_function_case_insensitively():
     assert not is_switch("AP")
     assert not is_switch("ROUTER")
     assert not is_switch(None)
+
+
+def test_is_ap_matches_only_the_ap_device_function_case_insensitively():
+    assert is_ap("AP")
+    assert is_ap("ap")
+    assert not is_ap("SWITCH")
+    assert not is_ap("ROUTER")
+    assert not is_ap(None)

@@ -46,6 +46,10 @@ class Site(Rec):
     pass
 
 
+class WirelessLAN(Rec):
+    pass
+
+
 class Entity(Rec):
     pass
 
@@ -62,6 +66,7 @@ STUB_CLASSES = {
     "Interface": Interface,
     "IPAddress": IPAddress,
     "Site": Site,
+    "WirelessLAN": WirelessLAN,
     "Entity": Entity,
     "CustomFieldValue": CustomFieldValue,
 }

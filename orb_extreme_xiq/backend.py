@@ -18,7 +18,7 @@ from worker.models import Config, Metadata, Policy
 
 from . import bootstrap, mapper
 from .client import DEFAULT_BASE_URL, XiqClient
-from .identity import device_name, is_switch
+from .identity import device_name, is_ap, is_switch
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +98,7 @@ class Backend(WorkerBackend):
         )
 
         entities.extend(self._port_entities(client, devices, name_source, policy_name))
+        entities.extend(self._radio_entities(client, devices, name_source, policy_name))
 
         return entities
 
@@ -113,6 +114,21 @@ class Backend(WorkerBackend):
             ports = client.get_wired_portlist(device["id"])
             entities.extend(mapper.ports_to_entities(ports, device=device_name(device, name_source)))
         logger.info("Policy %s: mapped %d wired port entities", policy_name, len(entities))
+        return entities
+
+    @staticmethod
+    def _radio_entities(
+        client: XiqClient, devices: list[dict], name_source: str, policy_name: str
+    ) -> list[Entity]:
+        """One bulk get_radio_information call covering every AP."""
+        ap_devices = [d for d in devices if is_ap(d.get("device_function"))]
+        if not ap_devices:
+            return []
+        device_ids = [d["id"] for d in ap_devices]
+        device_names = {d["id"]: device_name(d, name_source) for d in ap_devices}
+        radio_infos = list(client.get_radio_information(device_ids=device_ids))
+        entities = mapper.radios_to_entities(radio_infos, device_names=device_names)
+        logger.info("Policy %s: mapped %d wireless radio/WLAN entities", policy_name, len(entities))
         return entities
 
 

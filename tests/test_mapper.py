@@ -166,3 +166,117 @@ def test_ports_to_entities_does_not_assert_mode(stub_sdk):
     interfaces = _interfaces(mapper.ports_to_entities(PORTS, device="sw-idf1"))
 
     assert "mode" not in interfaces[0]._kw
+
+
+RADIO_INFOS = [
+    {
+        "device_id": 111,
+        "radios": [
+            {
+                "name": "Radio1",
+                "mac_address": "001122334455",
+                "mode": "_11ax_2g",
+                "frequency": "2.4GHz",
+                "channel_number": 6,
+                "channel_width": "MHZ_20",
+                "power": 17,
+                "wlans": [
+                    {
+                        "ssid": "Corp-WiFi",
+                        "network_policy_name": "Corp-Policy",
+                        "ssid_security_type": "TYPE_802DOT1X",
+                        "bssid": "001122334455",
+                    }
+                ],
+            },
+            {
+                "name": "Radio2",
+                "mac_address": "001122334456",
+                "mode": "_11ax_5g",
+                "frequency": "5GHz",
+                "channel_number": 36,
+                "channel_width": "MHZ_80",
+                "power": 20,
+                "wlans": [
+                    {
+                        "ssid": "Corp-WiFi",
+                        "network_policy_name": "Corp-Policy",
+                        "ssid_security_type": "TYPE_802DOT1X",
+                        "bssid": "001122334457",
+                    },
+                    {
+                        "ssid": "Guest-WiFi",
+                        "network_policy_name": "Guest-Policy",
+                        "ssid_security_type": "OPEN",
+                        "bssid": "001122334458",
+                    },
+                ],
+            },
+        ],
+    },
+    {
+        "device_id": 999,  # filtered out by site_scope upstream -- not in device_names
+        "radios": [{"name": "Radio1", "mode": "_11ac", "channel_width": "MHZ_20", "wlans": []}],
+    },
+]
+
+
+def _radio_map():
+    return mapper.radios_to_entities(RADIO_INFOS, device_names={111: "ap-lobby"})
+
+
+def _wlans(entities):
+    return [e._kw["wireless_lan"] for e in entities if "wireless_lan" in e._kw]
+
+
+def _radio_interfaces(entities):
+    return [e._kw["interface"] for e in entities if "interface" in e._kw]
+
+
+def test_radios_to_entities_skips_devices_missing_from_device_names(stub_sdk):
+    interfaces = _radio_interfaces(_radio_map())
+
+    assert {i._kw["device"] for i in interfaces} == {"ap-lobby"}
+    assert len(interfaces) == 2  # only the two radios for device_id 111
+
+
+def test_radios_to_entities_maps_radio_hardware_fields(stub_sdk):
+    interfaces = {i._kw["name"]: i for i in _radio_interfaces(_radio_map())}
+
+    radio1 = interfaces["Radio1"]
+    assert radio1._kw["device"] == "ap-lobby"
+    assert radio1._kw["type"] == "ieee802.11ax"
+    assert radio1._kw["rf_role"] == "ap"
+    assert radio1._kw["tx_power"] == 17
+    assert radio1._kw["primary_mac_address"] == "001122334455"
+    assert radio1._kw["rf_channel_frequency"] == 2437.0  # 2407 + 5*6
+    assert radio1._kw["rf_channel_width"] == 20.0
+    assert radio1._kw["wireless_lans"] == ["Corp-WiFi"]
+    assert radio1._kw["tags"] == ["extreme-networks", "xiq", "discovered"]
+
+    radio2 = interfaces["Radio2"]
+    assert radio2._kw["rf_channel_frequency"] == 5180.0  # 5000 + 5*36
+    assert radio2._kw["rf_channel_width"] == 80.0
+    assert radio2._kw["wireless_lans"] == ["Corp-WiFi", "Guest-WiFi"]
+
+
+def test_radios_to_entities_dedupes_wlans_by_ssid_across_radios(stub_sdk):
+    wlans = {w._kw["ssid"]: w for w in _wlans(_radio_map())}
+
+    assert set(wlans) == {"Corp-WiFi", "Guest-WiFi"}
+
+
+def test_radios_to_entities_maps_auth_type_and_status(stub_sdk):
+    wlans = {w._kw["ssid"]: w for w in _wlans(_radio_map())}
+
+    assert wlans["Corp-WiFi"]._kw["auth_type"] == "wpa-enterprise"  # TYPE_802DOT1X
+    assert wlans["Guest-WiFi"]._kw["auth_type"] == "open"  # OPEN
+    assert wlans["Corp-WiFi"]._kw["status"] == "active"
+    assert "auth_cipher" not in wlans["Corp-WiFi"]._kw  # not fetched (see mapper docstring)
+
+
+def test_radios_to_entities_carries_network_policy_custom_field_and_tags(stub_sdk):
+    wlans = {w._kw["ssid"]: w for w in _wlans(_radio_map())}
+
+    assert cf(wlans["Corp-WiFi"]._kw["custom_fields"]["xiq_network_policy"]._kw) == "Corp-Policy"
+    assert wlans["Corp-WiFi"]._kw["tags"] == ["extreme-networks", "xiq", "discovered"]
