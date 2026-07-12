@@ -118,7 +118,10 @@ class XiqClient:
             if exc.status == 401 and self._username and self._password:
                 self._token_expiry = 0.0
                 self._login()
-                result = fn(skip_deserialization=True, **kwargs)
+                try:
+                    result = fn(skip_deserialization=True, **kwargs)
+                except ApiException as retry_exc:
+                    raise XiqApiError(f"XIQ API error {retry_exc.status}: {retry_exc.body}") from retry_exc
             else:
                 raise XiqApiError(f"XIQ API error {exc.status}: {exc.body}") from exc
         return json.loads(result.response.data)

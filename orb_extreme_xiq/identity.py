@@ -8,12 +8,20 @@ location a device belongs to becomes a NetBox site of the same name.
 
 from __future__ import annotations
 
+# XiqDeviceFunction values (xcloudiq-openapi.yaml) that are switches -- used
+# both to build ROLE_BY_DEVICE_FUNCTION below and by is_switch(), so a device
+# is identified as a switch by its raw device_function, never by comparing
+# against the display string role_for() happens to map it to (backend.py used
+# to do exactly that indirect comparison to decide whether to sync wired
+# ports; renaming the display string in one place without the other would
+# have silently stopped wired-port-sync for every switch, with nothing to
+# error).
+SWITCH_DEVICE_FUNCTIONS = frozenset({"SWITCH", "SWITCH_HAC", "SWITCH_DELL"})
+
 # XiqDeviceFunction enum values (xcloudiq-openapi.yaml) -> NetBox device role slug.
 ROLE_BY_DEVICE_FUNCTION = {
+    **dict.fromkeys(SWITCH_DEVICE_FUNCTIONS, "network-switch"),
     "AP": "wireless-ap",
-    "SWITCH": "network-switch",
-    "SWITCH_HAC": "network-switch",
-    "SWITCH_DELL": "network-switch",
     "ROUTER": "router",
     "ROUTER_AS_L2_VPN_GATEWAY": "router",
     "ROUTER_AS_L3_VPN_GATEWAY": "router",
@@ -28,6 +36,11 @@ def role_for(device_function: str | None) -> str:
     if not device_function:
         return DEFAULT_ROLE
     return ROLE_BY_DEVICE_FUNCTION.get(device_function.upper(), DEFAULT_ROLE)
+
+
+def is_switch(device_function: str | None) -> bool:
+    """Whether a XIQ device_function is a switch (see SWITCH_DEVICE_FUNCTIONS)."""
+    return bool(device_function) and device_function.upper() in SWITCH_DEVICE_FUNCTIONS
 
 
 def device_name(device: dict, name_source: str = "hostname") -> str:

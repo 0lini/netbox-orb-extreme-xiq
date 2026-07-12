@@ -29,7 +29,7 @@ from extremecloudiq.apis.tags.device_api import DeviceApi
 from extremecloudiq.apis.tags.location_api import LocationApi
 from extremecloudiq.exceptions import ApiException
 
-from orb_extreme_xiq.client import LEGACY_BASE_URL, XiqClient
+from orb_extreme_xiq.client import LEGACY_BASE_URL, XiqApiError, XiqClient
 
 
 @dataclass
@@ -115,6 +115,21 @@ def test_401_triggers_relogin_for_username_password_client(monkeypatch):
     list(client.get_devices())
 
     assert calls == ["jwt-1", "jwt-2"]
+
+
+def test_401_persisting_after_relogin_raises_xiq_api_error_not_raw_sdk_exception(monkeypatch):
+    monkeypatch.setattr(
+        AuthenticationApi, "login", lambda self, **kw: json_response({"access_token": "jwt-new"})
+    )
+
+    def always_401(self, **kw):
+        raise ApiException(status=401, reason="Unauthorized")
+
+    monkeypatch.setattr(DeviceApi, "list_devices", always_401)
+
+    client = XiqClient(username="u@example.com", password="pw")
+    with pytest.raises(XiqApiError):
+        list(client.get_devices())
 
 
 @responses.activate
