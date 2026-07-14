@@ -55,11 +55,10 @@ Assurance license is enabled — with **zero code changes** to this worker. So
 
 ## Layout
 
-- `client.py` — thin XIQ client: paginated `/devices`, `/locations/tree` and
-  `/devices/radio-information` via the official `extremecloudiq-api` SDK
-  (token or user/pass), plus a plain `requests` call for the legacy
-  per-switch `/xiq/v0/monitor/device/wired/portlist` endpoint the SDK
-  doesn't cover.
+- `client.py` — thin XIQ client on plain `requests`: paginated `/devices`,
+  `/locations/tree`, `/devices/radio-information`, and the legacy per-switch
+  `/xiq/v0/monitor/device/wired/portlist` endpoint (token or user/pass auth,
+  auto-refresh, retry-once-on-401).
 - `identity.py` — stable device naming + site/nested-Location resolution.
 - `mapper.py` — XIQ → Diode entities: fixed basic device/site/location
   fields, custom fields, tags, plus switch-port and AP-radio/WLAN Interface
@@ -67,13 +66,10 @@ Assurance license is enabled — with **zero code changes** to this worker. So
 - `bootstrap.py` — one-time idempotent NetBox schema setup (custom fields + tags).
 - `backend.py` — worker entrypoint + standalone runner.
 - `agent.yaml` — example policy (bootstrap, site mapping, field authority).
-- `tests/` — pytest suite: `test_mapper.py`/`test_identity.py` are offline
-  (stubbed SDK, no network); `test_client.py`/`test_backend.py` monkeypatch the
-  XIQ SDK's Api classes directly (it talks HTTP via urllib3, not `requests`, so
-  `responses` can't intercept it -- see test_client.py's docstring) plus
-  `responses` for the still-`requests`-based legacy port-list call;
-  `test_bootstrap.py` mocks the NetBox REST API with `responses`;
-  `test_openapi_contract.py` is the one exception to "offline" -- see below.
+- `tests/` — pytest suite, all offline: `test_client.py`/`test_backend.py` mock
+  XIQ's HTTP endpoints with `responses`; `test_mapper.py`/`test_identity.py`
+  use plain fixtures; `test_bootstrap.py` mocks the NetBox REST API with
+  `responses`; `test_openapi_contract.py` is the one exception -- see below.
 
 ## Contract check against the live XIQ OpenAPI spec
 
@@ -89,11 +85,10 @@ with `pytest -m contract`, or via the scheduled weekly `contract` job in
 
 Deliberately scoped to paths/param *names*, not response body field names:
 the live spec's own `XiqDevice` schema entry (`PagedXiqDevice.data`'s items)
-is a different, thinner schema than what the installed SDK actually
-deserializes at runtime -- confirmed by inspecting the installed package
-directly, so it's not a reliable signal for response-shape drift. `mapper.py`'s
-field assumptions are instead exercised against real recorded responses in
-`test_mapper.py`/`test_backend.py`.
+is a much thinner schema than the ~34-field payload XIQ actually returns at
+runtime -- confirmed by inspecting real recorded responses -- so it's not a
+reliable signal for response-shape drift. `mapper.py`'s field assumptions are
+instead exercised against real recorded responses in `test_mapper.py`/`test_backend.py`.
 
 ## First-run flow (mirrors Meraki/ACI)
 
@@ -110,33 +105,16 @@ exactly. Bootstrap **skips gracefully** if no NetBox token is set.
 
 ```bash
 pip install -e ".[dev]"
-pip install --no-deps "extremecloudiq-api==25.11.1.post3"  # see note below -- must be separate
 export XIQ_API_TOKEN=...                 # or XIQ_USERNAME / XIQ_PASSWORD
 python -m orb_extreme_xiq.backend        # DRY RUN: fetches from XIQ, maps, prints entities (no Diode push)
 pytest                                    # full test suite
 ruff check .                              # lint
 ```
 
-**Why two install commands:** `extremecloudiq-api`'s metadata requires
-`typing-extensions~=4.3.0`; `netboxlabs-orb-worker`'s requires `~=4.5`. Those
-ranges don't overlap at all, so `pip install extremecloudiq-api
-netboxlabs-orb-worker` fails with `ResolutionImpossible` even with nothing
-else from this project involved -- confirmed directly. There is no dependency
-declaration that fixes this (that's *why* `extremecloudiq-api` isn't in
-`pyproject.toml`'s normal `dependencies`), so it must always be installed
-separately with `--no-deps`, which skips checking its own declared
-dependencies -- the packages it actually needs at runtime (`frozendict`,
-`certifi`, `python-dateutil`, `urllib3`) are covered by this project's normal
-dependencies at versions that don't conflict with anything else.
-
 **Deploying via the real Orb Agent container:** this project's own install
 (`pip install -e .`/`pip install .`, e.g. via `workers.txt`'s
-`INSTALL_WORKERS_PATH` mechanism) only covers the normal dependencies. Unless
-you've verified that mechanism supports a post-install hook, you'll need to
-separately run the same `pip install --no-deps "extremecloudiq-api==25.11.1.post3"`
-inside the container (e.g. a custom Dockerfile layer, or an entrypoint
-wrapper) before the worker can actually import `extremecloudiq` -- this
-hasn't been verified against a real orb-agent image.
+`INSTALL_WORKERS_PATH` mechanism) covers every runtime dependency -- there's
+no separate SDK install step to run inside the container.
 
 The Orb Agent worker (`netboxlabs-orb-worker`) owns the Diode client and the
 actual ingest entirely — `Backend.run()` only ever *produces* entities. There
@@ -155,38 +133,6 @@ is no dev-mode "push to Diode" path here by design; run it inside the real
 
 If you're on a different `netboxlabs-orb-worker` version, re-check this
 against the installed package: `python -c "import worker.backend as b, inspect; print(inspect.getsource(b.Backend))"`.
-
-## Quirks in `extremecloudiq-api` 25.11.1.post3 worth knowing about
-
-This SDK is OpenAPI Generator's verbose "oapg" style (frozendict query params,
-schema-validated response bodies), which is why `client.py` calls every
-endpoint with `skip_deserialization=True` and parses `result.response.data`
-as plain JSON itself rather than using the SDK's own deserialization -- far
-less ceremony, and the SDK still owns URL building, query serialization, the
-Bearer header, and status-based `ApiException`s. Three real bugs found while
-integrating it, all re-check-worthy on a version bump:
-
-- `Configuration(access_token=...)` is a no-op — its `__init__` unconditionally
-  sets `self.access_token = None` regardless of what you pass in. Set the
-  attribute directly after construction instead (see `client.py`'s comment).
-- Boolean FORM-style query params can't be serialized at all: the value gets
-  cast through the SDK's own `BoolSchema` and then back to a native Python
-  `bool` before its URI-template expansion step, which only handles
-  `str`/`float`/`int` and raises `ApiValueError` for anything else. There's no
-  way to route around this by wrapping the value differently -- confirmed.
-  `get_location_tree`'s `expand_children=False` therefore can't be sent; it
-  raises `NotImplementedError` rather than silently sending a broken request.
-  (`expand_children=True`, the only value this worker needs, is simply
-  omitted from the query string since it's XIQ's own server-side default.)
-- Its metadata pins `typing-extensions~=4.3.0`, which directly conflicts with
-  `netboxlabs-orb-worker`'s own `~=4.5` pin -- the ranges don't overlap at
-  all, so pip can never install both together normally (confirmed: `pip
-  install extremecloudiq-api netboxlabs-orb-worker` alone fails with
-  `ResolutionImpossible`, nothing from this project involved). That's why
-  `extremecloudiq-api` isn't a normal dependency in `pyproject.toml` -- see
-  "Develop without the full agent" above for the required `--no-deps` install
-  step, and its "Deploying via the real Orb Agent container" note for the
-  unresolved risk that entails there.
 
 ## The one thing to keep VERIFIED against your installed Diode SDK
 
