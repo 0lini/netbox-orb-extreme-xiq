@@ -273,3 +273,134 @@ def test_run_maps_ap_radios_and_wlans():
         c for c in responses.calls if c.request.url.split("?")[0].endswith("/devices/radio-information")
     ]
     assert [c.request.params["deviceIds"] for c in radio_calls] == ["111"]
+
+
+@responses.activate
+def test_run_scopes_port_and_radio_sync_to_in_scope_sites():
+    """site_scope must gate the per-device fan-outs too, not just the
+    Device/Site entities: an out-of-scope switch must get no portlist call
+    and an out-of-scope AP must not appear in the radio-information call --
+    otherwise their Interface entities would reference Devices that were
+    never emitted, recreating out-of-scope devices in NetBox.
+    """
+    responses.add(
+        responses.GET,
+        f"{DEFAULT_BASE_URL}/locations/tree",
+        json=[
+            {"id": 1, "name": "HQ", "children": []},
+            {"id": 2, "name": "Branch", "children": []},
+        ],
+        status=200,
+    )
+    responses.add(
+        responses.GET,
+        f"{DEFAULT_BASE_URL}/devices",
+        json={
+            "page": 1,
+            "count": 4,
+            "total_pages": 1,
+            "total_count": 4,
+            "data": [
+                {"id": 1, "hostname": "sw-hq", "device_function": "SWITCH", "location_id": 1},
+                {"id": 2, "hostname": "sw-branch", "device_function": "SWITCH", "location_id": 2},
+                {"id": 3, "hostname": "ap-hq", "device_function": "AP", "location_id": 1},
+                {"id": 4, "hostname": "ap-branch", "device_function": "AP", "location_id": 2},
+            ],
+        },
+        status=200,
+    )
+    _mock_no_wired_ports(1)
+    _mock_no_radios()
+
+    config = Config(package="orb_extreme_xiq", XIQ_API_TOKEN="tok", default_site="XIQ-Unmapped")
+    policy = Policy(config=config, scope={"sites": ["HQ"]})
+
+    entities = list(Backend().run("extreme_xiq_worker", policy))
+
+    device_names = {e.device.name for e in entities if e.HasField("device")}
+    assert device_names == {"sw-hq", "ap-hq"}
+    portlist_calls = [
+        c
+        for c in responses.calls
+        if c.request.url.split("?")[0].endswith("/xiq/v0/monitor/device/wired/portlist")
+    ]
+    assert [c.request.params["deviceId"] for c in portlist_calls] == ["1"]
+    radio_calls = [
+        c for c in responses.calls if c.request.url.split("?")[0].endswith("/devices/radio-information")
+    ]
+    assert [c.request.params["deviceIds"] for c in radio_calls] == ["3"]
+
+
+@responses.activate
+def test_run_skips_a_switch_whose_portlist_call_fails():
+    """One failing portlist call (legacy, undocumented endpoint) must skip
+    that switch's ports for the tick, not abort the whole sync."""
+    _mock_no_radios()
+    responses.add(responses.GET, f"{DEFAULT_BASE_URL}/locations/tree", json=[], status=200)
+    responses.add(
+        responses.GET,
+        f"{DEFAULT_BASE_URL}/devices",
+        json={
+            "page": 1,
+            "count": 2,
+            "total_pages": 1,
+            "total_count": 2,
+            "data": [
+                {"id": 1, "hostname": "sw-flaky", "device_function": "SWITCH", "connected": True},
+                {"id": 2, "hostname": "sw-ok", "device_function": "SWITCH", "connected": True},
+            ],
+        },
+        status=200,
+    )
+    responses.add(
+        responses.GET,
+        "https://cloudapi.extremecloudiq.com/xiq/v0/monitor/device/wired/portlist",
+        match=[responses.matchers.query_param_matcher({"deviceId": "1"})],
+        status=500,
+    )
+    responses.add(
+        responses.GET,
+        "https://cloudapi.extremecloudiq.com/xiq/v0/monitor/device/wired/portlist",
+        match=[responses.matchers.query_param_matcher({"deviceId": "2"})],
+        json={"data": {"portList": [{"id": 9, "ifName": "1/1", "status": "UP"}]}},
+        status=200,
+    )
+
+    config = Config(package="orb_extreme_xiq", XIQ_API_TOKEN="tok", default_site="XIQ-Unmapped")
+    policy = Policy(config=config, scope={"sites": ["*"]})
+
+    entities = list(Backend().run("extreme_xiq_worker", policy))
+
+    device_names = {e.device.name for e in entities if e.HasField("device")}
+    assert device_names == {"sw-flaky", "sw-ok"}
+    interfaces = [e.interface for e in entities if e.HasField("interface")]
+    assert [(i.device.name, i.name) for i in interfaces] == [("sw-ok", "1/1")]
+
+
+@responses.activate
+def test_run_skips_wireless_sync_when_the_radio_call_fails():
+    """A failing bulk radio-information call must skip wireless sync for the
+    tick, not abort the whole sync."""
+    responses.add(responses.GET, f"{DEFAULT_BASE_URL}/locations/tree", json=[], status=200)
+    responses.add(
+        responses.GET,
+        f"{DEFAULT_BASE_URL}/devices",
+        json={
+            "page": 1,
+            "count": 1,
+            "total_pages": 1,
+            "total_count": 1,
+            "data": [{"id": 1, "hostname": "ap-1", "device_function": "AP", "connected": True}],
+        },
+        status=200,
+    )
+    responses.add(responses.GET, f"{DEFAULT_BASE_URL}/devices/radio-information", status=500)
+
+    config = Config(package="orb_extreme_xiq", XIQ_API_TOKEN="tok", default_site="XIQ-Unmapped")
+    policy = Policy(config=config, scope={"sites": ["*"]})
+
+    entities = list(Backend().run("extreme_xiq_worker", policy))
+
+    device_names = {e.device.name for e in entities if e.HasField("device")}
+    assert device_names == {"ap-1"}
+    assert not any(e.HasField("interface") or e.HasField("wireless_lan") for e in entities)

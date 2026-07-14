@@ -45,6 +45,7 @@ __all__ = [
     "devices_to_entities",
     "ports_to_entities",
     "radios_to_entities",
+    "scope_devices",
 ]
 
 MANUFACTURER = "Extreme Networks"
@@ -105,6 +106,27 @@ def _device_kwargs(device: dict, *, site_name: str, location: Location | None, n
     return kwargs
 
 
+def scope_devices(
+    devices: list[dict], *, location_index: dict, default_site: str, site_scope: set[str] | None
+) -> list[dict]:
+    """Return the devices whose resolved site is in site_scope (all, if no scope).
+
+    The single source of truth for scope filtering: devices_to_entities uses
+    it, and any caller that fans out per-device API calls afterwards (wired
+    ports, radios) must filter through it too -- otherwise an out-of-scope
+    device's Interface entities would reference a Device that was never
+    emitted, recreating the device in NetBox through Diode's implicit
+    reference handling.
+    """
+    if not site_scope:
+        return devices
+    return [
+        device
+        for device in devices
+        if resolve_location(device.get("location_id"), location_index, default_site)[0] in site_scope
+    ]
+
+
 def devices_to_entities(
     devices: list[dict],
     *,
@@ -122,10 +144,11 @@ def devices_to_entities(
     site_names: set[str] = set()
     location_paths: set[tuple[str, tuple[str, ...]]] = set()
 
-    for device in devices:
+    scoped = scope_devices(
+        devices, location_index=location_index, default_site=default_site, site_scope=site_scope
+    )
+    for device in scoped:
         site_name, location_path = resolve_location(device.get("location_id"), location_index, default_site)
-        if site_scope and site_name not in site_scope:
-            continue
         resolved.append((device, site_name, location_path))
         site_names.add(site_name)
         if location_path:
