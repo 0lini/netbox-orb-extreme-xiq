@@ -1,45 +1,24 @@
-"""Thin ExtremeCloud IQ client (token or user/pass auth).
+"""Thin ExtremeCloud IQ client (token or user/pass auth), on plain `requests`.
 
 Covers the read paths this worker needs:
-  - GET /devices                              (via the official `extremecloudiq-api` SDK)
-  - GET /locations/tree                       (via the official `extremecloudiq-api` SDK)
-  - GET /devices/radio-information             (via the official `extremecloudiq-api` SDK)
-  - GET /xiq/v0/monitor/device/wired/portlist (per-switch wired port telemetry)
-
-The first three are documented in the current XIQ OpenAPI spec and covered by
-the official generated SDK (https://github.com/extremenetworks/ExtremeCloudIQ-SDK-Python,
-PyPI: extremecloudiq-api). That SDK is generated in OpenAPI Generator's
-"oapg" style: request/response bodies are schema-validated Schema objects
-(query params as `frozendict`, response bodies as dict-like Schema
-instances), which is a lot of ceremony for what we need. We call every
-endpoint with `skip_deserialization=True` and parse `result.response.data`
-as plain JSON ourselves instead -- the SDK still owns URL building, query
-param serialization, the Bearer auth header and status-code-based
-ApiException raising, we just skip its schema deserialization layer.
-
-The port-list call is an older, undocumented endpoint that only exists on a
-different host (LEGACY_BASE_URL) and isn't in the SDK at all -- confirmed by
-probing: newer API versions (v2+) 404 there, and v1 exists as a namespace
-but returns a bare-backend 404 for this specific path, so v0 is not a
-deprecated predecessor of a current version, just the only version that
-exists. It takes the same bearer token as the SDK calls, so we pull the
-token out of the SDK's Configuration and send it with a plain `requests` call.
+  - GET /devices
+  - GET /locations/tree
+  - GET /devices/radio-information
+  - GET /xiq/v0/monitor/device/wired/portlist (per-switch wired port telemetry,
+    an older, undocumented endpoint that only exists on a different host
+    (LEGACY_BASE_URL) -- confirmed by probing: newer API versions (v2+) 404
+    there, and v1 exists as a namespace but returns a bare-backend 404 for
+    this specific path, so v0 is not a deprecated predecessor of a current
+    version, just the only version that exists. It takes the same bearer
+    token as everything else.)
 """
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Iterator
 
-import frozendict
 import requests
-from extremecloudiq.api_client import ApiClient
-from extremecloudiq.apis.tags.authentication_api import AuthenticationApi
-from extremecloudiq.apis.tags.device_api import DeviceApi
-from extremecloudiq.apis.tags.location_api import LocationApi
-from extremecloudiq.configuration import Configuration
-from extremecloudiq.exceptions import ApiException
 
 DEFAULT_BASE_URL = "https://api.extremecloudiq.com"
 LEGACY_BASE_URL = "https://cloudapi.extremecloudiq.com"
@@ -65,73 +44,63 @@ class XiqClient:
     ) -> None:
         if not api_token and not (username and password):
             raise ValueError("XiqClient requires api_token or username/password")
+        self._base_url = base_url.rstrip("/")
         self._username = username
         self._password = password
         self._timeout = timeout
-
-        self._configuration = Configuration(host=base_url.rstrip("/"))
-        # Configuration.__init__'s access_token param is a no-op in this SDK
-        # version (it unconditionally sets self.access_token = None) --
-        # setting the attribute directly afterward is the only way that
-        # actually sticks.
-        self._configuration.access_token = api_token
-        api_client = ApiClient(self._configuration)
-        self._auth_api = AuthenticationApi(api_client)
-        self._device_api = DeviceApi(api_client)
-        self._location_api = LocationApi(api_client)
-        self._legacy_session = requests.Session()  # for get_wired_portlist only
+        self._session = requests.Session()
+        self._headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        if api_token:
+            self._headers["Authorization"] = f"Bearer {api_token}"
 
         # None = static API token (never expires from our side) until a login
         # response sets it; set once we've logged in with username/password.
         self._token_expiry: float | None = None if api_token else 0.0
 
     def _ensure_token(self) -> None:
-        if self._configuration.access_token is not None and self._token_expiry is None:
+        if self._token_expiry is None:
             return
-        if self._token_expiry is not None and time.time() < self._token_expiry:
+        if time.time() < self._token_expiry:
             return
         if self._username and self._password:
             self._login()
-        elif self._configuration.access_token is None:
+        elif "Authorization" not in self._headers:
             raise XiqApiError("No credentials available to authenticate with XIQ")
 
     def _login(self) -> None:
-        try:
-            result = self._auth_api.login(
-                body={"username": self._username, "password": self._password},
-                skip_deserialization=True,
-            )
-        except ApiException as exc:
-            raise XiqApiError(f"XIQ login failed ({exc.status}): {exc.body}") from exc
-        payload = json.loads(result.response.data)
-        self._configuration.access_token = payload["access_token"]
+        url = f"{self._base_url}/login"
+        payload = {"username": self._username, "password": self._password}
+        resp = self._session.post(url, headers=self._headers, json=payload, timeout=self._timeout)
+        if resp.status_code != 200:
+            raise XiqApiError(f"XIQ login failed ({resp.status_code}): {resp.text}")
+        data = resp.json()
+        if "access_token" not in data:
+            raise XiqApiError("XIQ login response did not contain an access_token")
+        self._headers["Authorization"] = f"Bearer {data['access_token']}"
         # Refresh a minute early so a request never races token expiry.
-        self._token_expiry = time.time() + payload.get("expires_in", 86400) - 60
+        self._token_expiry = time.time() + data.get("expires_in", 86400) - 60
 
-    def _call(self, fn, **kwargs) -> dict:
-        """Call an SDK Api method with skip_deserialization=True (see module
-        docstring) and return the parsed JSON body, re-logging in once on a
-        401 (mirrors the legacy-endpoint retry below) before giving up.
-        """
+    def _get(self, base_url: str, path: str, params: dict) -> dict:
+        """GET `path` off `base_url`, re-logging in once on a 401 before giving up."""
         self._ensure_token()
+        url = f"{base_url}{path}"
         for attempt in (1, 2):
-            try:
-                result = fn(skip_deserialization=True, **kwargs)
-                break
-            except ApiException as exc:
-                if attempt == 1 and exc.status == 401 and self._username and self._password:
-                    self._token_expiry = 0.0
-                    self._login()
-                    continue
-                raise XiqApiError(f"XIQ API error {exc.status}: {exc.body}") from exc
-        return json.loads(result.response.data)
+            resp = self._session.get(url, headers=self._headers, params=params, timeout=self._timeout)
+            if resp.status_code == 401 and attempt == 1 and self._username and self._password:
+                self._token_expiry = 0.0
+                self._login()
+                continue
+            if resp.status_code >= 400:
+                raise XiqApiError(f"XIQ API error {resp.status_code}: {resp.text}")
+            return resp.json()
+        raise AssertionError("unreachable")  # pragma: no cover
 
-    def _paginate(self, fn, params: dict) -> Iterator[dict]:
+    def _paginate(self, path: str, params: dict) -> Iterator[dict]:
         """Yield every item across all pages of a paginated list endpoint.
         `params` must already include the first "page" and "limit"."""
         page = params["page"]
         while True:
-            payload = self._call(fn, query_params=frozendict.frozendict(params))
+            payload = self._get(self._base_url, path, params)
             yield from payload.get("data", [])
             total_pages = payload.get("total_pages", page)
             if page >= total_pages:
@@ -151,58 +120,33 @@ class XiqClient:
         params: dict = {"page": 1, "limit": limit, "views": ["FULL"]}
         if location_ids:
             params["locationIds"] = location_ids
-        yield from self._paginate(self._device_api.list_devices, params)
+        yield from self._paginate("/devices", params)
 
-    def get_location_tree(self, *, parent_id: int | None = None, expand_children: bool = True) -> list[dict]:
+    def get_location_tree(self, *, parent_id: int | None = None) -> list[dict]:
         """Return the XIQ location hierarchy as nested {id, name, children} dicts.
 
-        expand_children=False can't actually be sent: this SDK version's query
-        param serializer round-trips any bool through Python's native `bool`
-        before its URI-template expansion step, which only handles str/float/int
-        -- confirmed this isn't fixable by wrapping the value in the SDK's own
-        BoolSchema first, it still ends up native `bool` by the time it matters.
-        True is XIQ's own server-side default when the param is omitted, so we
-        just omit it rather than route around a bug for a value we don't need.
+        `expandChildren` is left unset -- True (nested children) is XIQ's own
+        server-side default, which is what this worker needs anyway.
         """
-        if not expand_children:
-            raise NotImplementedError(
-                "expand_children=False can't be sent -- this SDK version can't serialize "
-                "boolean query params at all (see docstring)"
-            )
         params: dict = {}
         if parent_id is not None:
             params["parentId"] = parent_id
-        return self._call(self._location_api.get_location_tree, query_params=frozendict.frozendict(params))
+        return self._get(self._base_url, "/locations/tree", params)
 
     def get_radio_information(
         self, *, device_ids: list[int], limit: int = RADIO_PAGE_LIMIT
     ) -> Iterator[dict]:
         """Yield one {device_id, radios: [...]} record per AP in device_ids, across all pages.
 
-        includeDisabledRadio can't be set to True: same boolean-query-param
-        serialization bug as get_location_tree's expand_children (see its
-        docstring). False (enabled radios only, XIQ's own server-side
-        default) is what this worker wants anyway, so it's simply omitted
-        rather than routed around.
+        `includeDisabledRadio` is left unset -- False (enabled radios only) is
+        XIQ's own server-side default, which is what this worker wants anyway.
         """
         params: dict = {"page": 1, "limit": limit, "deviceIds": device_ids}
-        yield from self._paginate(self._device_api.list_devices_radio_information, params)
+        yield from self._paginate("/devices/radio-information", params)
 
     def get_wired_portlist(self, device_id: int) -> list[dict]:
         """Return the wired port list for one switch device (see module docstring)."""
-        self._ensure_token()
-        url = f"{LEGACY_BASE_URL}/xiq/v0/monitor/device/wired/portlist"
-        headers = {"Authorization": f"Bearer {self._configuration.access_token}"}
-        resp = self._legacy_session.get(
-            url, headers=headers, params={"deviceId": device_id}, timeout=self._timeout
+        payload = self._get(
+            LEGACY_BASE_URL, "/xiq/v0/monitor/device/wired/portlist", {"deviceId": device_id}
         )
-        if resp.status_code == 401 and self._username and self._password:
-            self._token_expiry = 0.0
-            self._login()
-            headers = {"Authorization": f"Bearer {self._configuration.access_token}"}
-            resp = self._legacy_session.get(
-                url, headers=headers, params={"deviceId": device_id}, timeout=self._timeout
-            )
-        if resp.status_code >= 400:
-            raise XiqApiError(f"XIQ API error {resp.status_code}: {resp.text}")
-        return resp.json().get("data", {}).get("portList", [])
+        return payload.get("data", {}).get("portList", [])

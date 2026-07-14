@@ -8,22 +8,7 @@ version = "0.1.0"
 description = "ExtremeCloud IQ discovery worker for the NetBox Labs Orb Agent (ingests into NetBox via Diode)"
 requires-python = ">=3.10"
 dependencies = [
-    "requests>=2.31",       # only get_wired_portlist (legacy endpoint) uses this directly
-    # extremecloudiq-api ([project.optional-dependencies] xiq-sdk, below) is
-    # NOT listed here on purpose -- its metadata pins typing-extensions~=4.3.0,
-    # which is a hard, unresolvable conflict with netboxlabs-orb-worker's own
-    # typing-extensions~=4.5 (confirmed: `pip install extremecloudiq-api
-    # netboxlabs-orb-worker` alone, with nothing from this project involved,
-    # already fails with ResolutionImpossible -- the ranges genuinely don't
-    # overlap). Declaring extremecloudiq-api as a normal dependency here would
-    # make every `pip install -e .` fail outright. Install it separately with
-    # `--no-deps` (see "Develop without the full agent" in the README) --
-    # these three cover what it actually needs at runtime, at versions that
-    # don't conflict with anything else in this project.
-    "frozendict~=2.4.7",
-    "certifi>=14.5.14",
-    "python-dateutil~=2.9.0.post0",
-    "urllib3~=2.7.0",
+    "requests>=2.31",       # all XIQ HTTP calls, including the legacy portlist endpoint
     # The Orb Agent image already ships these, but pin them here so the
     # package is testable/runnable standalone too. Confirm the exact versions
     # against the orb-agent image you deploy on -- the Backend contract
@@ -35,10 +20,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "responses>=0.25", "ruff>=0.15"]
-# Version-tracking only -- NEVER `pip install ".[xiq-sdk]"` normally, it will
-# hit the same ResolutionImpossible conflict explained above. Always install
-# this exact version with `--no-deps` instead: see the README.
-xiq-sdk = ["extremecloudiq-api==25.11.1.post3"]
 
 # The import name the worker policy references as `config.package`
 # i.e.  policies.worker.<name>.config.package: orb_extreme_xiq
@@ -65,6 +46,4 @@ known-first-party = ["orb_extreme_xiq"]
 [tool.ruff.lint.per-file-ignores]
 # Fixture params (e.g. `stub_sdk`) are applied for their monkeypatching side
 # effect, not read in the test body -- the standard pytest fixture pattern.
-# ARG005 covers the same thing for monkeypatched-method lambdas (`self`/`kw`
-# have to be there to match the SDK method signature being patched over).
-"tests/*" = ["ARG001", "ARG005"]
+"tests/*" = ["ARG001"]
