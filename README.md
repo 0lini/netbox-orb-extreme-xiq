@@ -65,7 +65,7 @@ Assurance license is enabled — with **zero code changes** to this worker. So
   sync.
 - `bootstrap.py` — one-time idempotent NetBox schema setup (custom fields + tags).
 - `backend.py` — worker entrypoint + standalone runner.
-- `agent.yaml` — example policy (bootstrap, site mapping, field authority).
+- `agent.yaml` — example policy (bootstrap, site mapping, scope).
 - `tests/` — pytest suite, all offline: `test_client.py`/`test_backend.py` mock
   XIQ's HTTP endpoints with `responses`; `test_mapper.py`/`test_identity.py`
   use plain fixtures; `test_bootstrap.py` mocks the NetBox REST API with
