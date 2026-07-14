@@ -26,14 +26,6 @@ jobs:
       - name: Install package + dev dependencies
         run: pip install -e ".[dev]"
 
-      - name: Install extremecloudiq-api (separately, see pyproject.toml)
-        # Can't be a normal dependency: its typing-extensions~=4.3.0 pin
-        # directly conflicts with netboxlabs-orb-worker's ~=4.5, with no
-        # overlapping version -- pip's resolver can never satisfy both in one
-        # `pip install`. --no-deps sidesteps that; the packages it actually
-        # needs at runtime are already covered by this project's normal deps.
-        run: pip install --no-deps "extremecloudiq-api==25.11.1.post3"
-
       - name: Lint (ruff check)
         run: ruff check .
 
@@ -60,14 +52,6 @@ jobs:
 
       - name: Install package + dev dependencies
         run: pip install -e ".[dev]"
-
-      - name: Install extremecloudiq-api (separately, see pyproject.toml)
-        # Needed even though this job only runs test_openapi_contract.py:
-        # pytest -m contract still has to *collect* every file under tests/
-        # before filtering by marker, and test_backend.py/test_client.py
-        # import extremecloudiq unconditionally at module level -- without
-        # this, collection itself fails before the marker filter ever runs.
-        run: pip install --no-deps "extremecloudiq-api==25.11.1.post3"
 
       - name: Contract check against live XIQ OpenAPI spec
         run: pytest -v -m contract

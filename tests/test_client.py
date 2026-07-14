@@ -77,9 +77,7 @@ def test_get_location_tree_returns_nested_payload():
 
 @responses.activate
 def test_username_password_login_is_used_as_bearer_token():
-    responses.add(
-        responses.POST, f"{DEFAULT_BASE_URL}/login", json={"access_token": "jwt-abc"}, status=200
-    )
+    responses.add(responses.POST, f"{DEFAULT_BASE_URL}/login", json={"access_token": "jwt-abc"}, status=200)
     responses.add(
         responses.GET, f"{DEFAULT_BASE_URL}/devices", json={"data": [], "total_pages": 1}, status=200
     )
@@ -92,13 +90,9 @@ def test_username_password_login_is_used_as_bearer_token():
 
 @responses.activate
 def test_401_triggers_relogin_for_username_password_client():
-    responses.add(
-        responses.POST, f"{DEFAULT_BASE_URL}/login", json={"access_token": "jwt-1"}, status=200
-    )
+    responses.add(responses.POST, f"{DEFAULT_BASE_URL}/login", json={"access_token": "jwt-1"}, status=200)
     responses.add(responses.GET, f"{DEFAULT_BASE_URL}/devices", status=401)
-    responses.add(
-        responses.POST, f"{DEFAULT_BASE_URL}/login", json={"access_token": "jwt-2"}, status=200
-    )
+    responses.add(responses.POST, f"{DEFAULT_BASE_URL}/login", json={"access_token": "jwt-2"}, status=200)
     responses.add(
         responses.GET, f"{DEFAULT_BASE_URL}/devices", json={"data": [], "total_pages": 1}, status=200
     )
@@ -112,9 +106,7 @@ def test_401_triggers_relogin_for_username_password_client():
 
 @responses.activate
 def test_401_persisting_after_relogin_raises_xiq_api_error():
-    responses.add(
-        responses.POST, f"{DEFAULT_BASE_URL}/login", json={"access_token": "jwt-new"}, status=200
-    )
+    responses.add(responses.POST, f"{DEFAULT_BASE_URL}/login", json={"access_token": "jwt-new"}, status=200)
     responses.add(responses.GET, f"{DEFAULT_BASE_URL}/devices", status=401)
     responses.add(responses.GET, f"{DEFAULT_BASE_URL}/devices", status=401)
 
@@ -142,13 +134,9 @@ def test_get_wired_portlist_hits_legacy_host_with_device_id():
 
 @responses.activate
 def test_get_wired_portlist_401_triggers_relogin_for_username_password_client():
-    responses.add(
-        responses.POST, f"{DEFAULT_BASE_URL}/login", json={"access_token": "jwt-1"}, status=200
-    )
+    responses.add(responses.POST, f"{DEFAULT_BASE_URL}/login", json={"access_token": "jwt-1"}, status=200)
     responses.add(responses.GET, f"{LEGACY_BASE_URL}/xiq/v0/monitor/device/wired/portlist", status=401)
-    responses.add(
-        responses.POST, f"{DEFAULT_BASE_URL}/login", json={"access_token": "jwt-2"}, status=200
-    )
+    responses.add(responses.POST, f"{DEFAULT_BASE_URL}/login", json={"access_token": "jwt-2"}, status=200)
     responses.add(
         responses.GET,
         f"{LEGACY_BASE_URL}/xiq/v0/monitor/device/wired/portlist",
