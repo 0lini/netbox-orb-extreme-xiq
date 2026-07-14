@@ -112,12 +112,12 @@ def devices_to_entities(
     default_site: str,
     name_source: str = "hostname",
     site_scope: set[str] | None = None,
-) -> list:
+) -> list[Entity]:
     """Map XIQ devices to Diode entities: one Site per XIQ site, one nested
     Location per Building/Floor (etc.) level actually in use, plus one
     Device per device.
     """
-    entities = []
+    entities: list[Entity] = []
     resolved: list[tuple[dict, str, list[str]]] = []
     site_names: set[str] = set()
     location_paths: set[tuple[str, tuple[str, ...]]] = set()
@@ -194,7 +194,7 @@ def _port_custom_fields(port: dict) -> dict:
     return {"xiq_port_id": _cf_text(str(port["id"]))}
 
 
-def ports_to_entities(ports: list[dict], *, device: str) -> list:
+def ports_to_entities(ports: list[dict], *, device: str) -> list[Entity]:
     """Map one switch's wired portlist (client.get_wired_portlist) to Interface entities.
 
     XIQ's port `status` is link/operational state (is there an active physical
@@ -217,7 +217,7 @@ def ports_to_entities(ports: list[dict], *, device: str) -> list:
     unset when the speed is unrecognized (e.g. `SPEED_AUTO`) rather than
     guessing further.
     """
-    entities = []
+    entities: list[Entity] = []
     for port in ports:
         entities.append(
             Entity(
@@ -335,7 +335,7 @@ def _record_wlan(wlans: dict[str, dict], wlan: dict) -> str | None:
     return ssid
 
 
-def radios_to_entities(radio_infos: list[dict], *, device_names: dict[int, str]) -> list:
+def radios_to_entities(radio_infos: list[dict], *, device_names: dict[int, str]) -> list[Entity]:
     """Map /devices/radio-information records to Interface (one per radio)
     and WirelessLAN (one per unique SSID, deduped across every AP) entities.
 
