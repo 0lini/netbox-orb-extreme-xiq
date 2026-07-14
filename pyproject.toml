@@ -4,7 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orb-extreme-xiq"
-version = "0.1.0"
+# Single-sourced from orb_extreme_xiq.__version__ (see [tool.setuptools.dynamic]).
+dynamic = ["version"]
 description = "ExtremeCloud IQ discovery worker for the NetBox Labs Orb Agent (ingests into NetBox via Diode)"
 requires-python = ">=3.10"
 dependencies = [
@@ -25,6 +26,9 @@ dev = ["pytest>=8", "responses>=0.25", "ruff>=0.15"]
 # i.e.  policies.worker.<name>.config.package: orb_extreme_xiq
 [tool.setuptools.packages.find]
 include = ["orb_extreme_xiq*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "orb_extreme_xiq.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

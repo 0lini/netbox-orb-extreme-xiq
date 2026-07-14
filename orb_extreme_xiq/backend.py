@@ -16,14 +16,14 @@ from netboxlabs.diode.sdk.ingester import Entity
 from worker.backend import Backend as WorkerBackend
 from worker.models import Config, Metadata, Policy
 
-from . import bootstrap, mapper
+from . import __version__, bootstrap, mapper
 from .client import DEFAULT_BASE_URL, XiqClient
 from .identity import device_name, is_ap, is_switch
 
 logger = logging.getLogger(__name__)
 
 APP_NAME = "orb-extreme-xiq"
-APP_VERSION = "0.1.0"
+APP_VERSION = __version__
 
 
 def _cfg(config, key: str, default=None):
