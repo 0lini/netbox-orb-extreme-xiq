@@ -11,12 +11,12 @@ or via the scheduled "contract" CI job. The point is to catch upstream drift
 Deliberately scoped to paths + query param *names* only, not response body
 field names: the live spec's `PagedXiqDevice.data` items resolve to a
 `XiqDevice` schema with just `id`/`hostname` ("The Device for QoE Diagnostics
-Filtering"), which doesn't match the ~34-field model the installed
-extremecloudiq-api SDK actually deserializes at runtime -- confirmed by
-inspecting the installed package directly. So this public spec document is
-not a reliable source for response-shape drift detection; only structural
-(path/param) drift is asserted here. mapper.py's field assumptions are
-instead exercised against real recorded responses in test_mapper.py/test_backend.py.
+Filtering"), which doesn't match the ~34-field payload XIQ actually returns
+at runtime -- confirmed against real recorded responses. So this public spec
+document is not a reliable source for response-shape drift detection; only
+structural (path/param) drift is asserted here. mapper.py's field assumptions
+are instead exercised against real recorded responses in
+test_mapper.py/test_backend.py.
 """
 
 from __future__ import annotations
