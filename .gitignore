@@ -6,8 +6,3 @@ dist/
 .venv/
 .pytest_cache/
 .ruff_cache/
-
-# Manual `python -m orb_extreme_xiq.backend > ...` dry-run redirects (see
-# README's "Development" section) -- real XIQ tenant data, never commit.
-*dryrun*.txt
-*dry_run*.txt
