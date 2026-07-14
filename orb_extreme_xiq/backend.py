@@ -17,13 +17,14 @@ from worker.backend import Backend as WorkerBackend
 from worker.models import Config, Metadata, Policy
 
 from . import __version__, bootstrap, mapper
-from .client import DEFAULT_BASE_URL, XiqClient
+from .client import DEFAULT_BASE_URL, XiqApiError, XiqClient
 from .identity import device_name, is_ap, is_switch
 
 logger = logging.getLogger(__name__)
 
 APP_NAME = "orb-extreme-xiq"
 APP_VERSION = __version__
+DEFAULT_SITE = "XIQ-Unmapped"
 
 
 def _cfg(config, key: str, default=None):
@@ -84,17 +85,33 @@ class Backend(WorkerBackend):
 
         client = _build_client(config)
         location_index = mapper.build_location_index(client.get_location_tree())
-        devices = list(client.get_devices())
-        logger.info("Policy %s: fetched %d devices from XIQ", policy_name, len(devices))
+        all_devices = list(client.get_devices())
 
         scope_sites = _scope_sites(getattr(policy, "scope", None))
+        default_site = _cfg(config, "default_site", DEFAULT_SITE)
+        # Scope once, up front: the per-device fan-outs below (wired ports,
+        # radios) must see the same filtered list as devices_to_entities, or
+        # out-of-scope devices leak back in as Interface entities (see
+        # mapper.scope_devices).
+        devices = mapper.scope_devices(
+            all_devices,
+            location_index=location_index,
+            default_site=default_site,
+            site_scope=set(scope_sites) if scope_sites else None,
+        )
+        logger.info(
+            "Policy %s: fetched %d devices from XIQ (%d in scope)",
+            policy_name,
+            len(all_devices),
+            len(devices),
+        )
+
         name_source = _cfg(config, "name_source", "hostname")
         entities = mapper.devices_to_entities(
             devices,
             location_index=location_index,
-            default_site=_cfg(config, "default_site", "XIQ-Unmapped"),
+            default_site=default_site,
             name_source=name_source,
-            site_scope=set(scope_sites) if scope_sites else None,
         )
 
         entities.extend(self._port_entities(client, devices, name_source, policy_name))
@@ -106,12 +123,28 @@ class Backend(WorkerBackend):
     def _port_entities(
         client: XiqClient, devices: list[dict], name_source: str, policy_name: str
     ) -> list[Entity]:
-        """One get_wired_portlist call per switch."""
+        """One get_wired_portlist call per switch.
+
+        A failed call skips that one switch's ports for this tick instead of
+        aborting the whole sync: the portlist endpoint is legacy/undocumented
+        (see client.py) and Diode ingestion is upsert-style, so omitting one
+        device's interfaces for a tick is harmless while losing the entire
+        device/site sync to one flaky call is not.
+        """
         entities: list[Entity] = []
         for device in devices:
             if not is_switch(device.get("device_function")):
                 continue
-            ports = client.get_wired_portlist(device["id"])
+            try:
+                ports = client.get_wired_portlist(device["id"])
+            except XiqApiError as exc:
+                logger.warning(
+                    "Policy %s: wired portlist fetch failed for device %s, skipping its ports: %s",
+                    policy_name,
+                    device_name(device, name_source),
+                    exc,
+                )
+                continue
             entities.extend(mapper.ports_to_entities(ports, device=device_name(device, name_source)))
         logger.info("Policy %s: mapped %d wired port entities", policy_name, len(entities))
         return entities
@@ -120,13 +153,23 @@ class Backend(WorkerBackend):
     def _radio_entities(
         client: XiqClient, devices: list[dict], name_source: str, policy_name: str
     ) -> list[Entity]:
-        """One bulk get_radio_information call covering every AP."""
+        """One bulk get_radio_information call covering every AP.
+
+        A failed call skips wireless sync for this tick instead of aborting
+        the whole run -- same reasoning as _port_entities.
+        """
         ap_devices = [d for d in devices if is_ap(d.get("device_function"))]
         if not ap_devices:
             return []
         device_ids = [d["id"] for d in ap_devices]
         device_names = {d["id"]: device_name(d, name_source) for d in ap_devices}
-        radio_infos = list(client.get_radio_information(device_ids=device_ids))
+        try:
+            radio_infos = list(client.get_radio_information(device_ids=device_ids))
+        except XiqApiError as exc:
+            logger.warning(
+                "Policy %s: radio information fetch failed, skipping wireless sync: %s", policy_name, exc
+            )
+            return []
         entities = mapper.radios_to_entities(radio_infos, device_names=device_names)
         logger.info("Policy %s: mapped %d wireless radio/WLAN entities", policy_name, len(entities))
         return entities
@@ -142,7 +185,7 @@ def _standalone_config() -> dict:
         "XIQ_USERNAME": os.environ.get("XIQ_USERNAME"),
         "XIQ_PASSWORD": os.environ.get("XIQ_PASSWORD"),
         "name_source": os.environ.get("XIQ_NAME_SOURCE", "hostname"),
-        "default_site": os.environ.get("XIQ_DEFAULT_SITE", "XIQ-Unmapped"),
+        "default_site": os.environ.get("XIQ_DEFAULT_SITE", DEFAULT_SITE),
     }
 
 
