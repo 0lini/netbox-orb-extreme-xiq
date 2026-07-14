@@ -146,7 +146,5 @@ class XiqClient:
 
     def get_wired_portlist(self, device_id: int) -> list[dict]:
         """Return the wired port list for one switch device (see module docstring)."""
-        payload = self._get(
-            LEGACY_BASE_URL, "/xiq/v0/monitor/device/wired/portlist", {"deviceId": device_id}
-        )
+        payload = self._get(LEGACY_BASE_URL, "/xiq/v0/monitor/device/wired/portlist", {"deviceId": device_id})
         return payload.get("data", {}).get("portList", [])
