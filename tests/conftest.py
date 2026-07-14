@@ -30,15 +30,7 @@ class Platform(Rec):
     pass
 
 
-class Manufacturer(Rec):
-    pass
-
-
 class Interface(Rec):
-    pass
-
-
-class IPAddress(Rec):
     pass
 
 
@@ -62,13 +54,12 @@ class CustomFieldValue(Rec):
     pass
 
 
+# One stub per Diode SDK class mapper.py imports.
 STUB_CLASSES = {
     "Device": Device,
     "DeviceType": DeviceType,
     "Platform": Platform,
-    "Manufacturer": Manufacturer,
     "Interface": Interface,
-    "IPAddress": IPAddress,
     "Site": Site,
     "Location": Location,
     "WirelessLAN": WirelessLAN,
@@ -86,10 +77,7 @@ def stub_sdk(monkeypatch):
     tests can assert on the *shape* of what mapper.py builds.
     """
     for name, cls in STUB_CLASSES.items():
-        # raising=False: mapper.py only imports the SDK classes it actually
-        # uses, so not every stub (e.g. Interface, IPAddress) is already an
-        # attribute of the module.
-        monkeypatch.setattr(mapper, name, cls, raising=False)
+        monkeypatch.setattr(mapper, name, cls)
     return STUB_CLASSES
 
 
