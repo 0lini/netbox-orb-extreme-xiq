@@ -84,16 +84,14 @@ class XiqClient:
         """GET `path` off `base_url`, re-logging in once on a 401 before giving up."""
         self._ensure_token()
         url = f"{base_url}{path}"
-        for attempt in (1, 2):
+        resp = self._session.get(url, headers=self._headers, params=params, timeout=self._timeout)
+        if resp.status_code == 401 and self._username and self._password:
+            self._token_expiry = 0.0
+            self._login()
             resp = self._session.get(url, headers=self._headers, params=params, timeout=self._timeout)
-            if resp.status_code == 401 and attempt == 1 and self._username and self._password:
-                self._token_expiry = 0.0
-                self._login()
-                continue
-            if resp.status_code >= 400:
-                raise XiqApiError(f"XIQ API error {resp.status_code}: {resp.text}")
-            return resp.json()
-        raise AssertionError("unreachable")  # pragma: no cover
+        if resp.status_code >= 400:
+            raise XiqApiError(f"XIQ API error {resp.status_code}: {resp.text}")
+        return resp.json()
 
     def _paginate(self, path: str, params: dict) -> Iterator[dict]:
         """Yield every item across all pages of a paginated list endpoint.

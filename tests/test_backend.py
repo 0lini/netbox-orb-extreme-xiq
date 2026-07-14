@@ -107,9 +107,8 @@ def test_run_maps_switch_interfaces():
 
     Includes an AP alongside the switch so this also acts as a regression
     test: switch-detection must key off the device's raw device_function
-    (identity.is_switch), not off role_for()'s display string -- comparing
-    against the display string is fragile since it silently breaks if that
-    string is ever renamed without updating the comparison too.
+    (identity.is_switch) -- the wired-port call must go out for the switch
+    and never for the AP.
     """
     _mock_no_radios()
     responses.add(responses.GET, f"{DEFAULT_BASE_URL}/locations/tree", json=[], status=200)

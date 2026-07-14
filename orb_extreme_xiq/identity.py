@@ -12,37 +12,13 @@ directly to the site itself.
 
 from __future__ import annotations
 
-# XiqDeviceFunction values (xcloudiq-openapi.yaml) that are switches -- used
-# both to build ROLE_BY_DEVICE_FUNCTION below and by is_switch(), so a device
-# is identified as a switch by its raw device_function, never by comparing
-# against the display string role_for() happens to map it to (backend.py used
-# to do exactly that indirect comparison to decide whether to sync wired
-# ports; renaming the display string in one place without the other would
-# have silently stopped wired-port-sync for every switch, with nothing to
-# error).
+# XiqDeviceFunction values (xcloudiq-openapi.yaml) that are switches -- a
+# device is identified as a switch by its raw device_function via is_switch(),
+# which gates the per-switch wired-port sync in backend.py.
 SWITCH_DEVICE_FUNCTIONS = frozenset({"SWITCH", "SWITCH_HAC", "SWITCH_DELL"})
 
-# Same reasoning as SWITCH_DEVICE_FUNCTIONS above, for wireless-radio sync.
+# Same idea as SWITCH_DEVICE_FUNCTIONS above, for wireless-radio sync.
 AP_DEVICE_FUNCTIONS = frozenset({"AP"})
-
-# XiqDeviceFunction enum values (xcloudiq-openapi.yaml) -> NetBox device role slug.
-ROLE_BY_DEVICE_FUNCTION = {
-    **dict.fromkeys(SWITCH_DEVICE_FUNCTIONS, "Switch"),
-    **dict.fromkeys(AP_DEVICE_FUNCTIONS, "Wireless AP"),
-    "ROUTER": "router",
-    "ROUTER_AS_L2_VPN_GATEWAY": "router",
-    "ROUTER_AS_L3_VPN_GATEWAY": "router",
-    "L2_VPN_GATEWAY": "router",
-    "L3_VPN_GATEWAY": "router",
-}
-DEFAULT_ROLE = "network-device"
-
-
-def role_for(device_function: str | None) -> str:
-    """Map a XIQ device_function to a NetBox device role slug."""
-    if not device_function:
-        return DEFAULT_ROLE
-    return ROLE_BY_DEVICE_FUNCTION.get(device_function.upper(), DEFAULT_ROLE)
 
 
 def _device_function_in(device_function: str | None, functions: frozenset[str]) -> bool:
