@@ -2,6 +2,6 @@
 # (pointed to by INSTALL_WORKERS_PATH). Sources can be PyPI, a tar.gz, or a
 # local folder containing pyproject.toml. During development, mount this repo
 # and install from the folder:
-./orb-extreme-xiq            # local folder with pyproject.toml
-# orb-extreme-xiq==0.1.0     # ...or from a private index once published
-# orb_extreme_xiq-0.1.0.tar.gz  # ...or from a built sdist in the mounted volume
+./netbox-orb-extreme-platformone      # local folder with pyproject.toml
+# orb-extreme-platformone==0.2.0      # ...or from a private index once published
+# orb_extreme_platformone-0.2.0.tar.gz  # ...or from a built sdist in the mounted volume

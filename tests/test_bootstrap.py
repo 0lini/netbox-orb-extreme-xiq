@@ -1,48 +1,51 @@
-"""Tests for bootstrap.ensure_schema: idempotency and the no-credentials no-op."""
+"""bootstrap.ensure_schema tests -- NetBox REST API mocked with `responses`."""
 
 from __future__ import annotations
 
 import responses
 
-from orb_extreme_xiq import bootstrap
+from orb_extreme_platformone import bootstrap
 
-BASE = "https://nb.example.com"
-
-
-@responses.activate
-def test_ensure_schema_creates_missing_custom_fields_and_tags():
-    responses.add(responses.GET, f"{BASE}/api/extras/custom-fields/", json={"count": 0}, status=200)
-    responses.add(responses.POST, f"{BASE}/api/extras/custom-fields/", json={}, status=201)
-    responses.add(responses.GET, f"{BASE}/api/extras/custom-fields/", json={"count": 1}, status=200)
-    for _ in range(len(bootstrap.CUSTOM_FIELDS) - 2):
-        responses.add(responses.GET, f"{BASE}/api/extras/custom-fields/", json={"count": 0}, status=200)
-        responses.add(responses.POST, f"{BASE}/api/extras/custom-fields/", json={}, status=201)
-    for _ in bootstrap.TAGS:
-        responses.add(responses.GET, f"{BASE}/api/extras/tags/", json={"count": 0}, status=200)
-        responses.add(responses.POST, f"{BASE}/api/extras/tags/", json={}, status=201)
-
-    bootstrap.ensure_schema(BASE, "nbtok")
-
-    posts = [c for c in responses.calls if c.request.method == "POST"]
-    # every custom field but one is "missing" (+ every tag)
-    assert len(posts) == len(bootstrap.CUSTOM_FIELDS) - 1 + len(bootstrap.TAGS)
+NETBOX = "https://netbox.example.com"
+CF_URL = f"{NETBOX}/api/extras/custom-fields/"
+TAG_URL = f"{NETBOX}/api/extras/tags/"
 
 
-@responses.activate
-def test_ensure_schema_skips_definitions_that_already_exist():
-    for _ in bootstrap.CUSTOM_FIELDS:
-        responses.add(responses.GET, f"{BASE}/api/extras/custom-fields/", json={"count": 1}, status=200)
-    for _ in bootstrap.TAGS:
-        responses.add(responses.GET, f"{BASE}/api/extras/tags/", json={"count": 1}, status=200)
-
-    bootstrap.ensure_schema(BASE, "nbtok")
-
-    posts = [c for c in responses.calls if c.request.method == "POST"]
-    assert posts == []
-
-
-def test_ensure_schema_is_a_noop_without_credentials():
-    # No responses registered -- any HTTP call here would error, proving these are no-ops.
+def test_ensure_schema_skips_gracefully_without_credentials():
+    # No responses.activate: a real HTTP call would error loudly here.
     bootstrap.ensure_schema(None, None)
-    bootstrap.ensure_schema(BASE, None)
-    bootstrap.ensure_schema(None, "tok")
+    bootstrap.ensure_schema(NETBOX, None)
+    bootstrap.ensure_schema(None, "token")
+
+
+@responses.activate
+def test_ensure_schema_creates_missing_definitions():
+    responses.add(responses.GET, CF_URL, json={"count": 0}, status=200)
+    responses.add(responses.POST, CF_URL, json={}, status=201)
+    responses.add(responses.GET, TAG_URL, json={"count": 0}, status=200)
+    responses.add(responses.POST, TAG_URL, json={}, status=201)
+
+    bootstrap.ensure_schema(NETBOX, "token")
+
+    created = [
+        c.request.url.rstrip("/").rsplit("/", 1)[-1] for c in responses.calls if c.request.method == "POST"
+    ]
+    assert created.count("custom-fields") == len(bootstrap.CUSTOM_FIELDS)
+    assert created.count("tags") == len(bootstrap.TAGS)
+
+
+@responses.activate
+def test_ensure_schema_is_idempotent_when_definitions_exist():
+    responses.add(responses.GET, CF_URL, json={"count": 1}, status=200)
+    responses.add(responses.GET, TAG_URL, json={"count": 1}, status=200)
+
+    bootstrap.ensure_schema(NETBOX, "token")
+
+    assert not [c for c in responses.calls if c.request.method == "POST"]
+
+
+def test_custom_fields_and_tags_speak_platform_one():
+    names = {field["name"] for field in bootstrap.CUSTOM_FIELDS}
+    assert names == {"platformone_device_id", "platformone_interface_id"}
+    slugs = {tag["slug"] for tag in bootstrap.TAGS}
+    assert slugs == {"extreme-networks", "platform-one", "discovered"}

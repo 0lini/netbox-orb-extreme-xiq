@@ -1,10 +1,10 @@
-"""Shared pytest fixtures for orb_extreme_xiq tests."""
+"""Shared pytest fixtures for orb_extreme_platformone tests."""
 
 from __future__ import annotations
 
 import pytest
 
-from orb_extreme_xiq import mapper
+from orb_extreme_platformone import mapper
 
 
 class Rec:
@@ -42,7 +42,7 @@ class Location(Rec):
     pass
 
 
-class WirelessLAN(Rec):
+class VLAN(Rec):
     pass
 
 
@@ -62,7 +62,7 @@ STUB_CLASSES = {
     "Interface": Interface,
     "Site": Site,
     "Location": Location,
-    "WirelessLAN": WirelessLAN,
+    "VLAN": VLAN,
     "Entity": Entity,
     "CustomFieldValue": CustomFieldValue,
 }
