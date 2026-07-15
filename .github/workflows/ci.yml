@@ -4,8 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    - cron: "0 6 * * 1"  # weekly, Monday 06:00 UTC -- see the `contract` job
   workflow_dispatch:
 
 permissions:
@@ -57,24 +55,8 @@ jobs:
       - name: Test (pytest)
         run: pytest -v
 
-  contract:
-    # Fetches the live XIQ OpenAPI spec and checks /devices + /locations/tree
-    # still have the query params client.py hardcodes -- see
-    # tests/test_openapi_contract.py's docstring for why this is a separate,
-    # scheduled job rather than part of the (offline, per-PR) `test` job above.
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.14"
-          cache: pip
-
-      - name: Install package + dev dependencies
-        run: pip install -e ".[dev]"
-
-      - name: Contract check against live XIQ OpenAPI spec
-        run: pytest -v -m contract
+  # There is no scheduled live-spec contract job anymore: the Platform ONE
+  # OpenAPI specs sit behind the developer portal's login wall, with no
+  # stable unauthenticated URL to fetch them from. The contract checks still
+  # exist (tests/test_openapi_contract.py) but run against locally
+  # downloaded spec files -- see that module's docstring.

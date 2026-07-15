@@ -1,45 +1,76 @@
-# orb-extreme-xiq
+# orb-extreme-platformone
 
-[![CI](https://github.com/0lini/netbox-orb-extreme-xiq/actions/workflows/ci.yml/badge.svg)](https://github.com/0lini/netbox-orb-extreme-xiq/actions/workflows/ci.yml)
+[![CI](https://github.com/0lini/netbox-orb-extreme-platformone/actions/workflows/ci.yml/badge.svg)](https://github.com/0lini/netbox-orb-extreme-platformone/actions/workflows/ci.yml)
 
-An **ExtremeCloud IQ (XIQ)** discovery worker for the NetBox Labs **Orb
-Agent**. It pulls device, site, switch-port, and wireless inventory from the
-XIQ cloud API and ingests it into NetBox via **Diode**, following the same
-patterns as NetBox Labs' proprietary integrations (e.g. Cisco Meraki) — but it
-runs on the free, open-source `netboxlabs/orb-agent` image. No Orb Agent Pro
-or private registry required.
+An **Extreme Platform ONE** discovery worker for the NetBox Labs **Orb
+Agent**. It pulls device, site, and switch-port inventory from the Platform
+ONE cloud APIs (Assets + ConfigState) and ingests it into NetBox via
+**Diode**, following the same patterns as NetBox Labs' proprietary
+integrations (e.g. Cisco Meraki) — but it runs on the free, open-source
+`netboxlabs/orb-agent` image. No Orb Agent Pro or private registry required.
 
 ```
-XIQ cloud API ─► orb_extreme_xiq (collector + mapper) ─► Diode ─► NetBox (+ Assurance if licensed)
+Platform ONE APIs (Assets + ConfigState) ─► orb_extreme_platformone (collector + mapper) ─► Diode ─► NetBox (+ Assurance if licensed)
 ```
+
+> **Coming from the ExtremeCloud IQ version of this worker?** See
+> [Migrating from the XIQ worker](#migrating-from-the-xiq-worker).
 
 ## What gets synced
 
-| XIQ data | NetBox objects |
+| Platform ONE data | NetBox objects |
 |----------|----------------|
-| Devices | `Device` — name, serial, status, device type + manufacturer, platform, description, primary IPv4, tags, `xiq_network_policy` custom field |
-| Location hierarchy | `Site` (tree root) + nested `Location` chain (building → floor → …) |
-| Switch wired ports | `Interface` — name, link state, speed, duplex, type (best-effort), description, `xiq_port_id` custom field |
-| AP radios | `Interface` — name, type (802.11 standard), RF role, TX power, MAC, channel frequency/width |
-| Broadcast SSIDs | `WirelessLAN` — SSID, auth type, status, `xiq_network_policy` custom field, linked from radio interfaces |
+| Devices (Assets API) | `Device` — name, serial, status, device type + manufacturer, platform, primary IPv4, tags, `platformone_device_id` custom field |
+| Device locations (ConfigState) | `Site` + nested `Location` chain (building → floor), falling back to the Assets API's flat site name |
+| Switch ports (ConfigState) | `Interface` — name, **admin state (`enabled`)**, link state (`mark_connected`), speed/duplex/type (verified codes only), description, MAC, **untagged/tagged VLANs + 802.1Q `mode`**, `platformone_interface_id` custom field |
 
 The worker asserts a **fixed field set**: a field is either always asserted
-when XIQ reports the underlying data, or never asserted at all — there is no
-configurable field-authority system. Fields with no XIQ equivalent (rack,
-tenant, comments, asset tag, position, role, …) stay entirely
-NetBox/human-owned, so they can never generate phantom drift.
+when Platform ONE reports the underlying data, or never asserted at all —
+there is no configurable field-authority system. Fields with no Platform ONE
+equivalent (rack, tenant, comments, asset tag, position, role, …) stay
+entirely NetBox/human-owned, so they can never generate phantom drift.
+
+Wireless sync (AP radios / WLANs) is deliberately **not** ported from the
+XIQ version: Platform ONE Networking is switch/fabric-first and its
+ConfigState wireless tables are still much thinner than XIQ's
+radio-information endpoint. It can return once those tables mature.
+
+## The two Platform ONE APIs used
+
+Both are documented on the [Platform ONE Developer
+Portal](https://developer.extremeplatformone.com/api-reference), served from
+the same host, and take the same bearer token:
+
+- **Assets API** (`POST /assets/v1/devices`) — the device inventory:
+  hostname, serial, MAC, model (`product_type`), OS version, connection
+  state, flat site name, and the `function` value (Switch Engine / Fabric
+  Engine / EXOS / VOSS / AP / …) that gates the port sync.
+- **ConfigState API** (`POST /configstate/v1/retrieve-*`) — per-device
+  configuration/state tables collected from each switch: the port list
+  (`retrieve-asset-port-config` / `retrieve-asset-port-state`), VLAN
+  membership (`retrieve-asset-interface-vlan-properties`), and the
+  site/building/floor location record (`retrieve-asset-location`).
+
+Every ConfigState filter field takes a **list**, so the per-tick call budget
+is flat, not per-device: one paginated Assets listing, one paginated
+ConfigState device listing (for correlation), one `retrieve-asset-location`
+call, and one call per port table covering **every in-scope switch at once**.
+
+Unlike the XIQ version of this worker, no undocumented endpoint is used
+anywhere — the legacy `/xiq/v0/monitor/device/wired/portlist` dependency is
+gone.
 
 ## Repository layout
 
 | Path | Purpose |
 |------|---------|
-| `orb_extreme_xiq/client.py` | Thin XIQ API client on plain `requests`: paginated `/devices`, `/locations/tree`, `/devices/radio-information`, and the legacy per-switch `/xiq/v0/monitor/device/wired/portlist` endpoint. Token or username/password auth, auto-refresh, retry-once-on-401. |
-| `orb_extreme_xiq/identity.py` | Stable device naming, switch/AP classification, site + nested-Location resolution, device-type model mapping. |
-| `orb_extreme_xiq/mapper.py` | XIQ → Diode entity mapping: devices, sites, locations, switch ports, AP radios, WLANs. |
-| `orb_extreme_xiq/bootstrap.py` | One-time idempotent NetBox schema setup (custom fields + tags). |
-| `orb_extreme_xiq/backend.py` | Orb Agent worker entrypoint + standalone dry-run runner. |
-| `agent.yaml` | Example Orb Agent policy (bootstrap, site mapping, scope). |
-| `tests/` | Offline pytest suite (HTTP mocked with `responses`), plus an opt-in live OpenAPI contract check. |
+| `orb_extreme_platformone/client.py` | Thin Platform ONE client on plain `requests`: paginated Assets device listing + a generic batched ConfigState `retrieve()`. Bearer-token auth. |
+| `orb_extreme_platformone/identity.py` | Stable device naming, switch detection (Assets `function` enum), site/building/floor resolution, device-type model mapping. |
+| `orb_extreme_platformone/mapper.py` | Platform ONE → Diode entity mapping: devices, sites, locations, switch ports (incl. VLANs). |
+| `orb_extreme_platformone/bootstrap.py` | One-time idempotent NetBox schema setup (custom fields + tags). |
+| `orb_extreme_platformone/backend.py` | Orb Agent worker entrypoint: Assets↔ConfigState correlation, batched table fetches, standalone dry-run runner. |
+| `agent.yaml` | Example Orb Agent policy (bootstrap, classification, scope). |
+| `tests/` | Offline pytest suite (HTTP mocked with `responses`), plus opt-in contract checks against downloaded Platform ONE OpenAPI specs. |
 
 ## Quick start
 
@@ -50,7 +81,7 @@ docker run --rm \
   -v $PWD:/opt/orb/ \
   -e INSTALL_WORKERS_PATH=/opt/orb/workers.txt \
   -e DIODE_CLIENT_ID -e DIODE_CLIENT_SECRET \
-  -e XIQ_API_TOKEN \
+  -e PLATFORMONE_API_TOKEN \
   -e NETBOX_API_URL -e NETBOX_API_TOKEN \
   netboxlabs/orb-agent:latest run -c /opt/orb/agent.yaml
 ```
@@ -75,21 +106,18 @@ Policy `config:` keys (see `agent.yaml` for a complete example):
 | Key | Meaning |
 |-----|---------|
 | `BOOTSTRAP` | Run schema setup before sync (first run only). |
-| `default_site` | Site for devices with a missing/unresolvable location. |
+| `classification` | Assets device filter: `SWITCH` (default), `WIRELESS`, `ROUTER`, … or `ALL`. Port sync only ever runs for switch-OS devices regardless. |
+| `default_site` | Site for devices when neither ConfigState nor Assets names one. |
 | `name_source` | `hostname` (default) or `serial`. |
 | `scope.sites` | Limit sync to specific resolved sites (`["*"]` for all). |
 
-### XIQ authentication
+### Platform ONE authentication
 
-- **API token** (recommended): XIQ UI → Global Settings → API Token Management.
-  Set `XIQ_API_TOKEN`.
-- **Username/password**: set `XIQ_USERNAME` / `XIQ_PASSWORD`; the client logs
-  in via `POST /login` and auto-refreshes the JWT.
-- Base URL: `https://api.extremecloudiq.com` (override with `XIQ_API_URL`).
-- The wired-port-list call is the one exception: it lives on
-  `https://cloudapi.extremecloudiq.com` (`client.LEGACY_BASE_URL`), an older
-  host not covered by the current XIQ OpenAPI spec, but takes the same bearer
-  token.
+- **API token**: create one in Extreme Platform ONE and set
+  `PLATFORMONE_API_TOKEN`. All calls use the same `Authorization: Bearer`
+  header; there is no username/password login flow in this worker.
+- Base URL: `https://cloudapi.extremecloudiq.com` (override with
+  `PLATFORMONE_API_URL`).
 
 Every credential key can come from the policy `config:` or from a same-named
 environment variable; policy config wins.
@@ -98,8 +126,8 @@ environment variable; policy config wins.
 
 ```bash
 pip install -e ".[dev]"
-export XIQ_API_TOKEN=...              # or XIQ_USERNAME / XIQ_PASSWORD
-python -m orb_extreme_xiq.backend     # dry run: fetch, map, print entities (no Diode push)
+export PLATFORMONE_API_TOKEN=...
+python -m orb_extreme_platformone.backend  # dry run: fetch, map, print entities (no Diode push)
 pytest                                # offline test suite
 ruff check . && ruff format --check . # lint + format
 ```
@@ -117,24 +145,26 @@ inside the container.
 ### Testing
 
 The default `pytest` run is fully offline: `test_client.py`/`test_backend.py`
-mock XIQ's HTTP endpoints with `responses`, `test_mapper.py`/`test_identity.py`
-use plain fixtures, and `test_bootstrap.py` mocks the NetBox REST API.
+mock the Platform ONE HTTP endpoints with `responses`,
+`test_mapper.py`/`test_identity.py` use plain fixtures, and
+`test_bootstrap.py` mocks the NetBox REST API.
 
-The one exception is `tests/test_openapi_contract.py`: it fetches the live
-XIQ OpenAPI spec (`https://api.extremecloudiq.com/openapi`, unauthenticated)
-and asserts `/devices` and `/locations/tree` still expose the query params
-`client.py` hardcodes (`page`/`limit`/`views`/`locationIds`,
-`parentId`/`expandChildren`) — a tripwire for upstream renames or removals.
-It's marked `contract` and excluded from the default run (`addopts = "-m 'not
-contract'"`); run it explicitly with `pytest -m contract`, or rely on the
-scheduled weekly `contract` job in `.github/workflows/ci.yml`.
+The contract checks in `tests/test_openapi_contract.py` verify the
+endpoints, pagination params, response keys, and filter fields this worker
+hardcodes against the two Platform ONE OpenAPI specs. The specs sit behind
+the developer portal's login wall (no stable unauthenticated URL), so the
+checks run against **local downloads**: fetch the Asset Management and
+Config State specs from the
+[portal](https://developer.extremeplatformone.com/api-reference), then
 
-The contract check is deliberately scoped to paths and query-param *names*,
-not response-body fields: the public spec's `XiqDevice` schema is far thinner
-than the ~34-field payload XIQ actually returns at runtime (confirmed against
-real recorded responses), so it is not a reliable signal for response-shape
-drift. `mapper.py`'s field assumptions are instead exercised against real
-recorded responses in `test_mapper.py`/`test_backend.py`.
+```bash
+export PLATFORMONE_ASSETS_SPEC=/path/to/assets-openapi.json
+export PLATFORMONE_CONFIGSTATE_SPEC=/path/to/configstate-openapi.json
+pytest -m contract
+```
+
+They're marked `contract`, excluded from the default run, and skip
+themselves when the env vars are unset.
 
 ### Verifying the SDK contracts
 
@@ -167,108 +197,110 @@ clean, stable Diode output:
   is asserted natively on the NetBox Device rather than via a separate
   immutable-ID custom field, the same approach the Cisco Meraki integration
   and NetBox Labs' generic discovery backends use.
-- **Stable producer + tags** — fixed `app_name="orb-extreme-xiq"` and flat
-  `extreme-networks` / `xiq` / `discovered` tags (mirroring Meraki's
-  `cisco` / `meraki` / `discovered` pattern) keep XIQ data cleanly
-  attributable and filterable in Assurance.
+- **Stable producer + tags** — fixed `app_name="orb-extreme-platformone"`
+  and flat `extreme-networks` / `platform-one` / `discovered` tags
+  (mirroring Meraki's `cisco` / `meraki` / `discovered` pattern) keep
+  Platform ONE data cleanly attributable and filterable in Assurance.
+
+### Assets ↔ ConfigState correlation
+
+The Assets API identifies devices by a numeric `device_id`; ConfigState by
+its own UUID. The worker joins the two per tick on **serial number**
+(case-insensitive), falling back to base MAC (normalized to bare hex —
+Assets sends `aabbccddeeff`, ConfigState may use separators) and then
+management IP. Devices Assets knows but ConfigState doesn't (onboarding
+pending, collection not finished) still sync as Devices — just with the flat
+Assets site and no ports — and heal automatically on a later tick.
 
 ### Sites and nested locations
 
-The root of a device's XIQ location tree (Site → Building → Floor, …) becomes
-its NetBox **Site**; everything below the root becomes a chain of nested
-NetBox **Location** entities, and the device is assigned to the most specific
-one. `default_site` is used only when a device's location is missing or
-unresolvable, in which case no Location is asserted either.
+A device's ConfigState `AssetLocation` record (site / building / floor
+names) becomes its NetBox **Site** plus a nested **Location** chain, with
+the device assigned to the most specific level present. Devices without a
+ConfigState location fall back to the Assets API's flat `site_name` (no
+Location chain); `default_site` is used only when neither source names a
+site. There is no location-tree API to walk the way XIQ's
+`/locations/tree` was — both sources carry resolved names per device.
 
 ### Device type model mapping
 
-XIQ's `product_type` prefixes `FabricEngine_` onto the model code for any
-switch running Fabric Engine OS (e.g. `FabricEngine_5320_48P_8XE`). The
+Assets `product_type` keeps XIQ's convention of prefixing `FabricEngine_`
+onto the model code for switches running Fabric Engine OS (e.g.
+`FabricEngine_5320_48P_8XE`). The
 [NetBox Device Type Library](https://github.com/netbox-community/devicetype-library)
 puts that marker at the *end* (e.g. `5320-48P-8XE-FabricEngine`), so
 `identity.device_type_model_for` moves the prefix to a suffix and turns
-underscores into hyphens for every `FabricEngine_`-prefixed code.
-`product_type` values without the prefix (e.g. `VSP_SWITCH`, a generic code
-that doesn't identify a specific physical model) are passed through unchanged
-rather than guessed at.
+underscores into hyphens for every `FabricEngine_`-prefixed code. Values
+without the prefix are passed through unchanged rather than guessed at.
 
 ### Wired switch ports
 
-Every device whose `device_function` is a switch
-(`identity.SWITCH_DEVICE_FUNCTIONS` / `identity.is_switch`) gets one
-`get_wired_portlist` call, mapped to NetBox `Interface` entities: `name`,
-link state, `speed` (parsed from `portSpeed`, Kbps), `duplex`, `description`
-(`ifAlias`), and the `xiq_port_id` custom field.
+Every in-scope device whose Assets `function` is a switch OS
+(`identity.SWITCH_DEVICE_FUNCTIONS`) has its ports mapped from three
+ConfigState tables, joined on `asset_interface_id`:
 
-- **Link state is asserted as `mark_connected`, not `enabled`.** XIQ's port
-  `status` is link/operational state, not administrative shut/no-shut state —
-  the endpoint doesn't expose admin state at all. `enabled` conventionally
-  means administrative state in NetBox, so asserting it from link state would
-  misrepresent a link-down port as "shut down by an operator".
-  `mark_connected` is NetBox's field for exactly this ("is this interface
-  physically connected to something"); `enabled` is left unset.
-- **`type` is a best-effort guess** from XIQ's negotiated `portSpeed` alone
-  (e.g. `1000base-t`, `10gbase-x-sfpp`) — XIQ doesn't expose a capability
-  list or an SFP-vs-copper signal — and is left unset when the speed is
-  unrecognized (e.g. `SPEED_AUTO`).
-- **`mode` is deliberately not asserted.** On FLEX-UNI / Fabric-Attach
-  deployments a port is mapped straight into an I-SID rather than a VLAN, so
-  `portMode`/`taggedVlans` don't describe real port configuration there, and
-  no documented XIQ API path exposes I-SID membership to assert instead.
-  VLAN data (`taggedVlans`) isn't currently mapped at all.
+- **`enabled` is real admin state** (`AssetPortConfig.enabled`) — the field
+  the old XIQ portlist endpoint never exposed. Link state is asserted
+  separately as `mark_connected` (`AssetPortState.oper_state`), so an
+  admin-down port and a link-down port are finally distinguishable in
+  NetBox.
+- **VLANs and 802.1Q mode** come from
+  `retrieve-asset-interface-vlan-properties`: `port_vlan` → untagged VLAN,
+  the nested VLAN map (minus the untagged VLAN) → tagged VLANs, and `mode`
+  is `tagged`/`access` accordingly. Interfaces with **no** VLAN rows assert
+  none of the three — on Fabric Engine FLEX-UNI/Fabric-Attach deployments a
+  port can be mapped straight into an I-SID instead of a VLAN, and
+  inventing an access mode would misrepresent real configuration. VLANs are
+  referenced by bare `vid` (no VLAN names/groups asserted).
+- **Speed/duplex/connector are verified-code-only.** ConfigState publishes
+  `oper_speed`/`oper_duplex`/`connector_type` as bare integer enums with
+  *no value table anywhere in its OpenAPI spec* (verified: the spec contains
+  zero `enum` definitions). Only codes confirmed against a production
+  Fabric Engine device are mapped (`oper_speed 4` = 1 Gbit/s,
+  `oper_duplex 2` = full, `connector_type 1/2` = copper/fiber →
+  `1000base-t` / `1000base-x-sfp`); every unknown code asserts nothing
+  rather than guessing. `oper_state` is the exception: its schema
+  description is copied verbatim from IF-MIB `ifOperStatus`, so standard
+  IF-MIB numbering (1=up, 2=down, …) is relied on.
 
-### Wireless AP radios and WLANs
+### Migrating from the XIQ worker
 
-Every device whose `device_function` is an AP (`identity.AP_DEVICE_FUNCTIONS`
-/ `identity.is_ap`) has its radios fetched via one bulk
-`GET /devices/radio-information` call covering every AP in the same sync.
-Each radio maps to a NetBox `Interface`: `name`, `type` (from `mode`, e.g.
-`_11ax_5g` → `ieee802.11ax`; `_11be_*`/Wi-Fi 7 has no confirmed NetBox choice
-yet and is left unset), `rf_role` (always `"ap"`), `tx_power`,
-`primary_mac_address`, and `rf_channel_frequency`/`rf_channel_width` computed
-via the standard IEEE 802.11 channel-numbering formulas. NetBox's
-`rf_channel` string field isn't asserted — its exact valid format hasn't been
-confirmed against a live NetBox instance.
+This project replaced its ExtremeCloud IQ backend (undocumented
+`/xiq/v0/monitor/device/wired/portlist` + XIQ REST API) with the documented
+Platform ONE APIs. Operational differences:
 
-Each radio's currently broadcast SSIDs become NetBox `WirelessLAN` entities,
-deduped by SSID name across every AP in the sync and linked from the radio
-`Interface` via NetBox's native `wireless_lans` field:
+| | XIQ worker (old) | Platform ONE worker |
+|---|---|---|
+| Package / `config.package` | `orb_extreme_xiq` | `orb_extreme_platformone` |
+| Credentials | `XIQ_API_TOKEN` or username/password | `PLATFORMONE_API_TOKEN` only |
+| Tags | `extreme-networks`, `xiq`, `discovered` | `extreme-networks`, `platform-one`, `discovered` |
+| Custom fields | `xiq_network_policy`, `xiq_port_id` | `platformone_device_id`, `platformone_interface_id` |
+| Port admin state / VLANs | not available | `enabled`, untagged/tagged VLANs, `mode` |
+| Wireless radios / WLANs | synced | not synced (see above) |
 
-- `auth_type` is mapped from `ssid_security_type` (`TYPE_802DOT1X` →
-  `wpa-enterprise`, `PSK`/`PPSK` → `wpa-personal`, `WEP` → `wep`, anything
-  else including `OPEN`/`ENHANCED_OPEN` → `open`, mirroring the Cisco Meraki
-  integration's fallback convention).
-- `auth_cipher` is not set — that would require an additional `GET /ssids`
-  call this worker doesn't make (see Roadmap).
-- `status` is always `"active"`: the per-radio `ssid_status` field
-  (`OPEN`/`CLOSED`) reads as broadcast visibility (hidden vs. advertised),
-  not the SSID's configured enabled/disabled state, so it isn't used.
-- WLANs aren't site-scoped (no `scope_site`): unlike a Meraki network, a XIQ
-  network policy isn't inherently 1:1 with one site, and the same SSID can
-  legitimately broadcast from APs in different sites.
-
-> **Not yet verified against a live XIQ tenant.** The radio/WLAN field names
-> and enum values above come from XIQ's documented OpenAPI spec, not from a
-> real recorded response. This project's practice is to confirm mapper
-> assumptions against real API output before trusting them (see
-> `test_mapper.py`'s recorded-response fixtures for the device/port paths);
-> that verification is still outstanding for `/devices/radio-information`.
-> Spot-check a real response before relying on this in production.
+NetBox objects created by the old worker keep their `xiq` tag and
+`xiq_network_policy`/`xiq_port_id` custom-field values until you remove
+them manually — bootstrap only ever creates definitions, it never deletes.
+Device/interface identity is unchanged (device name + native serial,
+interface name), so re-running this worker over an XIQ-populated NetBox
+updates the same objects instead of duplicating them.
 
 ## Roadmap
 
-- Verify the AP radio/WLAN field mapping against a real recorded
-  `/devices/radio-information` response (see note above).
-- `xiq_tagged_vlans` / `xiq_lldp_neighbor` port custom fields, if a
-  deployment needs them.
-- I-SID / Fabric-Attach service mapping, if XIQ exposes it via a documented
-  endpoint.
-- VLANs / prefixes from network policies.
+- LLDP neighbors → NetBox cables/topology, via
+  `retrieve-asset-lldp-neighbor-state` (or the pre-correlated
+  `retrieve-inferred-physical-link`).
+- LAG interfaces + membership (`retrieve-asset-lag-config/-state`).
+- PoE draw per port (`retrieve-asset-poe-power-ports-state`).
+- I-SID / Fabric-Attach service mapping
+  (`retrieve-asset-l2-vsn-suni-config`, `-tuni-config` — documented in
+  ConfigState, unlike in XIQ).
+- Extend the verified enum tables (`oper_speed`/`oper_duplex`/
+  `connector_type`) as more hardware is observed, unlocking more `speed`/
+  `type` assertions.
+- Wireless sync, once ConfigState's wireless tables carry enough to match
+  the old XIQ radio/WLAN mapping.
 - Device role assertion (switch / AP / router), if a role-slug convention is
   settled on.
-- `auth_cipher` on synced WLANs, via an additional `GET /ssids` call for
-  `access_security.encryption_method`.
-- NetBox's `rf_channel` string field on radio interfaces, once its exact
-  valid format is confirmed against a live NetBox instance.
 - Move bootstrap custom-field creation into the Diode path if a future SDK
   supports CustomField ingest entities.

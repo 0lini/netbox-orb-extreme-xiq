@@ -1,10 +1,10 @@
-# Orb Agent config for the ExtremeCloud IQ worker (stock open-source image).
+# Orb Agent config for the Extreme Platform ONE worker (stock open-source image).
 #
 #   docker run --rm \
 #     -v $PWD:/opt/orb/ \
 #     -e INSTALL_WORKERS_PATH=/opt/orb/workers.txt \
 #     -e DIODE_CLIENT_ID -e DIODE_CLIENT_SECRET \
-#     -e XIQ_API_TOKEN \
+#     -e PLATFORMONE_API_TOKEN \
 #     -e NETBOX_API_URL -e NETBOX_API_TOKEN \   # only needed while BOOTSTRAP: true
 #     netboxlabs/orb-agent:latest run -c /opt/orb/agent.yaml
 #
@@ -26,29 +26,32 @@ orb:
                                                        # Assurance-enabled NetBox
           client_id: ${DIODE_CLIENT_ID}
           client_secret: ${DIODE_CLIENT_SECRET}
-          agent_name: xiq_agent_1
+          agent_name: platformone_agent_1
           # dry_run: true
           # dry_run_output_dir: /opt/orb
   policies:
     worker:
-      extreme_xiq_worker:
+      extreme_platformone_worker:
         config:
-          package: orb_extreme_xiq
+          package: orb_extreme_platformone
           schedule: "0 2 * * *"            # daily 02:00; omit to run once
 
           BOOTSTRAP: false                 # true on first run only
           NETBOX_API_URL: ${NETBOX_API_URL}      # bootstrap only
           NETBOX_API_TOKEN: ${NETBOX_API_TOKEN}  # bootstrap only
 
-          XIQ_API_TOKEN: ${XIQ_API_TOKEN}
-          # or: XIQ_USERNAME / XIQ_PASSWORD
+          PLATFORMONE_API_TOKEN: ${PLATFORMONE_API_TOKEN}
+          # PLATFORMONE_API_URL: https://cloudapi.extremecloudiq.com   # default
 
+          classification: SWITCH           # Assets device filter: SWITCH (default),
+                                           # WIRELESS, ROUTER, ... or ALL. Port sync
+                                           # only ever runs for switch-OS devices.
           name_source: hostname            # or "serial" for max stability
-          default_site: "XIQ-Unmapped"
+          default_site: "PlatformONE-Unmapped"
 
-          # The root of a device's XIQ location tree becomes its NetBox site;
-          # everything below it (building, floor, ...) becomes nested NetBox
-          # Location entities. default_site is used only when a device's
-          # location is missing/unresolvable (no Location is set either).
+          # A device's ConfigState location record (site / building / floor)
+          # becomes its NetBox Site + nested Location chain; devices without
+          # one fall back to the Assets API's flat site name. default_site is
+          # used only when neither source names a site.
         scope:
-          sites: ["*"]                     # or ["HQ - Floor 1", "Branch A"]
+          sites: ["*"]                     # or ["HQ", "Branch A"]

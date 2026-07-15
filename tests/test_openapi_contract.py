@@ -1,56 +1,92 @@
-"""Contract check against the *live* XIQ OpenAPI spec.
+"""Contract checks against the Platform ONE OpenAPI specs.
 
-Unlike every other test here, this one hits the network (fetches
-https://api.extremecloudiq.com/openapi, unauthenticated, ~1.2MB) and is
-therefore excluded from the default `pytest` run (see the `contract` marker
-and `addopts` in pyproject.toml) -- run explicitly with `pytest -m contract`,
-or via the scheduled "contract" CI job. The point is to catch upstream drift
-(a renamed/removed query param, a removed endpoint) in `/devices` and
-`/locations/tree`, the two endpoints client.py hardcodes parameter names for.
+The Platform ONE specs are published on the developer portal
+(https://developer.extremeplatformone.com/api-reference) behind a
+browser/login wall -- there is no stable unauthenticated URL to fetch them
+from, so unlike the old live-XIQ contract job these checks run against
+*local copies*: download the Asset Management and Config State specs from
+the portal and point these env vars at them:
 
-Deliberately scoped to paths + query param *names* only, not response body
-field names: the live spec's `PagedXiqDevice.data` items resolve to a
-`XiqDevice` schema with just `id`/`hostname` ("The Device for QoE Diagnostics
-Filtering"), which doesn't match the ~34-field payload XIQ actually returns
-at runtime -- confirmed against real recorded responses. So this public spec
-document is not a reliable source for response-shape drift detection; only
-structural (path/param) drift is asserted here. mapper.py's field assumptions
-are instead exercised against real recorded responses in
-test_mapper.py/test_backend.py.
+    PLATFORMONE_ASSETS_SPEC=/path/to/assets-openapi.json
+    PLATFORMONE_CONFIGSTATE_SPEC=/path/to/configstate-openapi.json
+
+Marked `contract` and skipped by default (and always skipped when the env
+vars are unset), so the offline test suite stays self-contained. Run with
+`pytest -m contract` after refreshing the spec downloads to catch upstream
+drift in the endpoints/params client.py and backend.py hardcode.
 """
 
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+
 import pytest
-import requests
+
+from orb_extreme_platformone.backend import PORT_TABLES
+from orb_extreme_platformone.client import configstate_response_key
 
 pytestmark = pytest.mark.contract
 
-OPENAPI_URL = "https://api.extremecloudiq.com/openapi"
+
+def _load_spec(env_var: str) -> dict:
+    path = os.environ.get(env_var)
+    if not path:
+        pytest.skip(f"{env_var} not set -- point it at a downloaded spec to run contract checks")
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="session")
-def live_spec() -> dict:
-    try:
-        resp = requests.get(OPENAPI_URL, timeout=30)
-        resp.raise_for_status()
-    except requests.RequestException as exc:
-        pytest.skip(f"could not reach {OPENAPI_URL}: {exc}")
-    return resp.json()
+def assets_spec() -> dict:
+    return _load_spec("PLATFORMONE_ASSETS_SPEC")
 
 
-def _param_names(live_spec: dict, path: str, method: str = "get") -> set[str]:
-    params = live_spec["paths"][path][method].get("parameters", [])
-    return {p.get("name", p.get("$ref", "").rsplit("/", 1)[-1]) for p in params}
+@pytest.fixture(scope="session")
+def configstate_spec() -> dict:
+    return _load_spec("PLATFORMONE_CONFIGSTATE_SPEC")
 
 
-def test_devices_endpoint_has_the_query_params_client_py_relies_on(live_spec):
-    assert "/devices" in live_spec["paths"], "GET /devices has disappeared from the XIQ API"
-    names = _param_names(live_spec, "/devices")
-    assert {"page", "limit", "views", "locationIds"} <= names
+def test_assets_devices_endpoint_and_params_still_exist(assets_spec):
+    post = assets_spec["paths"]["/devices"]["post"]
+    param_names = set()
+    for param in post.get("parameters", []):
+        if "$ref" in param:
+            param = assets_spec["components"]["parameters"][param["$ref"].rsplit("/", 1)[-1]]
+        param_names.add(param["name"])
+    assert {"page", "limit"} <= param_names
 
 
-def test_locations_tree_endpoint_has_the_query_params_client_py_relies_on(live_spec):
-    assert "/locations/tree" in live_spec["paths"], "GET /locations/tree has disappeared from the XIQ API"
-    names = _param_names(live_spec, "/locations/tree")
-    assert {"parentId", "expandChildren"} <= names
+def test_assets_filter_still_supports_classification(assets_spec):
+    schemas = assets_spec["components"]["schemas"]
+    assert "classification" in schemas["ListDevicesRequestFilter"]["properties"]
+
+
+def test_configstate_tables_client_uses_still_exist(configstate_spec):
+    paths = configstate_spec["paths"]
+    used_tables = ["asset-device", "asset-location", *(t for t, _ in PORT_TABLES.values())]
+    for table in used_tables:
+        assert f"/retrieve-{table}" in paths, f"retrieve-{table} disappeared from ConfigState"
+
+
+def test_configstate_response_keys_and_filter_fields_match(configstate_spec):
+    """The response key must equal the schema name the spec wraps records in,
+    and the batching filter field must exist on the table's GetRequest."""
+    schemas = configstate_spec["components"]["schemas"]
+    for table, filter_field in [
+        ("asset-device", None),
+        ("asset-location", "asset_device_id"),
+        *PORT_TABLES.values(),
+    ]:
+        key = configstate_response_key(table)
+        response_schema = schemas[f"{key}GetResponse"]["properties"]
+        assert key in response_schema, f"{key}GetResponse no longer wraps records under {key}"
+        if filter_field:
+            request_schema = schemas[f"{key}GetRequest"]["properties"]
+            assert filter_field in request_schema, f"{key}GetRequest lost filter field {filter_field}"
+
+
+def test_configstate_pagination_params_still_exist(configstate_spec):
+    post = configstate_spec["paths"]["/retrieve-asset-device"]["post"]
+    names = {p.get("name") for p in post.get("parameters", [])}
+    assert {"page_number", "page_size"} <= names

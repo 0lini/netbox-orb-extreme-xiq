@@ -5,402 +5,281 @@ exercises the real protobuf Entity/Device/Site classes plus the real
 worker.models.Policy/Config, to catch drift against the installed
 netboxlabs-diode-sdk / netboxlabs-orb-worker versions early.
 
-XIQ itself is mocked at the HTTP boundary with `responses` (client.py talks
-plain `requests`, see client.py's module docstring).
+Platform ONE itself is mocked at the HTTP boundary with `responses`
+(client.py talks plain `requests`).
 """
 
 from __future__ import annotations
 
+import json
+
 import responses
 from worker.models import Config, Policy
 
-from orb_extreme_xiq.backend import Backend
-from orb_extreme_xiq.client import DEFAULT_BASE_URL
+from orb_extreme_platformone.backend import Backend
+from orb_extreme_platformone.client import DEFAULT_BASE_URL
+
+ASSETS_URL = f"{DEFAULT_BASE_URL}/assets/v1/devices"
 
 
-def _mock_no_wired_ports(device_id: int):
-    """get_wired_portlist is only ever called for switches, but every switch
-    in a test's device fixture needs it mocked regardless of which sync path
-    the test is exercising.
-    """
+def _cs_url(table: str) -> str:
+    return f"{DEFAULT_BASE_URL}/configstate/v1/retrieve-{table}"
+
+
+def _mock_assets(devices: list[dict]):
     responses.add(
-        responses.GET,
-        "https://cloudapi.extremecloudiq.com/xiq/v0/monitor/device/wired/portlist",
-        match=[responses.matchers.query_param_matcher({"deviceId": str(device_id)})],
-        json={"data": {"portList": []}},
+        responses.POST,
+        ASSETS_URL,
+        json={"data": devices, "page": 1, "total_pages": 1, "total_count": len(devices)},
         status=200,
     )
 
 
-def _mock_no_radios():
-    responses.add(
-        responses.GET,
-        f"{DEFAULT_BASE_URL}/devices/radio-information",
-        json={"page": 1, "total_pages": 1, "data": []},
-        status=200,
+def _mock_cs(table: str, key: str, records: list[dict], status: int = 200):
+    body = {key: records, "Pagination": {"total_pages": 1}} if status == 200 else {"error": "boom"}
+    responses.add(responses.POST, _cs_url(table), json=body, status=status)
+
+
+def _policy(**config_overrides) -> Policy:
+    config = Config(
+        package="orb_extreme_platformone",
+        BOOTSTRAP=False,
+        PLATFORMONE_API_TOKEN="tok",
+        default_site="PlatformONE-Unmapped",
+        **config_overrides,
     )
+    return Policy(config=config, scope=config_overrides.get("scope", {"sites": ["*"]}))
+
+
+SWITCH_ASSET = {
+    "device_id": 42,
+    "host_name": "sw-idf1",
+    "serial_number": "SN42",
+    "mac_address": "aabbccddeeff",
+    "product_type": "FabricEngine_5320_48P_8XE",
+    "function": "Fabric Engine",
+    "is_connected": True,
+    "site_name": "Assets-Site",
+}
+
+CS_SWITCH = {"id": "cs-uuid-42", "serial_number": "SN42", "base_mac_address": "AA:BB:CC:DD:EE:FF"}
 
 
 def test_describe_reports_stable_identity():
     metadata = Backend.describe()
-    assert metadata.app_name == "orb-extreme-xiq"
-    assert metadata.name == "orb_extreme_xiq"
+    assert metadata.app_name == "orb-extreme-platformone"
+    assert metadata.name == "orb_extreme_platformone"
 
 
 @responses.activate
-def test_run_produces_a_site_a_location_and_a_device_entity():
-    _mock_no_radios()
-    responses.add(
-        responses.GET,
-        f"{DEFAULT_BASE_URL}/locations/tree",
-        json=[{"id": 1, "name": "HQ", "children": [{"id": 2, "name": "Floor 1", "children": []}]}],
-        status=200,
-    )
-    responses.add(
-        responses.GET,
-        f"{DEFAULT_BASE_URL}/devices",
-        json={
-            "page": 1,
-            "count": 1,
-            "total_pages": 1,
-            "total_count": 1,
-            "data": [
-                {
-                    "id": 111,
-                    "hostname": "ap-lobby",
-                    "serial_number": "SN111",
-                    "product_type": "AP305C",
-                    "device_function": "AP",
-                    "ip_address": "10.0.0.5",
-                    "connected": True,
-                    "location_id": 2,
-                    "org_id": 9,
-                }
-            ],
-        },
-        status=200,
-    )
-
-    config = Config(
-        package="orb_extreme_xiq",
-        BOOTSTRAP=False,
-        XIQ_API_TOKEN="tok",
-        default_site="XIQ-Unmapped",
-    )
-    policy = Policy(config=config, scope={"sites": ["*"]})
-
-    entities = list(Backend().run("extreme_xiq_worker", policy))
-
-    assert len(entities) == 3
-    assert entities[0].site.name == "HQ"
-    assert entities[1].location.name == "Floor 1"
-    assert entities[1].location.site.name == "HQ"
-    assert entities[2].device.name == "ap-lobby"
-    assert entities[2].device.site.name == "HQ"
-    assert entities[2].device.location.name == "Floor 1"
-
-
-@responses.activate
-def test_run_maps_switch_interfaces():
-    """Exercises wired-port sync end to end, including the switch-detection
-    check (identity.is_switch) that only this path calls.
-
-    Includes an AP alongside the switch so this also acts as a regression
-    test: switch-detection must key off the device's raw device_function
-    (identity.is_switch) -- the wired-port call must go out for the switch
-    and never for the AP.
-    """
-    _mock_no_radios()
-    responses.add(responses.GET, f"{DEFAULT_BASE_URL}/locations/tree", json=[], status=200)
-    responses.add(
-        responses.GET,
-        f"{DEFAULT_BASE_URL}/devices",
-        json={
-            "page": 1,
-            "count": 2,
-            "total_pages": 1,
-            "total_count": 2,
-            "data": [
-                {
-                    "id": 111,
-                    "hostname": "ap-lobby",
-                    "serial_number": "SN111",
-                    "device_function": "AP",
-                    "connected": True,
-                },
-                {
-                    "id": 222,
-                    "hostname": "sw-idf1",
-                    "serial_number": "SN222",
-                    "device_function": "SWITCH",
-                    "connected": True,
-                },
-            ],
-        },
-        status=200,
-    )
-    responses.add(
-        responses.GET,
-        "https://cloudapi.extremecloudiq.com/xiq/v0/monitor/device/wired/portlist",
-        json={
-            "data": {
-                "portList": [
-                    {
-                        "id": 1,
-                        "ifName": "1/1",
-                        "status": "UP",
-                        "portSpeed": "SPEED_1000M",
-                        "transmissionMode": "Full-duplex",
-                    }
-                ]
+def test_run_produces_site_location_device_and_interface_entities():
+    _mock_assets([SWITCH_ASSET])
+    _mock_cs("asset-device", "AssetDevice", [CS_SWITCH])
+    _mock_cs(
+        "asset-location",
+        "AssetLocation",
+        [
+            {
+                "asset_device_id": "cs-uuid-42",
+                "site_name": "HQ",
+                "building_name": "B1",
+                "floor_name": "F2",
             }
-        },
-        status=200,
-    )
-
-    config = Config(
-        package="orb_extreme_xiq",
-        BOOTSTRAP=False,
-        XIQ_API_TOKEN="tok",
-        default_site="XIQ-Unmapped",
-    )
-    policy = Policy(config=config, scope={"sites": ["*"]})
-
-    entities = list(Backend().run("extreme_xiq_worker", policy))
-
-    interfaces = [e.interface for e in entities if e.HasField("interface")]
-    assert len(interfaces) == 1
-    assert interfaces[0].device.name == "sw-idf1"
-    assert interfaces[0].name == "1/1"
-    # get_wired_portlist is only ever called for the switch, never the AP.
-    portlist_calls = [
-        c
-        for c in responses.calls
-        if c.request.url.split("?")[0].endswith("/xiq/v0/monitor/device/wired/portlist")
-    ]
-    assert [c.request.params["deviceId"] for c in portlist_calls] == ["222"]
-
-
-@responses.activate
-def test_run_maps_ap_radios_and_wlans():
-    """Exercises AP radio/WLAN sync end to end: one bulk get_radio_information
-    call covering only APs (identity.is_ap), never switches, producing both
-    Interface (per radio) and WirelessLAN (per unique SSID) entities.
-    """
-    _mock_no_wired_ports(222)
-    responses.add(responses.GET, f"{DEFAULT_BASE_URL}/locations/tree", json=[], status=200)
-    responses.add(
-        responses.GET,
-        f"{DEFAULT_BASE_URL}/devices",
-        json={
-            "page": 1,
-            "count": 2,
-            "total_pages": 1,
-            "total_count": 2,
-            "data": [
-                {
-                    "id": 111,
-                    "hostname": "ap-lobby",
-                    "serial_number": "SN111",
-                    "device_function": "AP",
-                    "connected": True,
-                },
-                {
-                    "id": 222,
-                    "hostname": "sw-idf1",
-                    "serial_number": "SN222",
-                    "device_function": "SWITCH",
-                    "connected": True,
-                },
-            ],
-        },
-        status=200,
-    )
-    responses.add(
-        responses.GET,
-        f"{DEFAULT_BASE_URL}/devices/radio-information",
-        json={
-            "page": 1,
-            "total_pages": 1,
-            "data": [
-                {
-                    "device_id": 111,
-                    "radios": [
-                        {
-                            "name": "Radio1",
-                            "mac_address": "001122334455",
-                            "mode": "_11ax_2g",
-                            "frequency": "2.4GHz",
-                            "channel_number": 6,
-                            "channel_width": "MHZ_20",
-                            "power": 17,
-                            "wlans": [
-                                {
-                                    "ssid": "Corp-WiFi",
-                                    "network_policy_name": "Corp-Policy",
-                                    "ssid_security_type": "TYPE_802DOT1X",
-                                }
-                            ],
-                        }
-                    ],
-                }
-            ],
-        },
-        status=200,
-    )
-
-    config = Config(
-        package="orb_extreme_xiq",
-        BOOTSTRAP=False,
-        XIQ_API_TOKEN="tok",
-        default_site="XIQ-Unmapped",
-    )
-    policy = Policy(config=config, scope={"sites": ["*"]})
-
-    entities = list(Backend().run("extreme_xiq_worker", policy))
-
-    interfaces = [e.interface for e in entities if e.HasField("interface")]
-    wlans = [e.wireless_lan for e in entities if e.HasField("wireless_lan")]
-    assert len(interfaces) == 1
-    assert interfaces[0].device.name == "ap-lobby"
-    assert interfaces[0].name == "Radio1"
-    assert [w.ssid for w in interfaces[0].wireless_lans] == ["Corp-WiFi"]
-    assert len(wlans) == 1
-    assert wlans[0].ssid == "Corp-WiFi"
-    assert wlans[0].auth_type == "wpa-enterprise"
-    # get_radio_information is only ever called with the AP's device id, never the switch's.
-    radio_calls = [
-        c for c in responses.calls if c.request.url.split("?")[0].endswith("/devices/radio-information")
-    ]
-    assert [c.request.params["deviceIds"] for c in radio_calls] == ["111"]
-
-
-@responses.activate
-def test_run_scopes_port_and_radio_sync_to_in_scope_sites():
-    """site_scope must gate the per-device fan-outs too, not just the
-    Device/Site entities: an out-of-scope switch must get no portlist call
-    and an out-of-scope AP must not appear in the radio-information call --
-    otherwise their Interface entities would reference Devices that were
-    never emitted, recreating out-of-scope devices in NetBox.
-    """
-    responses.add(
-        responses.GET,
-        f"{DEFAULT_BASE_URL}/locations/tree",
-        json=[
-            {"id": 1, "name": "HQ", "children": []},
-            {"id": 2, "name": "Branch", "children": []},
         ],
-        status=200,
     )
-    responses.add(
-        responses.GET,
-        f"{DEFAULT_BASE_URL}/devices",
-        json={
-            "page": 1,
-            "count": 4,
-            "total_pages": 1,
-            "total_count": 4,
-            "data": [
-                {"id": 1, "hostname": "sw-hq", "device_function": "SWITCH", "location_id": 1},
-                {"id": 2, "hostname": "sw-branch", "device_function": "SWITCH", "location_id": 2},
-                {"id": 3, "hostname": "ap-hq", "device_function": "AP", "location_id": 1},
-                {"id": 4, "hostname": "ap-branch", "device_function": "AP", "location_id": 2},
-            ],
-        },
-        status=200,
+    _mock_cs(
+        "asset-port-config",
+        "AssetPortConfig",
+        [
+            {
+                "asset_device_id": "cs-uuid-42",
+                "asset_interface_id": "if-1",
+                "name": "1/1",
+                "enabled": True,
+                "description": "uplink",
+            }
+        ],
     )
-    _mock_no_wired_ports(1)
-    _mock_no_radios()
+    _mock_cs(
+        "asset-port-state",
+        "AssetPortState",
+        [
+            {
+                "asset_device_id": "cs-uuid-42",
+                "asset_interface_id": "if-1",
+                "name": "1/1",
+                "oper_state": 1,
+                "oper_speed": 4,
+                "oper_duplex": 2,
+                "connector_type": 1,
+            }
+        ],
+    )
+    _mock_cs(
+        "asset-interface-vlan-properties",
+        "AssetInterfaceVlanProperties",
+        [
+            {
+                "device_id": "cs-uuid-42",
+                "asset_interface_id": "if-1",
+                "interface_name": "1/1",
+                "port_vlan": 10,
+                "vlans": [{"vlan_number": 10}, {"vlan_number": 20}],
+            }
+        ],
+    )
 
-    config = Config(package="orb_extreme_xiq", XIQ_API_TOKEN="tok", default_site="XIQ-Unmapped")
-    policy = Policy(config=config, scope={"sites": ["HQ"]})
+    entities = list(Backend().run("platformone_worker", _policy()))
 
-    entities = list(Backend().run("extreme_xiq_worker", policy))
-
-    device_names = {e.device.name for e in entities if e.HasField("device")}
-    assert device_names == {"sw-hq", "ap-hq"}
-    portlist_calls = [
-        c
-        for c in responses.calls
-        if c.request.url.split("?")[0].endswith("/xiq/v0/monitor/device/wired/portlist")
-    ]
-    assert [c.request.params["deviceId"] for c in portlist_calls] == ["1"]
-    radio_calls = [
-        c for c in responses.calls if c.request.url.split("?")[0].endswith("/devices/radio-information")
-    ]
-    assert [c.request.params["deviceIds"] for c in radio_calls] == ["3"]
+    assert len(entities) == 5
+    assert entities[0].site.name == "HQ"
+    assert entities[1].location.name == "B1"
+    assert entities[2].location.name == "F2"
+    assert entities[2].location.parent.name == "B1"
+    assert entities[3].device.name == "sw-idf1"
+    assert entities[3].device.site.name == "HQ"
+    assert entities[3].device.location.name == "F2"
+    interface = entities[4].interface
+    assert interface.name == "1/1"
+    assert interface.device.name == "sw-idf1"
+    assert interface.enabled is True
+    assert interface.mark_connected is True
+    assert interface.speed == 1_000_000
+    assert interface.type == "1000base-t"
+    assert interface.untagged_vlan.vid == 10
+    assert [v.vid for v in interface.tagged_vlans] == [20]
+    assert interface.mode == "tagged"
 
 
 @responses.activate
-def test_run_skips_a_switch_whose_portlist_call_fails():
-    """One failing portlist call (legacy, undocumented endpoint) must skip
-    that switch's ports for the tick, not abort the whole sync."""
-    _mock_no_radios()
-    responses.add(responses.GET, f"{DEFAULT_BASE_URL}/locations/tree", json=[], status=200)
-    responses.add(
-        responses.GET,
-        f"{DEFAULT_BASE_URL}/devices",
-        json={
-            "page": 1,
-            "count": 2,
-            "total_pages": 1,
-            "total_count": 2,
-            "data": [
-                {"id": 1, "hostname": "sw-flaky", "device_function": "SWITCH", "connected": True},
-                {"id": 2, "hostname": "sw-ok", "device_function": "SWITCH", "connected": True},
-            ],
-        },
-        status=200,
-    )
-    responses.add(
-        responses.GET,
-        "https://cloudapi.extremecloudiq.com/xiq/v0/monitor/device/wired/portlist",
-        match=[responses.matchers.query_param_matcher({"deviceId": "1"})],
-        status=500,
-    )
-    responses.add(
-        responses.GET,
-        "https://cloudapi.extremecloudiq.com/xiq/v0/monitor/device/wired/portlist",
-        match=[responses.matchers.query_param_matcher({"deviceId": "2"})],
-        json={"data": {"portList": [{"id": 9, "ifName": "1/1", "status": "UP"}]}},
-        status=200,
-    )
+def test_run_batches_every_switch_into_one_call_per_port_table():
+    switch2 = {**SWITCH_ASSET, "device_id": 43, "host_name": "sw-idf2", "serial_number": "SN43"}
+    cs2 = {"id": "cs-uuid-43", "serial_number": "SN43"}
+    _mock_assets([SWITCH_ASSET, switch2])
+    _mock_cs("asset-device", "AssetDevice", [CS_SWITCH, cs2])
+    _mock_cs("asset-location", "AssetLocation", [])
+    for table, key in [
+        ("asset-port-config", "AssetPortConfig"),
+        ("asset-port-state", "AssetPortState"),
+        ("asset-interface-vlan-properties", "AssetInterfaceVlanProperties"),
+    ]:
+        _mock_cs(table, key, [])
 
-    config = Config(package="orb_extreme_xiq", XIQ_API_TOKEN="tok", default_site="XIQ-Unmapped")
-    policy = Policy(config=config, scope={"sites": ["*"]})
+    list(Backend().run("platformone_worker", _policy()))
 
-    entities = list(Backend().run("extreme_xiq_worker", policy))
+    port_calls = [c for c in responses.calls if "/retrieve-asset-port-config" in c.request.url]
+    assert len(port_calls) == 1
+    assert json.loads(port_calls[0].request.body) == {"asset_device_id": ["cs-uuid-42", "cs-uuid-43"]}
+    vlan_calls = [c for c in responses.calls if "/retrieve-asset-interface-vlan-properties" in c.request.url]
+    assert json.loads(vlan_calls[0].request.body) == {"device_id": ["cs-uuid-42", "cs-uuid-43"]}
 
-    device_names = {e.device.name for e in entities if e.HasField("device")}
-    assert device_names == {"sw-flaky", "sw-ok"}
+
+@responses.activate
+def test_run_correlates_by_mac_when_configstate_has_no_serial():
+    """Assets sends MACs as bare hex, ConfigState may use separators -- the
+    match must normalize both sides."""
+    cs = {"id": "cs-uuid-42", "base_mac_address": "AA:BB:CC:DD:EE:FF"}
+    _mock_assets([SWITCH_ASSET])
+    _mock_cs("asset-device", "AssetDevice", [cs])
+    _mock_cs("asset-location", "AssetLocation", [])
+    for table, key in [
+        ("asset-port-config", "AssetPortConfig"),
+        ("asset-port-state", "AssetPortState"),
+        ("asset-interface-vlan-properties", "AssetInterfaceVlanProperties"),
+    ]:
+        _mock_cs(table, key, [])
+
+    list(Backend().run("platformone_worker", _policy()))
+
+    port_calls = [c for c in responses.calls if "/retrieve-asset-port-config" in c.request.url]
+    assert json.loads(port_calls[0].request.body) == {"asset_device_id": ["cs-uuid-42"]}
+
+
+@responses.activate
+def test_run_out_of_scope_devices_get_no_port_calls_and_no_entities():
+    """Scope regression: an out-of-scope switch must not leak back in as
+    Interface entities via the port fan-out (Diode would re-create its
+    Device through implicit reference handling)."""
+    branch_switch = {**SWITCH_ASSET, "device_id": 43, "host_name": "sw-branch", "serial_number": "SN43"}
+    cs2 = {"id": "cs-uuid-43", "serial_number": "SN43"}
+    _mock_assets([SWITCH_ASSET, branch_switch])
+    _mock_cs("asset-device", "AssetDevice", [CS_SWITCH, cs2])
+    _mock_cs(
+        "asset-location",
+        "AssetLocation",
+        [
+            {"asset_device_id": "cs-uuid-42", "site_name": "HQ"},
+            {"asset_device_id": "cs-uuid-43", "site_name": "Branch"},
+        ],
+    )
+    for table, key in [
+        ("asset-port-config", "AssetPortConfig"),
+        ("asset-port-state", "AssetPortState"),
+        ("asset-interface-vlan-properties", "AssetInterfaceVlanProperties"),
+    ]:
+        _mock_cs(table, key, [])
+
+    policy = Policy(
+        config=Config(package="orb_extreme_platformone", PLATFORMONE_API_TOKEN="tok"),
+        scope={"sites": ["HQ"]},
+    )
+    entities = list(Backend().run("platformone_worker", policy))
+
+    device_names = [e.device.name for e in entities if e.HasField("device")]
+    assert device_names == ["sw-idf1"]
+    port_calls = [c for c in responses.calls if "/retrieve-asset-port-config" in c.request.url]
+    assert json.loads(port_calls[0].request.body) == {"asset_device_id": ["cs-uuid-42"]}
+
+
+@responses.activate
+def test_run_survives_a_failed_port_table_and_keeps_the_rest():
+    """One failing ConfigState table (here port-state) degrades that table's
+    fields for the tick; ports still map from port-config."""
+    _mock_assets([SWITCH_ASSET])
+    _mock_cs("asset-device", "AssetDevice", [CS_SWITCH])
+    _mock_cs("asset-location", "AssetLocation", [])
+    _mock_cs(
+        "asset-port-config",
+        "AssetPortConfig",
+        [{"asset_device_id": "cs-uuid-42", "asset_interface_id": "if-1", "name": "1/1", "enabled": True}],
+    )
+    _mock_cs("asset-port-state", "AssetPortState", [], status=500)
+    _mock_cs("asset-interface-vlan-properties", "AssetInterfaceVlanProperties", [])
+
+    entities = list(Backend().run("platformone_worker", _policy()))
+
     interfaces = [e.interface for e in entities if e.HasField("interface")]
-    assert [(i.device.name, i.name) for i in interfaces] == [("sw-ok", "1/1")]
+    assert [i.name for i in interfaces] == ["1/1"]
+    assert interfaces[0].enabled is True
 
 
 @responses.activate
-def test_run_skips_wireless_sync_when_the_radio_call_fails():
-    """A failing bulk radio-information call must skip wireless sync for the
-    tick, not abort the whole sync."""
-    responses.add(responses.GET, f"{DEFAULT_BASE_URL}/locations/tree", json=[], status=200)
-    responses.add(
-        responses.GET,
-        f"{DEFAULT_BASE_URL}/devices",
-        json={
-            "page": 1,
-            "count": 1,
-            "total_pages": 1,
-            "total_count": 1,
-            "data": [{"id": 1, "hostname": "ap-1", "device_function": "AP", "connected": True}],
-        },
-        status=200,
-    )
-    responses.add(responses.GET, f"{DEFAULT_BASE_URL}/devices/radio-information", status=500)
+def test_run_survives_a_configstate_outage_with_assets_only_data():
+    """ConfigState down entirely: devices still sync from Assets (flat site,
+    no ports), the tick does not fail."""
+    _mock_assets([SWITCH_ASSET])
+    _mock_cs("asset-device", "AssetDevice", [], status=500)
 
-    config = Config(package="orb_extreme_xiq", XIQ_API_TOKEN="tok", default_site="XIQ-Unmapped")
-    policy = Policy(config=config, scope={"sites": ["*"]})
+    entities = list(Backend().run("platformone_worker", _policy()))
 
-    entities = list(Backend().run("extreme_xiq_worker", policy))
+    assert [e.site.name for e in entities if e.HasField("site")] == ["Assets-Site"]
+    device_names = [e.device.name for e in entities if e.HasField("device")]
+    assert device_names == ["sw-idf1"]
+    assert not [e for e in entities if e.HasField("interface")]
 
-    device_names = {e.device.name for e in entities if e.HasField("device")}
-    assert device_names == {"ap-1"}
-    assert not any(e.HasField("interface") or e.HasField("wireless_lan") for e in entities)
+
+@responses.activate
+def test_run_uncorrelated_device_syncs_without_ports():
+    """A device Assets knows but ConfigState doesn't (not collected yet)
+    still becomes a Device entity -- just with no ports or building/floor."""
+    _mock_assets([SWITCH_ASSET])
+    _mock_cs("asset-device", "AssetDevice", [{"id": "cs-other", "serial_number": "OTHER"}])
+    _mock_cs("asset-location", "AssetLocation", [])
+
+    entities = list(Backend().run("platformone_worker", _policy()))
+
+    device_names = [e.device.name for e in entities if e.HasField("device")]
+    assert device_names == ["sw-idf1"]
+    assert not [e for e in entities if e.HasField("interface")]
+    port_calls = [c for c in responses.calls if "/retrieve-asset-port" in c.request.url]
+    assert not port_calls

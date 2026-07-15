@@ -3,13 +3,13 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "orb-extreme-xiq"
-# Single-sourced from orb_extreme_xiq.__version__ (see [tool.setuptools.dynamic]).
+name = "orb-extreme-platformone"
+# Single-sourced from orb_extreme_platformone.__version__ (see [tool.setuptools.dynamic]).
 dynamic = ["version"]
-description = "ExtremeCloud IQ discovery worker for the NetBox Labs Orb Agent (ingests into NetBox via Diode)"
+description = "Extreme Platform ONE discovery worker for the NetBox Labs Orb Agent (ingests into NetBox via Diode)"
 requires-python = ">=3.10"
 dependencies = [
-    "requests>=2.31",       # all XIQ HTTP calls, including the legacy portlist endpoint
+    "requests>=2.31",       # all Platform ONE HTTP calls (Assets + ConfigState APIs)
     # The Orb Agent image already ships these, but pin them here so the
     # package is testable/runnable standalone too. Confirm the exact versions
     # against the orb-agent image you deploy on -- the Backend contract
@@ -23,18 +23,18 @@ dependencies = [
 dev = ["pytest>=8", "responses>=0.25", "ruff>=0.15"]
 
 # The import name the worker policy references as `config.package`
-# i.e.  policies.worker.<name>.config.package: orb_extreme_xiq
+# i.e.  policies.worker.<name>.config.package: orb_extreme_platformone
 [tool.setuptools.packages.find]
-include = ["orb_extreme_xiq*"]
+include = ["orb_extreme_platformone*"]
 
 [tool.setuptools.dynamic]
-version = {attr = "orb_extreme_xiq.__version__"}
+version = {attr = "orb_extreme_platformone.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-m 'not contract'"
 markers = [
-    "contract: hits the live XIQ OpenAPI spec over the network (excluded by default; run with `pytest -m contract`)",
+    "contract: checks locally downloaded Platform ONE OpenAPI specs (excluded by default; run with `pytest -m contract`, see tests/test_openapi_contract.py)",
 ]
 
 [tool.ruff]
@@ -45,7 +45,7 @@ target-version = "py310"
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "ARG"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["orb_extreme_xiq"]
+known-first-party = ["orb_extreme_platformone"]
 
 [tool.ruff.lint.per-file-ignores]
 # Fixture params (e.g. `stub_sdk`) are applied for their monkeypatching side

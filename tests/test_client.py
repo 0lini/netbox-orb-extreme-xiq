@@ -1,150 +1,133 @@
-"""Tests for the XIQ client: pagination, token auth, login/refresh, 401 re-auth.
+"""PlatformOneClient tests -- HTTP mocked with `responses`.
 
-All XIQ HTTP calls go through plain `requests` now, so every endpoint --
-including login -- is mocked with `responses`.
+Response shapes mirror the two Platform ONE OpenAPI specs: `PagedDevice`
+(Assets, top-level data/total_pages) and the ConfigState GetResponse
+envelope (records under the table's PascalCase schema name + `Pagination`).
 """
 
 from __future__ import annotations
 
+import json
+
 import pytest
 import responses
 
-from orb_extreme_xiq.client import DEFAULT_BASE_URL, LEGACY_BASE_URL, XiqApiError, XiqClient
+from orb_extreme_platformone.client import (
+    DEFAULT_BASE_URL,
+    PlatformOneApiError,
+    PlatformOneClient,
+    configstate_response_key,
+)
+
+ASSETS_URL = f"{DEFAULT_BASE_URL}/assets/v1/devices"
 
 
-def test_requires_some_credentials():
+def _client() -> PlatformOneClient:
+    return PlatformOneClient(api_token="tok")
+
+
+def test_client_requires_a_token():
     with pytest.raises(ValueError):
-        XiqClient()
+        PlatformOneClient(api_token=None)
+
+
+@pytest.mark.parametrize(
+    ("table", "key"),
+    [
+        ("asset-device", "AssetDevice"),
+        ("asset-port-state", "AssetPortState"),
+        ("asset-interface-vlan-properties", "AssetInterfaceVlanProperties"),
+        ("asset-lldp-neighbor-state", "AssetLldpNeighborState"),
+        ("asset-l2-vsn-suni-config", "AssetL2VsnSuniConfig"),
+    ],
+)
+def test_configstate_response_key_matches_the_spec_schema_names(table, key):
+    assert configstate_response_key(table) == key
 
 
 @responses.activate
-def test_get_devices_paginates_until_last_page():
-    responses.add(
-        responses.GET,
-        f"{DEFAULT_BASE_URL}/devices",
-        json={"data": [{"id": 1}, {"id": 2}], "total_pages": 2},
-        status=200,
-    )
-    responses.add(
-        responses.GET,
-        f"{DEFAULT_BASE_URL}/devices",
-        json={"data": [{"id": 3}], "total_pages": 2},
-        status=200,
-    )
+def test_get_devices_paginates_and_sends_the_classification_filter():
+    for page, data in [(1, [{"device_id": 1}]), (2, [{"device_id": 2}])]:
+        responses.add(
+            responses.POST,
+            ASSETS_URL,
+            match=[
+                responses.matchers.query_param_matcher({"page": str(page), "limit": "500"}),
+                responses.matchers.json_params_matcher({"classification": "SWITCH"}),
+            ],
+            json={"data": data, "page": page, "total_pages": 2, "total_count": 2},
+            status=200,
+        )
 
-    client = XiqClient(api_token="tok123")
-    devices = list(client.get_devices())
+    devices = list(_client().get_devices())
 
-    assert [d["id"] for d in devices] == [1, 2, 3]
-    assert responses.calls[0].request.headers["Authorization"] == "Bearer tok123"
+    assert [d["device_id"] for d in devices] == [1, 2]
 
 
 @responses.activate
-def test_get_radio_information_paginates_and_sends_device_ids():
+def test_get_devices_passes_a_custom_classification_through_verbatim():
     responses.add(
-        responses.GET,
-        f"{DEFAULT_BASE_URL}/devices/radio-information",
-        json={"data": [{"device_id": 1, "radios": []}], "total_pages": 2},
-        status=200,
-    )
-    responses.add(
-        responses.GET,
-        f"{DEFAULT_BASE_URL}/devices/radio-information",
-        json={"data": [{"device_id": 2, "radios": []}], "total_pages": 2},
-        status=200,
-    )
-
-    client = XiqClient(api_token="tok123")
-    radio_infos = list(client.get_radio_information(device_ids=[1, 2]))
-
-    assert [r["device_id"] for r in radio_infos] == [1, 2]
-    assert all(c.request.params["deviceIds"] == ["1", "2"] for c in responses.calls)
-    assert [c.request.params["page"] for c in responses.calls] == ["1", "2"]
-
-
-@responses.activate
-def test_get_location_tree_returns_nested_payload():
-    responses.add(
-        responses.GET,
-        f"{DEFAULT_BASE_URL}/locations/tree",
-        json=[{"id": 1, "name": "HQ", "children": []}],
+        responses.POST,
+        ASSETS_URL,
+        match=[responses.matchers.json_params_matcher({"classification": "ALL"})],
+        json={"data": [], "page": 1, "total_pages": 1, "total_count": 0},
         status=200,
     )
 
-    client = XiqClient(api_token="tok123")
-    assert client.get_location_tree() == [{"id": 1, "name": "HQ", "children": []}]
+    assert list(_client().get_devices(classification="ALL")) == []
 
 
 @responses.activate
-def test_username_password_login_is_used_as_bearer_token():
-    responses.add(responses.POST, f"{DEFAULT_BASE_URL}/login", json={"access_token": "jwt-abc"}, status=200)
+def test_retrieve_paginates_and_unwraps_the_tables_response_key():
+    url = f"{DEFAULT_BASE_URL}/configstate/v1/retrieve-asset-port-state"
+    for page, records in [(1, [{"name": "1/1"}]), (2, [{"name": "1/2"}])]:
+        responses.add(
+            responses.POST,
+            url,
+            match=[responses.matchers.query_param_matcher({"page_number": str(page), "page_size": "500"})],
+            json={
+                "AssetPortState": records,
+                "Pagination": {"page": page, "total_pages": 2, "count": 1, "total_count": 2},
+            },
+            status=200,
+        )
+
+    records = list(_client().retrieve("asset-port-state", {"asset_device_id": ["uuid-1"]}))
+
+    assert [r["name"] for r in records] == ["1/1", "1/2"]
+    assert json.loads(responses.calls[0].request.body) == {"asset_device_id": ["uuid-1"]}
+
+
+@responses.activate
+def test_retrieve_sends_an_empty_filter_body_by_default():
     responses.add(
-        responses.GET, f"{DEFAULT_BASE_URL}/devices", json={"data": [], "total_pages": 1}, status=200
-    )
-
-    client = XiqClient(username="u@example.com", password="pw")
-    list(client.get_devices())
-
-    assert responses.calls[1].request.headers["Authorization"] == "Bearer jwt-abc"
-
-
-@responses.activate
-def test_401_triggers_relogin_for_username_password_client():
-    responses.add(responses.POST, f"{DEFAULT_BASE_URL}/login", json={"access_token": "jwt-1"}, status=200)
-    responses.add(responses.GET, f"{DEFAULT_BASE_URL}/devices", status=401)
-    responses.add(responses.POST, f"{DEFAULT_BASE_URL}/login", json={"access_token": "jwt-2"}, status=200)
-    responses.add(
-        responses.GET, f"{DEFAULT_BASE_URL}/devices", json={"data": [], "total_pages": 1}, status=200
-    )
-
-    client = XiqClient(username="u@example.com", password="pw")
-    list(client.get_devices())
-
-    device_calls = [c for c in responses.calls if c.request.url.split("?")[0].endswith("/devices")]
-    assert [c.request.headers["Authorization"] for c in device_calls] == ["Bearer jwt-1", "Bearer jwt-2"]
-
-
-@responses.activate
-def test_401_persisting_after_relogin_raises_xiq_api_error():
-    responses.add(responses.POST, f"{DEFAULT_BASE_URL}/login", json={"access_token": "jwt-new"}, status=200)
-    responses.add(responses.GET, f"{DEFAULT_BASE_URL}/devices", status=401)
-    responses.add(responses.GET, f"{DEFAULT_BASE_URL}/devices", status=401)
-
-    client = XiqClient(username="u@example.com", password="pw")
-    with pytest.raises(XiqApiError):
-        list(client.get_devices())
-
-
-@responses.activate
-def test_get_wired_portlist_hits_legacy_host_with_device_id():
-    responses.add(
-        responses.GET,
-        f"{LEGACY_BASE_URL}/xiq/v0/monitor/device/wired/portlist",
-        json={"data": {"portList": [{"id": 1, "ifName": "1/1", "status": "UP"}]}},
+        responses.POST,
+        f"{DEFAULT_BASE_URL}/configstate/v1/retrieve-asset-device",
+        match=[responses.matchers.json_params_matcher({})],
+        json={"AssetDevice": [], "Pagination": {"total_pages": 1}},
         status=200,
     )
 
-    client = XiqClient(api_token="tok123")
-    ports = client.get_wired_portlist(999)
-
-    assert ports == [{"id": 1, "ifName": "1/1", "status": "UP"}]
-    assert responses.calls[0].request.params["deviceId"] == "999"
-    assert responses.calls[0].request.headers["Authorization"] == "Bearer tok123"
+    assert list(_client().retrieve("asset-device")) == []
 
 
 @responses.activate
-def test_get_wired_portlist_401_triggers_relogin_for_username_password_client():
-    responses.add(responses.POST, f"{DEFAULT_BASE_URL}/login", json={"access_token": "jwt-1"}, status=200)
-    responses.add(responses.GET, f"{LEGACY_BASE_URL}/xiq/v0/monitor/device/wired/portlist", status=401)
-    responses.add(responses.POST, f"{DEFAULT_BASE_URL}/login", json={"access_token": "jwt-2"}, status=200)
+def test_retrieve_tolerates_a_null_records_key():
+    """ConfigState marks the records array nullable in its spec -- an empty
+    table comes back as null, not []."""
     responses.add(
-        responses.GET,
-        f"{LEGACY_BASE_URL}/xiq/v0/monitor/device/wired/portlist",
-        json={"data": {"portList": []}},
+        responses.POST,
+        f"{DEFAULT_BASE_URL}/configstate/v1/retrieve-asset-port-config",
+        json={"AssetPortConfig": None, "Pagination": {"total_pages": 1}},
         status=200,
     )
 
-    client = XiqClient(username="u@example.com", password="pw")
-    client.get_wired_portlist(999)
+    assert list(_client().retrieve("asset-port-config")) == []
 
-    assert responses.calls[-1].request.headers["Authorization"] == "Bearer jwt-2"
+
+@responses.activate
+def test_non_2xx_raises_platform_one_api_error():
+    responses.add(responses.POST, ASSETS_URL, json={"error": "nope"}, status=403)
+
+    with pytest.raises(PlatformOneApiError, match="403"):
+        list(_client().get_devices())
