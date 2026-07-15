@@ -13,20 +13,24 @@ import requests
 
 CUSTOM_FIELDS = [
     {
-        "name": "xiq_network_policy",
-        "label": "XIQ Network Policy",
+        "name": "platformone_device_id",
+        "label": "Platform ONE Device ID",
         "type": "text",
-        "object_types": ["dcim.device", "wireless.wirelesslan"],
-        "description": "The ExtremeCloud IQ network policy assigned to this device or WLAN.",
+        "object_types": ["dcim.device"],
+        "description": (
+            "Immutable Extreme Platform ONE device id (Assets API device_id); stable "
+            "correlation key even if the device is renamed."
+        ),
+        "filter_logic": "exact",
     },
     {
-        "name": "xiq_port_id",
-        "label": "XIQ Port ID",
+        "name": "platformone_interface_id",
+        "label": "Platform ONE Interface ID",
         "type": "text",
         "object_types": ["dcim.interface"],
         "description": (
-            "Immutable XIQ port ID (cloud-global, not per-device); stable correlation "
-            "key even if the port is renamed."
+            "Immutable Extreme Platform ONE interface UUID (ConfigState asset_interface_id); "
+            "stable correlation key even if the port is renamed."
         ),
         "filter_logic": "exact",
     },
@@ -40,13 +44,13 @@ TAGS = [
         "name": "extreme-networks",
         "slug": "extreme-networks",
         "color": "2196f3",
-        "description": "Objects synced from Extreme Networks via orb-extreme-xiq.",
+        "description": "Objects synced from Extreme Networks via orb-extreme-platformone.",
     },
     {
-        "name": "xiq",
-        "slug": "xiq",
+        "name": "platform-one",
+        "slug": "platform-one",
         "color": "2196f3",
-        "description": "Objects synced from ExtremeCloud IQ via orb-extreme-xiq.",
+        "description": "Objects synced from Extreme Platform ONE via orb-extreme-platformone.",
     },
     {
         "name": "discovered",
