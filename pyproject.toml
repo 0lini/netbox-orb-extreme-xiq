@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "orb-extreme-platformone"
+name = "netbox-orb-extreme-platformone"
 # Single-sourced from orb_extreme_platformone.__version__ (see [tool.setuptools.dynamic]).
 dynamic = ["version"]
 description = "Extreme Platform ONE discovery worker for the NetBox Labs Orb Agent (ingests into NetBox via Diode)"
