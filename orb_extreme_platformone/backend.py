@@ -27,7 +27,7 @@ from .identity import device_name, is_switch
 
 logger = logging.getLogger(__name__)
 
-APP_NAME = "orb-extreme-platformone"
+APP_NAME = "netbox-orb-extreme-platformone"
 APP_VERSION = __version__
 DEFAULT_SITE = "PlatformONE-Unmapped"
 DEFAULT_CLASSIFICATION = "SWITCH"

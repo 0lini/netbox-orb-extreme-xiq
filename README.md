@@ -1,4 +1,4 @@
-# orb-extreme-platformone
+# netbox-orb-extreme-platformone
 
 [![CI](https://github.com/0lini/netbox-orb-extreme-platformone/actions/workflows/ci.yml/badge.svg)](https://github.com/0lini/netbox-orb-extreme-platformone/actions/workflows/ci.yml)
 
@@ -197,7 +197,7 @@ clean, stable Diode output:
   is asserted natively on the NetBox Device rather than via a separate
   immutable-ID custom field, the same approach the Cisco Meraki integration
   and NetBox Labs' generic discovery backends use.
-- **Stable producer + tags** — fixed `app_name="orb-extreme-platformone"`
+- **Stable producer + tags** — fixed `app_name="netbox-orb-extreme-platformone"`
   and flat `extreme-networks` / `platform-one` / `discovered` tags
   (mirroring Meraki's `cisco` / `meraki` / `discovered` pattern) keep
   Platform ONE data cleanly attributable and filterable in Assurance.
