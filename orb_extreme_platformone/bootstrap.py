@@ -44,13 +44,13 @@ TAGS = [
         "name": "extreme-networks",
         "slug": "extreme-networks",
         "color": "2196f3",
-        "description": "Objects synced from Extreme Networks via orb-extreme-platformone.",
+        "description": "Objects synced from Extreme Networks via netbox-orb-extreme-platformone.",
     },
     {
         "name": "platform-one",
         "slug": "platform-one",
         "color": "2196f3",
-        "description": "Objects synced from Extreme Platform ONE via orb-extreme-platformone.",
+        "description": "Objects synced from Extreme Platform ONE via netbox-orb-extreme-platformone.",
     },
     {
         "name": "discovered",

@@ -67,7 +67,7 @@ CS_SWITCH = {"id": "cs-uuid-42", "serial_number": "SN42", "base_mac_address": "A
 
 def test_describe_reports_stable_identity():
     metadata = Backend.describe()
-    assert metadata.app_name == "orb-extreme-platformone"
+    assert metadata.app_name == "netbox-orb-extreme-platformone"
     assert metadata.name == "orb_extreme_platformone"
 
 
