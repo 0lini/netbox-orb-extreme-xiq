@@ -1,10 +1,7 @@
 """One-time idempotent NetBox schema setup: custom fields + provenance tags.
 
-Uses the NetBox REST API directly (not Diode) because field *definitions*
-are schema, not data, and this path works regardless of Diode SDK version.
-Skips gracefully if no NetBox credentials are configured -- BOOTSTRAP is
-meant to run once with NETBOX_API_URL/NETBOX_API_TOKEN set, then be turned
-off for scheduled runs.
+Uses the NetBox REST API directly (not Diode) because field definitions are
+schema, not data. Skips gracefully if no NetBox credentials are configured.
 """
 
 from __future__ import annotations
@@ -36,9 +33,6 @@ CUSTOM_FIELDS = [
     },
 ]
 
-# Vendor/product/lifecycle tags, matching the pattern NetBox Labs' own Cisco
-# Meraki integration uses (separate flat tags -- e.g. "cisco", "meraki",
-# "discovered" -- rather than one namespaced tag).
 TAGS = [
     {
         "name": "extreme-networks",
