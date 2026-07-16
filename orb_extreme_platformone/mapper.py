@@ -31,6 +31,7 @@ from .identity import (
     device_name,
     device_type_model_for,
     expand_location_paths,
+    platform_for,
     resolve_location,
 )
 
@@ -61,14 +62,18 @@ def _cf_text(value: str) -> CustomFieldValue:
 
 
 def _device_kwargs(asset: dict, *, site_name: str, location: Location | None, name_source: str) -> dict:
+    custom_fields = {}
+    if asset.get("device_id") is not None:
+        custom_fields["platformone_device_id"] = _cf_text(str(asset["device_id"]))
+    if asset.get("os_version"):
+        custom_fields["platformone_os_version"] = _cf_text(asset["os_version"])
+
     kwargs = {
         "name": device_name(asset, name_source),
         "serial": asset.get("serial_number") or None,
         "status": _status_for(asset),
         "site": Site(name=site_name),
-        "custom_fields": {"platformone_device_id": _cf_text(str(asset["device_id"]))}
-        if asset.get("device_id") is not None
-        else {},
+        "custom_fields": custom_fields,
         "tags": PROVENANCE_TAGS,
     }
     if location is not None:
@@ -78,8 +83,12 @@ def _device_kwargs(asset: dict, *, site_name: str, location: Location | None, na
             model=device_type_model_for(asset["product_type"]), manufacturer=MANUFACTURER
         )
         kwargs["manufacturer"] = MANUFACTURER
-    if asset.get("os_version"):
-        kwargs["platform"] = Platform(name=asset["os_version"], manufacturer=MANUFACTURER)
+    # NetBox platforms are flat, so the Platform carries the OS family
+    # (Fabric Engine / Switch Engine / ...) and the exact version rides on
+    # the platformone_os_version custom field above.
+    platform = platform_for(asset.get("function"))
+    if platform:
+        kwargs["platform"] = Platform(name=platform, manufacturer=MANUFACTURER)
     primary_ip4 = _primary_ip4(asset)
     if primary_ip4:
         kwargs["primary_ip4"] = primary_ip4

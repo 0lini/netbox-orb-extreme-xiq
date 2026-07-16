@@ -7,14 +7,35 @@ then to the configured default site.
 
 from __future__ import annotations
 
-# Assets API `Device.function` values that are switch OSes -- gates the
-# per-switch ConfigState port sync in backend.py.
-SWITCH_DEVICE_FUNCTIONS = frozenset({"SWITCH ENGINE", "FABRIC ENGINE", "EXOS", "VOSS"})
+# Assets API `Device.function` values that are switch OSes, mapped to the
+# canonical NetBox Platform name for each OS family. NetBox platforms are
+# flat (no nesting), so the Platform carries the family and the reported
+# `os_version` goes to the platformone_os_version custom field instead.
+PLATFORM_BY_FUNCTION = {
+    "SWITCH ENGINE": "Switch Engine",
+    "FABRIC ENGINE": "Fabric Engine",
+    "EXOS": "EXOS",
+    "VOSS": "VOSS",
+}
+
+# Gates the per-switch ConfigState port sync in backend.py.
+SWITCH_DEVICE_FUNCTIONS = frozenset(PLATFORM_BY_FUNCTION)
 
 
 def is_switch(function: str | None) -> bool:
     """Whether an Assets `function` value is a switch OS (see SWITCH_DEVICE_FUNCTIONS)."""
     return bool(function) and function.upper() in SWITCH_DEVICE_FUNCTIONS
+
+
+def platform_for(function: str | None) -> str | None:
+    """NetBox Platform name (OS family) for an Assets `function` value.
+
+    Returns None for non-OS functions (AP, Router, Appliance, Unknown, ...)
+    rather than inventing a platform for them.
+    """
+    if not function:
+        return None
+    return PLATFORM_BY_FUNCTION.get(function.upper())
 
 
 _FABRIC_ENGINE_PREFIX = "FabricEngine_"

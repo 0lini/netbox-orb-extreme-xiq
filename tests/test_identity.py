@@ -7,6 +7,7 @@ from orb_extreme_platformone.identity import (
     device_type_model_for,
     expand_location_paths,
     is_switch,
+    platform_for,
     resolve_location,
 )
 
@@ -29,6 +30,21 @@ def test_is_switch_recognizes_the_assets_switch_function_enum_values():
     assert not is_switch("AP")
     assert not is_switch("Appliance")
     assert not is_switch(None)
+
+
+def test_platform_for_maps_switch_os_functions_to_canonical_names():
+    assert platform_for("Fabric Engine") == "Fabric Engine"
+    assert platform_for("FABRIC ENGINE") == "Fabric Engine"
+    assert platform_for("Switch Engine") == "Switch Engine"
+    assert platform_for("EXOS") == "EXOS"
+    assert platform_for("VOSS") == "VOSS"
+
+
+def test_platform_for_asserts_nothing_for_non_os_functions():
+    assert platform_for("AP") is None
+    assert platform_for("Appliance") is None
+    assert platform_for("Unknown") is None
+    assert platform_for(None) is None
 
 
 def test_device_type_model_for_moves_the_fabric_engine_prefix_to_a_suffix():

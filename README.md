@@ -21,7 +21,7 @@ Platform ONE APIs (Assets + ConfigState) ──► orb_extreme_platformone ─�
 
 | Platform ONE source | NetBox objects |
 |---------------------|----------------|
-| Devices (Assets API) | `Device` — name, serial, status, device type and manufacturer, platform, primary IPv4, provenance tags, `platformone_device_id` custom field |
+| Devices (Assets API) | `Device` — name, serial, status, device type and manufacturer, platform (OS family), primary IPv4, provenance tags, `platformone_device_id` and `platformone_os_version` custom fields |
 | Device locations (ConfigState) | `Site` plus a nested `Location` chain (building → floor), falling back to the Assets API's flat site name |
 | Switch ports (ConfigState) | `Interface` — name, admin state (`enabled`), link state (`mark_connected`), speed/duplex/type, description, MAC address, untagged/tagged VLANs with 802.1Q `mode`, `platformone_interface_id` custom field |
 
@@ -209,6 +209,21 @@ the device assigned to the most specific level present. Devices without a
 ConfigState location fall back to the Assets API's flat `site_name`;
 `default_site` applies only when neither source names a site.
 
+### Platform and OS version
+
+NetBox `Platform` objects are flat — the data model has no parent/child
+nesting — so a "Fabric Engine → 9.2.1.0" hierarchy cannot be expressed
+directly. The worker models it as the next-best structure:
+
+- **Platform = OS family**, derived from the Assets `function` value
+  (`Fabric Engine`, `Switch Engine`, `EXOS`, `VOSS`), so all devices on the
+  same OS share one Platform regardless of version.
+- **`platformone_os_version` custom field = exact version** as reported by
+  the Assets API, filterable per device.
+
+Non-OS `function` values (AP, Router, Appliance, Unknown) assert no
+platform; the version custom field is still populated when reported.
+
 ### Device type model mapping
 
 Assets prefixes `product_type` with `FabricEngine_` for switches running
@@ -255,7 +270,7 @@ documented Platform ONE APIs. Operational differences:
 | Package / `config.package` | `orb_extreme_xiq` | `orb_extreme_platformone` |
 | Credentials | `XIQ_API_TOKEN` or username/password | `PLATFORMONE_API_TOKEN` only |
 | Tags | `extreme-networks`, `xiq`, `discovered` | `extreme-networks`, `platform-one`, `discovered` |
-| Custom fields | `xiq_network_policy`, `xiq_port_id` | `platformone_device_id`, `platformone_interface_id` |
+| Custom fields | `xiq_network_policy`, `xiq_port_id` | `platformone_device_id`, `platformone_os_version`, `platformone_interface_id` |
 | Port admin state / VLANs | not available | `enabled`, untagged/tagged VLANs, `mode` |
 | Wireless radios / WLANs | synced | not synced (see [roadmap](#roadmap)) |
 
