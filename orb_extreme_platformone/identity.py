@@ -8,9 +8,7 @@ then to the configured default site.
 from __future__ import annotations
 
 # Assets API `Device.function` values that are switch OSes, mapped to the
-# canonical NetBox Platform name for each OS family. NetBox platforms are
-# flat (no nesting), so the Platform carries the family and the reported
-# `os_version` goes to the platformone_os_version custom field instead.
+# canonical OS-family name used in the NetBox Platform.
 PLATFORM_BY_FUNCTION = {
     "SWITCH ENGINE": "Switch Engine",
     "FABRIC ENGINE": "Fabric Engine",
@@ -28,14 +26,25 @@ def is_switch(function: str | None) -> bool:
 
 
 def platform_for(function: str | None) -> str | None:
-    """NetBox Platform name (OS family) for an Assets `function` value.
+    """Canonical OS-family name for an Assets `function` value.
 
     Returns None for non-OS functions (AP, Router, Appliance, Unknown, ...)
-    rather than inventing a platform for them.
+    rather than inventing an OS family for them.
     """
     if not function:
         return None
     return PLATFORM_BY_FUNCTION.get(function.upper())
+
+
+def platform_name(function: str | None, os_version: str | None) -> str | None:
+    """NetBox Platform name: OS family and version in one flat value.
+
+    NetBox platforms cannot nest, so family and version combine into a
+    single name (e.g. "Fabric Engine 9.2.1.0"). Either part may be absent;
+    returns None when neither is known.
+    """
+    parts = [part for part in (platform_for(function), os_version) if part]
+    return " ".join(parts) or None
 
 
 _FABRIC_ENGINE_PREFIX = "FabricEngine_"

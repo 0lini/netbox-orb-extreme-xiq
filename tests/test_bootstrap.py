@@ -46,6 +46,6 @@ def test_ensure_schema_is_idempotent_when_definitions_exist():
 
 def test_custom_fields_and_tags_speak_platform_one():
     names = {field["name"] for field in bootstrap.CUSTOM_FIELDS}
-    assert names == {"platformone_device_id", "platformone_os_version", "platformone_interface_id"}
+    assert names == {"platformone_device_id", "platformone_interface_id"}
     slugs = {tag["slug"] for tag in bootstrap.TAGS}
     assert slugs == {"extreme-networks", "platform-one", "discovered"}

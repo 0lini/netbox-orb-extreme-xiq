@@ -21,17 +21,6 @@ CUSTOM_FIELDS = [
         "filter_logic": "exact",
     },
     {
-        "name": "platformone_os_version",
-        "label": "Platform ONE OS Version",
-        "type": "text",
-        "object_types": ["dcim.device"],
-        "description": (
-            "Operating system version reported by the Extreme Platform ONE Assets API "
-            "(the NetBox Platform carries only the OS family, e.g. Fabric Engine)."
-        ),
-        "filter_logic": "exact",
-    },
-    {
         "name": "platformone_interface_id",
         "label": "Platform ONE Interface ID",
         "type": "text",
