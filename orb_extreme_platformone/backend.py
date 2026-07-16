@@ -6,17 +6,20 @@ policy tick. The PolicyRunner owns scheduling and the Diode client; this
 module only produces entities.
 
 The per-tick API call budget is flat, not per-device: one paginated Assets
-listing, one ConfigState device listing (for correlation), then one batched
-ConfigState call per port table covering every in-scope switch at once.
+listing, one serial-filtered ConfigState device retrieval (for correlation),
+then one batched ConfigState call per port table covering every in-scope
+switch at once.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Iterable
 from datetime import timezone
 
+from google.protobuf.json_format import MessageToDict
 from netboxlabs.diode.sdk.ingester import Entity
 from worker.backend import Backend as WorkerBackend
 from worker.models import Config, Metadata, Policy
@@ -29,7 +32,6 @@ logger = logging.getLogger(__name__)
 
 APP_NAME = "netbox-orb-extreme-platformone"
 APP_VERSION = __version__
-DEFAULT_SITE = "PlatformONE-Unmapped"
 DEFAULT_CLASSIFICATION = "SWITCH"
 
 # {mapper table key: (retrieve-* table, GetRequest device filter field)}.
@@ -77,6 +79,33 @@ def _build_client(config) -> PlatformOneClient:
 def _normalize_mac(value) -> str:
     """Lowercase hex digits only: Assets and ConfigState format MACs differently."""
     return "".join(ch for ch in str(value or "").lower() if ch in "0123456789abcdef")
+
+
+def _colon_mac(value) -> str:
+    """Colon-separated lowercase MAC: the format ConfigState filters expect."""
+    digits = _normalize_mac(value)
+    return ":".join(digits[i : i + 2] for i in range(0, len(digits), 2))
+
+
+def _fetch_cs_devices(client: PlatformOneClient, assets: list[dict]) -> list[dict]:
+    """Fetch the ConfigState AssetDevice records for the given Assets devices.
+
+    ConfigState rejects an empty GetRequest body (code 1727: at least one
+    filter attribute is required), so the listing is filtered by the Assets
+    serial numbers, plus a colon-format MAC query for serial-less assets.
+    """
+    serials = sorted({str(a["serial_number"]) for a in assets if a.get("serial_number")})
+    macs = sorted(
+        {_colon_mac(a["mac_address"]) for a in assets if not a.get("serial_number") and a.get("mac_address")}
+    )
+    records: dict[str, dict] = {}
+    if serials:
+        for rec in client.retrieve("asset-device", {"serial_number": serials}):
+            records[str(rec.get("id"))] = rec
+    if macs:
+        for rec in client.retrieve("asset-device", {"base_mac_address": macs}):
+            records.setdefault(str(rec.get("id")), rec)
+    return list(records.values())
 
 
 def _correlate(assets: list[dict], cs_devices: list[dict]) -> dict[int, dict]:
@@ -132,12 +161,10 @@ class Backend(WorkerBackend):
         records = self._correlated_records(client, assets, policy_name)
 
         scope_sites = _scope_sites(getattr(policy, "scope", None))
-        default_site = _cfg(config, "default_site", DEFAULT_SITE)
         # Scope once, up front: the port fan-out must see the same filtered
         # list as devices_to_entities (see mapper.scope_devices).
         scoped = mapper.scope_devices(
             records,
-            default_site=default_site,
             site_scope=set(scope_sites) if scope_sites else None,
         )
         logger.info(
@@ -148,11 +175,7 @@ class Backend(WorkerBackend):
         )
 
         name_source = _cfg(config, "name_source", "hostname")
-        entities = mapper.devices_to_entities(
-            scoped,
-            default_site=default_site,
-            name_source=name_source,
-        )
+        entities = mapper.devices_to_entities(scoped, name_source=name_source)
 
         entities.extend(self._port_entities(client, scoped, name_source, policy_name))
 
@@ -167,7 +190,7 @@ class Backend(WorkerBackend):
         so a tick without building/floor/port detail is harmless.
         """
         try:
-            cs_devices = list(client.retrieve("asset-device"))
+            cs_devices = _fetch_cs_devices(client, assets)
         except PlatformOneApiError as exc:
             logger.warning(
                 "Policy %s: ConfigState device listing failed, syncing without location/port detail: %s",
@@ -280,8 +303,18 @@ def _standalone_config() -> dict:
         "PLATFORMONE_API_TOKEN": os.environ.get("PLATFORMONE_API_TOKEN"),
         "classification": os.environ.get("PLATFORMONE_CLASSIFICATION", DEFAULT_CLASSIFICATION),
         "name_source": os.environ.get("PLATFORMONE_NAME_SOURCE", "hostname"),
-        "default_site": os.environ.get("PLATFORMONE_DEFAULT_SITE", DEFAULT_SITE),
     }
+
+
+def _quote_values(value):
+    """Render every scalar as a string so the JSON dry-run output quotes all values."""
+    if isinstance(value, dict):
+        return {key: _quote_values(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_quote_values(item) for item in value]
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return value if isinstance(value, str) else str(value)
 
 
 def main() -> None:
@@ -291,10 +324,11 @@ def main() -> None:
     policy = Policy(config=Config(**_standalone_config()), scope={"sites": ["*"]})
     backend = Backend()
     for entity in backend.run("standalone", policy):
+        data = MessageToDict(entity, preserving_proto_field_name=True)
         ts = entity.timestamp.ToDatetime(tzinfo=timezone.utc).astimezone()
-        entity.ClearField("timestamp")
-        print(f"timestamp: {ts.isoformat(timespec='seconds')}")
-        print(entity)
+        data["timestamp"] = ts.isoformat(timespec="seconds")
+        print(json.dumps(_quote_values(data), indent=2, ensure_ascii=False))
+        print()
 
 
 if __name__ == "__main__":

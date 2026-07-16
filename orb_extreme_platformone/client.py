@@ -94,7 +94,8 @@ class PlatformOneClient:
 
         `filters` is the table's GetRequest body; every filter field takes a
         list, e.g. retrieve("asset-port-state", {"asset_device_id": [a, b]}).
-        An empty filter body returns the whole tenant-visible table.
+        The API rejects an empty filter body (code 1727) -- always pass at
+        least one filter attribute with a non-empty list.
         """
         response_key = configstate_response_key(table)
         page = 1

@@ -12,6 +12,7 @@ Callers pass "device records" pre-joined by backend.py:
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 
 from netboxlabs.diode.sdk.ingester import (
@@ -40,6 +41,8 @@ __all__ = [
     "ports_to_entities",
     "scope_devices",
 ]
+
+logger = logging.getLogger(__name__)
 
 MANUFACTURER = "Extreme Networks"
 
@@ -88,27 +91,37 @@ def _device_kwargs(asset: dict, *, site_name: str, location: Location | None, na
     return kwargs
 
 
-def scope_devices(records: list[dict], *, default_site: str, site_scope: set[str] | None) -> list[dict]:
+def scope_devices(records: list[dict], *, site_scope: set[str] | None) -> list[dict]:
     """Return the device records whose resolved site is in site_scope (all, if no scope).
 
     Single source of truth for scope filtering: any caller that fans out
     per-device API calls afterwards (wired ports) must filter through it too,
     or Interface entities would reference devices that were never emitted and
     Diode would recreate them.
+
+    Platform ONE assigns every device a site itself, so a record without one
+    is unexpected and skipped (with a warning) rather than given an invented
+    fallback site.
     """
-    if not site_scope:
-        return records
-    return [
-        record
-        for record in records
-        if resolve_location(record.get("location"), record["asset"], default_site)[0] in site_scope
-    ]
+    scoped: list[dict] = []
+    for record in records:
+        site_name = resolve_location(record.get("location"), record["asset"])[0]
+        if site_name is None:
+            asset = record["asset"]
+            logger.warning(
+                "Skipping device %s: Platform ONE reports no site for it",
+                asset.get("host_name") or asset.get("serial_number") or asset.get("device_id"),
+            )
+            continue
+        if site_scope and site_name not in site_scope:
+            continue
+        scoped.append(record)
+    return scoped
 
 
 def devices_to_entities(
     records: list[dict],
     *,
-    default_site: str,
     name_source: str = "hostname",
     site_scope: set[str] | None = None,
 ) -> list[Entity]:
@@ -120,9 +133,9 @@ def devices_to_entities(
     site_names: set[str] = set()
     location_paths: set[tuple[str, tuple[str, ...]]] = set()
 
-    scoped = scope_devices(records, default_site=default_site, site_scope=site_scope)
+    scoped = scope_devices(records, site_scope=site_scope)
     for record in scoped:
-        site_name, location_path = resolve_location(record.get("location"), record["asset"], default_site)
+        site_name, location_path = resolve_location(record.get("location"), record["asset"])
         resolved.append((record["asset"], site_name, location_path))
         site_names.add(site_name)
         if location_path:

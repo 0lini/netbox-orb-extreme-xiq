@@ -47,11 +47,11 @@ orb:
                                            # WIRELESS, ROUTER, ... or ALL. Port sync
                                            # only ever runs for switch-OS devices.
           name_source: hostname            # or "serial" for max stability
-          default_site: "PlatformONE-Unmapped"
 
           # A device's ConfigState location record (site / building / floor)
           # becomes its NetBox Site + nested Location chain; devices without
-          # one fall back to the Assets API's flat site name. default_site is
-          # used only when neither source names a site.
+          # one fall back to the Assets API's flat site name. Platform ONE
+          # assigns every device a site itself ("Default Site"), so there is
+          # no worker-side fallback site.
         scope:
           sites: ["*"]                     # or ["HQ", "Branch A"]

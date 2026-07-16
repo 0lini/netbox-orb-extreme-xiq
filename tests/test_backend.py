@@ -45,7 +45,6 @@ def _policy(**config_overrides) -> Policy:
         package="orb_extreme_platformone",
         BOOTSTRAP=False,
         PLATFORMONE_API_TOKEN="tok",
-        default_site="PlatformONE-Unmapped",
         **config_overrides,
     )
     return Policy(config=config, scope=config_overrides.get("scope", {"sites": ["*"]}))
@@ -167,6 +166,9 @@ def test_run_batches_every_switch_into_one_call_per_port_table():
 
     list(Backend().run("platformone_worker", _policy()))
 
+    device_calls = [c for c in responses.calls if "/retrieve-asset-device" in c.request.url]
+    assert len(device_calls) == 1
+    assert json.loads(device_calls[0].request.body) == {"serial_number": ["SN42", "SN43"]}
     port_calls = [c for c in responses.calls if "/retrieve-asset-port-config" in c.request.url]
     assert len(port_calls) == 1
     assert json.loads(port_calls[0].request.body) == {"asset_device_id": ["cs-uuid-42", "cs-uuid-43"]}

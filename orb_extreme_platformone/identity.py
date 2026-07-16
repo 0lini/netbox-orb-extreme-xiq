@@ -83,23 +83,23 @@ def device_name(device: dict, name_source: str = "hostname") -> str:
     return f"platformone-{device.get('device_id')}"
 
 
-def resolve_location(
-    asset_location: dict | None, assets_device: dict, default_site: str
-) -> tuple[str, list[str]]:
+def resolve_location(asset_location: dict | None, assets_device: dict) -> tuple[str | None, list[str]]:
     """Resolve a device to (site_name, location_path).
 
     location_path is the ordered Building -> Floor chain from the ConfigState
     AssetLocation record; either level may be absent. Without a ConfigState
     location, the Assets record's flat `site_name` is used with no Location
-    chain; when neither source names a site, the default site is used.
+    chain. Platform ONE assigns every device a site itself ("Default Site"),
+    so `None` -- neither source naming one -- is unexpected; callers skip
+    such devices rather than inventing a site.
     """
     if asset_location:
-        site = asset_location.get("site_name") or assets_device.get("site_name") or default_site
+        site = asset_location.get("site_name") or assets_device.get("site_name") or None
         path = [
             name for name in (asset_location.get("building_name"), asset_location.get("floor_name")) if name
         ]
         return site, path
-    return assets_device.get("site_name") or default_site, []
+    return assets_device.get("site_name") or None, []
 
 
 def expand_location_paths(
