@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Iterable
+from datetime import timezone
 
 from netboxlabs.diode.sdk.ingester import Entity
 from worker.backend import Backend as WorkerBackend
@@ -255,6 +256,21 @@ class Backend(WorkerBackend):
         return entities
 
 
+def _load_env_file(path: str = ".env") -> None:
+    """Read KEY=VALUE lines into os.environ; exported variables take precedence."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+
 def _standalone_config() -> dict:
     return {
         "package": "orb_extreme_platformone",
@@ -271,9 +287,13 @@ def _standalone_config() -> dict:
 def main() -> None:
     """Standalone dry run: fetch from Platform ONE, map, print the entities (no Diode push)."""
     logging.basicConfig(level=logging.INFO)
+    _load_env_file()
     policy = Policy(config=Config(**_standalone_config()), scope={"sites": ["*"]})
     backend = Backend()
     for entity in backend.run("standalone", policy):
+        ts = entity.timestamp.ToDatetime(tzinfo=timezone.utc).astimezone()
+        entity.ClearField("timestamp")
+        print(f"timestamp: {ts.isoformat(timespec='seconds')}")
         print(entity)
 
 

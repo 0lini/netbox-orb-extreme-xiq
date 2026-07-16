@@ -122,7 +122,7 @@ same-named environment variable; policy config takes precedence.
 
 ```bash
 pip install -e ".[dev]"
-export PLATFORMONE_API_TOKEN=...
+export PLATFORMONE_API_TOKEN=...            # or put it in .env (gitignored)
 python -m orb_extreme_platformone.backend   # dry run: fetch, map, print entities
 pytest                                      # offline test suite
 ruff check . && ruff format --check .       # lint + format
