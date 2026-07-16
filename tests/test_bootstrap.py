@@ -46,6 +46,13 @@ def test_ensure_schema_is_idempotent_when_definitions_exist():
 
 def test_custom_fields_and_tags_speak_platform_one():
     names = {field["name"] for field in bootstrap.CUSTOM_FIELDS}
-    assert names == {"platformone_device_id", "platformone_interface_id"}
+    assert names == {
+        "platformone_device_id",
+        "platformone_interface_id",
+        "platformone_cluster_id",
+        "platformone_configstate_device_id",
+    }
+    assert bootstrap.CUSTOM_FIELDS[2]["object_types"] == ["dcim.virtualchassis"]
+    assert bootstrap.CUSTOM_FIELDS[3]["object_types"] == ["dcim.device"]
     slugs = {tag["slug"] for tag in bootstrap.TAGS}
     assert slugs == {"extreme-networks", "platform-one", "discovered"}

@@ -24,7 +24,12 @@ from pathlib import Path
 
 import pytest
 
-from orb_extreme_platformone.backend import PORT_TABLES
+from orb_extreme_platformone.backend import (
+    CLUSTER_MEMBER_FILTERS,
+    INTERFACE_ID_TABLES,
+    LAG_MEMBER_TABLES,
+    PORT_TABLES,
+)
 from orb_extreme_platformone.client import configstate_response_key
 
 pytestmark = pytest.mark.contract
@@ -64,7 +69,15 @@ def test_assets_filter_still_supports_classification(assets_spec):
 
 def test_configstate_tables_client_uses_still_exist(configstate_spec):
     paths = configstate_spec["paths"]
-    used_tables = ["asset-device", "asset-location", *(t for t, _ in PORT_TABLES.values())]
+    used_tables = [
+        "asset-device",
+        "asset-location",
+        "inferred-device",
+        "inferred-cluster",
+        *(t for t, _ in PORT_TABLES.values()),
+        *(t for t, _ in LAG_MEMBER_TABLES.values()),
+        *(t for t, _ in INTERFACE_ID_TABLES.values()),
+    ]
     for table in used_tables:
         assert f"/retrieve-{table}" in paths, f"retrieve-{table} disappeared from ConfigState"
 
@@ -76,7 +89,11 @@ def test_configstate_response_keys_and_filter_fields_match(configstate_spec):
     for table, filter_field in [
         ("asset-device", None),
         ("asset-location", "asset_device_id"),
+        ("inferred-device", "asset_device_id"),
+        ("inferred-cluster", None),
         *PORT_TABLES.values(),
+        *LAG_MEMBER_TABLES.values(),
+        *INTERFACE_ID_TABLES.values(),
     ]:
         key = configstate_response_key(table)
         response_schema = schemas[f"{key}GetResponse"]["properties"]
@@ -84,6 +101,44 @@ def test_configstate_response_keys_and_filter_fields_match(configstate_spec):
         if filter_field:
             request_schema = schemas[f"{key}GetRequest"]["properties"]
             assert filter_field in request_schema, f"{key}GetRequest lost filter field {filter_field}"
+
+
+def test_asset_lag_schema_fields_still_exist(configstate_spec):
+    """LAG sync depends on name/enabled/member_ports on config and names on members."""
+    schemas = configstate_spec["components"]["schemas"]
+    lag_config = schemas["AssetLagConfig"]["properties"]
+    for field in (
+        "asset_device_id",
+        "asset_interface_id",
+        "lag_number",
+        "name",
+        "enabled",
+        "member_ports",
+        "id",
+    ):
+        assert field in lag_config
+    lag_state = schemas["AssetLagState"]["properties"]
+    for field in ("asset_device_id", "asset_interface_id", "lag_number", "name", "member_ports", "id"):
+        assert field in lag_state
+    assert "interface_name" in schemas["AssetLagConfigMemberPort"]["properties"]
+    assert "interface_name" in schemas["AssetLagStateMemberPort"]["properties"]
+
+
+def test_inferred_cluster_member_filters_still_exist(configstate_spec):
+    """VirtualChassis batching filters on both member sides of InferredCluster.
+
+    Those member IDs are InferredDevice UUIDs (schema: "User device"), joined
+    from AssetDevice via retrieve-inferred-device.asset_device_id.
+    """
+    request = configstate_spec["components"]["schemas"]["InferredClusterGetRequest"]["properties"]
+    for filter_field in CLUSTER_MEMBER_FILTERS:
+        assert filter_field in request, f"InferredClusterGetRequest lost {filter_field}"
+    cluster = configstate_spec["components"]["schemas"]["InferredCluster"]["properties"]
+    for field in ("device_one_id", "device_two_id", "device_one_peer_name", "device_two_peer_name", "id"):
+        assert field in cluster
+    inferred_device = configstate_spec["components"]["schemas"]["InferredDevice"]["properties"]
+    assert "asset_device_id" in inferred_device
+    assert "id" in inferred_device
 
 
 def test_configstate_pagination_params_still_exist(configstate_spec):

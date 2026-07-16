@@ -31,6 +31,30 @@ CUSTOM_FIELDS = [
         ),
         "filter_logic": "exact",
     },
+    {
+        "name": "platformone_cluster_id",
+        "label": "Platform ONE Cluster ID",
+        "type": "text",
+        "object_types": ["dcim.virtualchassis"],
+        "description": (
+            "Immutable Extreme Platform ONE InferredCluster UUID "
+            "(ConfigState retrieve-inferred-cluster id); stable correlation key "
+            "even if peer names change."
+        ),
+        "filter_logic": "exact",
+    },
+    {
+        "name": "platformone_configstate_device_id",
+        "label": "Platform ONE ConfigState Device ID",
+        "type": "text",
+        "object_types": ["dcim.device"],
+        "description": (
+            "Immutable Extreme Platform ONE ConfigState AssetDevice UUID "
+            "(retrieve-asset-device id); joins Assets inventory to ConfigState "
+            "port and location tables."
+        ),
+        "filter_logic": "exact",
+    },
 ]
 
 TAGS = [

@@ -7,8 +7,13 @@ module only produces entities.
 
 The per-tick API call budget is flat, not per-device: one paginated Assets
 listing, one serial-filtered ConfigState device retrieval (for correlation),
-then one batched ConfigState call per port table covering every in-scope
-switch at once.
+then one batched ConfigState call per port/LAG/capabilities/PoE-state table
+covering every in-scope switch at once (independent tables run concurrently),
+optional LAG member-port retrieves when nested members are absent, optional
+PoE-config and interface-IP retrieves filtered by collected interface UUIDs
+(also concurrent within each dependent phase), plus one InferredDevice
+retrieve and up to two InferredCluster retrieves (device_one_id /
+device_two_id) for VirtualChassis membership.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ import json
 import logging
 import os
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timezone
 
 from google.protobuf.json_format import MessageToDict
@@ -35,13 +41,37 @@ APP_VERSION = __version__
 DEFAULT_CLASSIFICATION = "SWITCH"
 
 # {mapper table key: (retrieve-* table, GetRequest device filter field)}.
-# vlan-properties is the one table whose device filter field is `device_id`
-# rather than `asset_device_id`.
+# vlan-properties and poe-state use `device_id`; capabilities use
+# `asset_device_id` like port config/state.
 PORT_TABLES = {
     "port_configs": ("asset-port-config", "asset_device_id"),
     "port_states": ("asset-port-state", "asset_device_id"),
     "vlan_properties": ("asset-interface-vlan-properties", "device_id"),
+    "lag_configs": ("asset-lag-config", "asset_device_id"),
+    "lag_states": ("asset-lag-state", "asset_device_id"),
+    "port_capabilities": ("asset-port-capabilities", "asset_device_id"),
+    "poe_states": ("asset-poe-power-ports-state", "device_id"),
 }
+
+# Nested `member_ports` on AssetLagConfig/State may be empty on retrieve;
+# fall back to the dedicated member-port tables filtered by lag row id.
+LAG_MEMBER_TABLES = {
+    "lag_configs": ("asset-lag-config-member-port", "asset_lag_config_id"),
+    "lag_states": ("asset-lag-state-member-port", "asset_lag_state_id"),
+}
+
+# Tables that only filter by asset_interface_id (no device filter). Fetched
+# after port/LAG rows are collected so interface UUIDs are known.
+INTERFACE_ID_TABLES = {
+    "poe_configs": ("asset-poe-power-ports-config", "asset_interface_id"),
+    "interface_ips": ("asset-interface-ip-address", "asset_interface_id"),
+}
+
+# InferredCluster.device_one_id / device_two_id are InferredDevice UUIDs
+# ("User device" in the ConfigState schema), not AssetDevice UUIDs. Resolve
+# AssetDevice -> InferredDevice first, then query both member sides and merge
+# by cluster id.
+CLUSTER_MEMBER_FILTERS = ("device_one_id", "device_two_id")
 
 
 def _cfg(config, key: str, default=None):
@@ -87,6 +117,31 @@ def _colon_mac(value) -> str:
     return ":".join(digits[i : i + 2] for i in range(0, len(digits), 2))
 
 
+def _retrieve_parallel(
+    client: PlatformOneClient, jobs: list[tuple[str, dict]]
+) -> list[tuple[str, list[dict] | None, PlatformOneApiError | None]]:
+    """Run independent ConfigState retrieves concurrently.
+
+    Returns one result per job in submission order (deterministic merge /
+    failure lists). A failed job yields ``(table, None, exc)`` and does not
+    abort siblings.
+    """
+    if not jobs:
+        return []
+
+    def _one(table: str, filters: dict) -> tuple[str, list[dict] | None, PlatformOneApiError | None]:
+        try:
+            return table, list(client.retrieve(table, filters)), None
+        except PlatformOneApiError as exc:
+            return table, None, exc
+
+    workers = min(len(jobs), 8)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_one, table, filters) for table, filters in jobs]
+        # result() in submit order: work still overlaps; merge stays deterministic.
+        return [fut.result() for fut in futures]
+
+
 def _fetch_cs_devices(client: PlatformOneClient, assets: list[dict]) -> list[dict]:
     """Fetch the ConfigState AssetDevice records for the given Assets devices.
 
@@ -108,6 +163,24 @@ def _fetch_cs_devices(client: PlatformOneClient, assets: list[dict]) -> list[dic
     return list(records.values())
 
 
+def _index_unique(items: list[dict], key_fn, *, label: str) -> dict:
+    """Build {key: item}, keeping the first on collision and warning."""
+    index: dict = {}
+    for item in items:
+        key = key_fn(item)
+        if not key:
+            continue
+        if key in index:
+            logger.warning(
+                "Duplicate ConfigState AssetDevice %s %r; keeping the first match",
+                label,
+                key,
+            )
+            continue
+        index[key] = item
+    return index
+
+
 def _correlate(assets: list[dict], cs_devices: list[dict]) -> dict[int, dict]:
     """Match Assets devices to ConfigState AssetDevice records.
 
@@ -116,9 +189,21 @@ def _correlate(assets: list[dict], cs_devices: list[dict]) -> dict[int, dict]:
     no match have no ConfigState data yet and still sync as Devices, minus
     ports and building/floor detail.
     """
-    by_serial = {str(d["serial_number"]).casefold(): d for d in cs_devices if d.get("serial_number")}
-    by_mac = {_normalize_mac(d["base_mac_address"]): d for d in cs_devices if d.get("base_mac_address")}
-    by_ip = {str(d["ip_address"]): d for d in cs_devices if d.get("ip_address")}
+    by_serial = _index_unique(
+        cs_devices,
+        lambda d: str(d["serial_number"]).casefold() if d.get("serial_number") else None,
+        label="serial_number",
+    )
+    by_mac = _index_unique(
+        cs_devices,
+        lambda d: _normalize_mac(d["base_mac_address"]) if d.get("base_mac_address") else None,
+        label="base_mac_address",
+    )
+    by_ip = _index_unique(
+        cs_devices,
+        lambda d: str(d["ip_address"]) if d.get("ip_address") else None,
+        label="ip_address",
+    )
 
     matched: dict[int, dict] = {}
     for asset in assets:
@@ -161,8 +246,9 @@ class Backend(WorkerBackend):
         records = self._correlated_records(client, assets, policy_name)
 
         scope_sites = _scope_sites(getattr(policy, "scope", None))
-        # Scope once, up front: the port fan-out must see the same filtered
-        # list as devices_to_entities (see mapper.scope_devices).
+        # Backend owns scoping: port fan-out and devices_to_entities must see
+        # the same filtered list. Pass site_scope=None into the mapper so it
+        # does not re-filter (see mapper.scope_devices / devices_to_entities).
         scoped = mapper.scope_devices(
             records,
             site_scope=set(scope_sites) if scope_sites else None,
@@ -175,11 +261,120 @@ class Backend(WorkerBackend):
         )
 
         name_source = _cfg(config, "name_source", "hostname")
-        entities = mapper.devices_to_entities(scoped, name_source=name_source)
+        vc_entities, vc_memberships = self._virtual_chassis_entities(client, scoped, name_source, policy_name)
+        entities = mapper.devices_to_entities(
+            scoped,
+            name_source=name_source,
+            virtual_chassis_entities=vc_entities,
+            vc_memberships=vc_memberships,
+        )
 
         entities.extend(self._port_entities(client, scoped, name_source, policy_name))
 
         return entities
+
+    @staticmethod
+    def _asset_id_for_cluster_member(
+        cluster: dict, member_field: str, nested_field: str, inferred_to_asset: dict[str, str]
+    ) -> str:
+        """Resolve an InferredCluster member to an AssetDevice UUID.
+
+        Prefers the InferredDevice lookup map; falls back to a nested
+        `device_one` / `device_two` object's `asset_device_id` when the API
+        expands it (undocumented on InferredCluster but present in practice).
+        """
+        raw = str(cluster.get(member_field) or "")
+        if raw in inferred_to_asset:
+            return inferred_to_asset[raw]
+        nested = cluster.get(nested_field)
+        if isinstance(nested, dict):
+            nested_asset_id = str(nested.get("asset_device_id") or "")
+            if nested_asset_id:
+                return nested_asset_id
+        return raw
+
+    @staticmethod
+    def _fetch_inferred_clusters(client: PlatformOneClient, asset_device_ids: list[str]) -> list[dict]:
+        """Fetch InferredCluster rows for the given AssetDevice UUIDs.
+
+        Filtering `retrieve-inferred-cluster` by AssetDevice UUIDs silently
+        returns zero rows: `device_one_id` / `device_two_id` are InferredDevice
+        UUIDs. Resolve via `retrieve-inferred-device` (`asset_device_id`), query
+        both cluster member filters, then rewrite member IDs back to
+        AssetDevice UUIDs so the mapper can join on `cs_device_id`.
+        """
+        if not asset_device_ids:
+            return []
+
+        inferred_to_asset: dict[str, str] = {}
+        for device in client.retrieve("inferred-device", {"asset_device_id": asset_device_ids}):
+            inferred_id = str(device.get("id") or "")
+            asset_id = str(device.get("asset_device_id") or "")
+            if inferred_id and asset_id:
+                inferred_to_asset[inferred_id] = asset_id
+        if not inferred_to_asset:
+            return []
+
+        inferred_ids = sorted(inferred_to_asset)
+        by_id: dict[str, dict] = {}
+        for filter_field in CLUSTER_MEMBER_FILTERS:
+            for cluster in client.retrieve("inferred-cluster", {filter_field: inferred_ids}):
+                remapped = {
+                    **cluster,
+                    "device_one_id": Backend._asset_id_for_cluster_member(
+                        cluster, "device_one_id", "device_one", inferred_to_asset
+                    ),
+                    "device_two_id": Backend._asset_id_for_cluster_member(
+                        cluster, "device_two_id", "device_two", inferred_to_asset
+                    ),
+                }
+                cluster_id = str(remapped.get("id") or "")
+                if cluster_id:
+                    by_id[cluster_id] = remapped
+                else:
+                    # Spec marks id optional in practice; fall back to member pair.
+                    key = f"{remapped.get('device_one_id')}:{remapped.get('device_two_id')}"
+                    by_id.setdefault(key, remapped)
+        return list(by_id.values())
+
+    @staticmethod
+    def _virtual_chassis_entities(
+        client: PlatformOneClient, records: list[dict], name_source: str, policy_name: str
+    ) -> tuple[list[Entity], dict[str, dict]]:
+        """Fetch InferredCluster and map to VirtualChassis + memberships.
+
+        A failed fetch degrades to no VC entities for this tick rather than
+        aborting the sync.
+        """
+        records_by_cs_id = {
+            record["cs_device_id"]: record for record in records if record.get("cs_device_id")
+        }
+        device_ids = sorted(records_by_cs_id)
+        if not device_ids:
+            return [], {}
+
+        try:
+            clusters = Backend._fetch_inferred_clusters(client, device_ids)
+        except PlatformOneApiError as exc:
+            logger.warning(
+                "Policy %s: ConfigState inferred-cluster fetch failed, syncing without VirtualChassis: %s",
+                policy_name,
+                exc,
+            )
+            return [], {}
+
+        entities, memberships = mapper.virtual_chassis_to_entities(
+            clusters,
+            records_by_cs_id=records_by_cs_id,
+            name_source=name_source,
+        )
+        logger.info(
+            "Policy %s: mapped %d VirtualChassis entities from %d InferredCluster rows",
+            policy_name,
+            len(entities),
+            len(clusters),
+        )
+        return entities, memberships
 
     @staticmethod
     def _correlated_records(client: PlatformOneClient, assets: list[dict], policy_name: str) -> list[dict]:
@@ -204,11 +399,18 @@ class Backend(WorkerBackend):
         cs_uuids = sorted({str(cs["id"]) for cs in cs_by_asset_id.values() if cs.get("id")})
         if cs_uuids:
             try:
-                locations = {
-                    str(loc["asset_device_id"]): loc
-                    for loc in client.retrieve("asset-location", {"asset_device_id": cs_uuids})
-                    if loc.get("asset_device_id")
-                }
+                for loc in client.retrieve("asset-location", {"asset_device_id": cs_uuids}):
+                    device_id = str(loc.get("asset_device_id") or "")
+                    if not device_id:
+                        continue
+                    if device_id in locations:
+                        logger.warning(
+                            "Policy %s: duplicate asset-location for device %s; keeping the first",
+                            policy_name,
+                            device_id,
+                        )
+                        continue
+                    locations[device_id] = loc
             except PlatformOneApiError as exc:
                 logger.warning(
                     "Policy %s: ConfigState location fetch failed, falling back to Assets site names: %s",
@@ -224,20 +426,146 @@ class Backend(WorkerBackend):
                 {
                     "asset": asset,
                     "cs_device_id": cs_device_id,
+                    "cs_device": cs,
                     "location": locations.get(cs_device_id) if cs_device_id else None,
                 }
             )
         return records
 
     @staticmethod
+    def _attach_lag_members(
+        client: PlatformOneClient,
+        tables_by_device: dict[str, dict[str, list[dict]]],
+        policy_name: str,
+        failed_tables: list[str],
+    ) -> None:
+        """Fill empty nested `member_ports` from dedicated member-port retrieves.
+
+        Member-port GetRequests filter by lag row id (not device id), so this
+        runs after lag config/state rows are collected. Mutates rows in place.
+        The two member-port tables are independent of each other and fetch
+        concurrently.
+        """
+        jobs: list[tuple[str, dict]] = []
+        job_meta: list[tuple[str, str, dict[str, dict]]] = []
+        for table_key, (member_table, id_field) in LAG_MEMBER_TABLES.items():
+            lag_ids: list[str] = []
+            rows_by_id: dict[str, dict] = {}
+            for tables in tables_by_device.values():
+                for row in tables.get(table_key) or []:
+                    lag_id = str(row.get("id") or "")
+                    if not lag_id:
+                        continue
+                    if row.get("member_ports"):
+                        continue
+                    lag_ids.append(lag_id)
+                    rows_by_id[lag_id] = row
+            if not lag_ids:
+                continue
+            jobs.append((member_table, {id_field: sorted(set(lag_ids))}))
+            job_meta.append((member_table, id_field, rows_by_id))
+
+        for (member_table, id_field, rows_by_id), (_table, members, exc) in zip(
+            job_meta, _retrieve_parallel(client, jobs), strict=True
+        ):
+            if exc is not None:
+                failed_tables.append(member_table)
+                logger.warning(
+                    "Policy %s: ConfigState %s fetch failed, LAG membership may be incomplete: %s",
+                    policy_name,
+                    member_table,
+                    exc,
+                )
+                continue
+            assert members is not None
+            by_lag: dict[str, list[dict]] = {}
+            for member in members:
+                parent_id = str(member.get(id_field) or "")
+                if parent_id:
+                    by_lag.setdefault(parent_id, []).append(member)
+            for lag_id, row in rows_by_id.items():
+                if lag_id in by_lag:
+                    row["member_ports"] = by_lag[lag_id]
+
+    @staticmethod
+    def _collect_interface_ids(
+        tables_by_device: dict[str, dict[str, list[dict]]],
+    ) -> tuple[list[str], dict[str, str]]:
+        """Collect asset_interface_id values and map each to its device UUID.
+
+        Includes vlan_properties so interface-IP / PoE-config retrieves cover
+        VLAN-facing interfaces that never appear in port/LAG/PoE-state rows.
+        """
+        interface_to_device: dict[str, str] = {}
+        for device_id, tables in tables_by_device.items():
+            for key in (
+                "port_configs",
+                "port_states",
+                "vlan_properties",
+                "lag_configs",
+                "lag_states",
+                "poe_states",
+            ):
+                for row in tables.get(key) or []:
+                    interface_id = str(row.get("asset_interface_id") or "")
+                    if interface_id:
+                        interface_to_device.setdefault(interface_id, device_id)
+        return sorted(interface_to_device), interface_to_device
+
+    @staticmethod
+    def _attach_interface_id_tables(
+        client: PlatformOneClient,
+        tables_by_device: dict[str, dict[str, list[dict]]],
+        policy_name: str,
+        failed_tables: list[str],
+    ) -> None:
+        """Fetch PoE config + interface IPs by collected interface UUIDs.
+
+        These ConfigState tables have no device filter; rows are bucketed back
+        onto devices via the interface→device map from port/LAG/PoE-state rows.
+        """
+        interface_ids, interface_to_device = Backend._collect_interface_ids(tables_by_device)
+        for tables in tables_by_device.values():
+            for key in INTERFACE_ID_TABLES:
+                tables.setdefault(key, [])
+        if not interface_ids:
+            return
+
+        jobs = [
+            (table, {filter_field: interface_ids})
+            for table, filter_field in INTERFACE_ID_TABLES.values()
+        ]
+        keys = list(INTERFACE_ID_TABLES)
+        for key, (table, rows, exc) in zip(keys, _retrieve_parallel(client, jobs), strict=True):
+            if exc is not None:
+                failed_tables.append(table)
+                logger.warning(
+                    "Policy %s: ConfigState %s fetch failed, ports sync without it: %s",
+                    policy_name,
+                    table,
+                    exc,
+                )
+                continue
+            assert rows is not None
+            for row in rows:
+                interface_id = str(row.get("asset_interface_id") or "")
+                device_id = interface_to_device.get(interface_id)
+                if device_id and device_id in tables_by_device:
+                    tables_by_device[device_id][key].append(row)
+
+    @staticmethod
     def _port_entities(
         client: PlatformOneClient, records: list[dict], name_source: str, policy_name: str
     ) -> list[Entity]:
-        """One batched ConfigState call per port table, covering every
+        """One batched ConfigState call per port/LAG table, covering every
         in-scope switch that resolved to a ConfigState device.
 
-        A failed table degrades that table's fields for this tick instead of
-        aborting the sync; ports still map from whichever tables survived.
+        Independent device-filtered tables fetch concurrently; LAG member-port
+        and interface-UUID tables run in later phases once their filter IDs
+        are known. A failed table degrades that table's fields for this tick
+        instead of aborting the sync; ports still map from whichever tables
+        survived. Entity order stays deterministic (device_ids sorted, tables
+        merged in PORT_TABLES key order).
         """
         switches = {
             record["cs_device_id"]: record
@@ -248,23 +576,33 @@ class Backend(WorkerBackend):
             return []
         device_ids = sorted(switches)
 
+        failed_tables: list[str] = []
         tables_by_device: dict[str, dict[str, list[dict]]] = {
             device_id: {key: [] for key in PORT_TABLES} for device_id in device_ids
         }
-        for key, (table, filter_field) in PORT_TABLES.items():
-            try:
-                rows = client.retrieve(table, {filter_field: device_ids})
-                for row in rows:
-                    device_id = str(row.get("asset_device_id") or row.get("device_id") or "")
-                    if device_id in tables_by_device:
-                        tables_by_device[device_id][key].append(row)
-            except PlatformOneApiError as exc:
+        jobs = [
+            (table, {filter_field: device_ids}) for table, filter_field in PORT_TABLES.values()
+        ]
+        for key, (table, rows, exc) in zip(
+            PORT_TABLES, _retrieve_parallel(client, jobs), strict=True
+        ):
+            if exc is not None:
+                failed_tables.append(table)
                 logger.warning(
                     "Policy %s: ConfigState %s fetch failed, ports sync without it: %s",
                     policy_name,
                     table,
                     exc,
                 )
+                continue
+            assert rows is not None
+            for row in rows:
+                device_id = str(row.get("asset_device_id") or row.get("device_id") or "")
+                if device_id in tables_by_device:
+                    tables_by_device[device_id][key].append(row)
+
+        Backend._attach_lag_members(client, tables_by_device, policy_name, failed_tables)
+        Backend._attach_interface_id_tables(client, tables_by_device, policy_name, failed_tables)
 
         entities: list[Entity] = []
         for device_id in device_ids:
@@ -276,6 +614,12 @@ class Backend(WorkerBackend):
                 )
             )
         logger.info("Policy %s: mapped %d wired port entities", policy_name, len(entities))
+        if failed_tables:
+            logger.warning(
+                "Policy %s: ConfigState degradation this tick; failed tables: %s",
+                policy_name,
+                ", ".join(failed_tables),
+            )
         return entities
 
 
