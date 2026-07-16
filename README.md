@@ -103,7 +103,6 @@ Policy `config:` keys (see `agent.yaml` for a complete example):
 |-----|-------------|---------|
 | `BOOTSTRAP` | Run schema setup before the sync (first run only). | `false` |
 | `classification` | Assets device filter: `SWITCH`, `WIRELESS`, `ROUTER`, … or `ALL`. Port sync only runs for switch-OS devices regardless. | `SWITCH` |
-| `default_site` | Site assigned when neither ConfigState nor Assets names one. | `PlatformONE-Unmapped` |
 | `name_source` | Device naming source: `hostname` or `serial`. | `hostname` |
 | `scope.sites` | Restrict the sync to specific resolved sites; `["*"]` for all. | `["*"]` |
 
@@ -206,8 +205,10 @@ rather than failing it.
 A device's ConfigState `AssetLocation` record (site, building, and floor
 names) becomes its NetBox **Site** plus a nested **Location** chain, with
 the device assigned to the most specific level present. Devices without a
-ConfigState location fall back to the Assets API's flat `site_name`;
-`default_site` applies only when neither source names a site.
+ConfigState location fall back to the Assets API's flat `site_name`. There
+is no worker-side fallback site: Platform ONE assigns every device a site
+itself ("Default Site"), so a device without one from either source is
+unexpected and skipped with a warning.
 
 ### Platform and OS version
 

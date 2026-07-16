@@ -57,22 +57,22 @@ def test_device_type_model_for_passes_unprefixed_codes_through():
 
 def test_resolve_location_uses_the_configstate_site_and_building_floor_chain():
     location = {"site_name": "HQ", "building_name": "B1", "floor_name": "F2"}
-    assert resolve_location(location, {"site_name": "Assets-Site"}, "Fallback") == ("HQ", ["B1", "F2"])
+    assert resolve_location(location, {"site_name": "Assets-Site"}) == ("HQ", ["B1", "F2"])
 
 
 def test_resolve_location_skips_absent_building_floor_levels():
-    assert resolve_location({"site_name": "HQ"}, {}, "Fallback") == ("HQ", [])
-    assert resolve_location({"site_name": "HQ", "floor_name": "F2"}, {}, "Fallback") == ("HQ", ["F2"])
+    assert resolve_location({"site_name": "HQ"}, {}) == ("HQ", [])
+    assert resolve_location({"site_name": "HQ", "floor_name": "F2"}, {}) == ("HQ", ["F2"])
 
 
-def test_resolve_location_falls_back_to_the_assets_site_then_the_default():
-    assert resolve_location(None, {"site_name": "Assets-Site"}, "Fallback") == ("Assets-Site", [])
-    assert resolve_location(None, {}, "Fallback") == ("Fallback", [])
+def test_resolve_location_falls_back_to_the_assets_site_then_none():
+    assert resolve_location(None, {"site_name": "Assets-Site"}) == ("Assets-Site", [])
+    assert resolve_location(None, {}) == (None, [])
 
 
 def test_resolve_location_configstate_record_without_site_uses_assets_site():
     location = {"building_name": "B1"}
-    assert resolve_location(location, {"site_name": "Assets-Site"}, "Fallback") == ("Assets-Site", ["B1"])
+    assert resolve_location(location, {"site_name": "Assets-Site"}) == ("Assets-Site", ["B1"])
 
 
 def test_expand_location_paths_orders_ancestors_first_and_dedupes():

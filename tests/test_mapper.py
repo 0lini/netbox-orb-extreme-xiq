@@ -31,7 +31,7 @@ def _record(asset=SWITCH_ASSET, location=None, cs_device_id="cs-uuid-42"):
 
 def test_devices_to_entities_builds_site_location_chain_and_device(stub_sdk):
     location = {"site_name": "HQ", "building_name": "B1", "floor_name": "F2"}
-    entities = mapper.devices_to_entities([_record(location=location)], default_site="Unmapped")
+    entities = mapper.devices_to_entities([_record(location=location)])
 
     site, building, floor, device = (e._kw for e in entities)
     assert site["site"]._kw == {"name": "HQ"}
@@ -43,7 +43,7 @@ def test_devices_to_entities_builds_site_location_chain_and_device(stub_sdk):
 
 
 def test_devices_to_entities_maps_the_assets_fields(stub_sdk):
-    entities = mapper.devices_to_entities([_record()], default_site="Unmapped")
+    entities = mapper.devices_to_entities([_record()])
 
     device = entities[-1]._kw["device"]._kw
     assert device["name"] == "sw-idf1"
@@ -61,46 +61,47 @@ def test_devices_to_entities_maps_the_assets_fields(stub_sdk):
 
 def test_devices_to_entities_non_switch_function_platform_is_version_only(stub_sdk):
     asset = {**SWITCH_ASSET, "function": "AP"}
-    entities = mapper.devices_to_entities([_record(asset=asset)], default_site="Unmapped")
+    entities = mapper.devices_to_entities([_record(asset=asset)])
 
     assert entities[-1]._kw["device"]._kw["platform"]._kw["name"] == "9.2.1.0"
 
 
 def test_devices_to_entities_without_function_or_version_asserts_no_platform(stub_sdk):
     asset = {**SWITCH_ASSET, "function": None, "os_version": None}
-    entities = mapper.devices_to_entities([_record(asset=asset)], default_site="Unmapped")
+    entities = mapper.devices_to_entities([_record(asset=asset)])
 
     assert "platform" not in entities[-1]._kw["device"]._kw
 
 
 def test_devices_to_entities_disconnected_device_is_offline(stub_sdk):
     asset = {**SWITCH_ASSET, "is_connected": False}
-    entities = mapper.devices_to_entities([_record(asset=asset)], default_site="Unmapped")
+    entities = mapper.devices_to_entities([_record(asset=asset)])
 
     assert entities[-1]._kw["device"]._kw["status"] == "offline"
 
 
-def test_devices_to_entities_without_any_site_uses_the_default_site(stub_sdk):
+def test_devices_to_entities_without_any_site_skips_the_device(stub_sdk, caplog):
+    """Platform ONE assigns every device a site itself, so a device without
+    one is unexpected: it is skipped instead of getting an invented site."""
     asset = {"device_id": 7, "host_name": "sw-lost", "is_connected": True}
-    entities = mapper.devices_to_entities([_record(asset=asset)], default_site="Unmapped")
+    entities = mapper.devices_to_entities([_record(asset=asset)])
 
-    assert entities[0]._kw["site"]._kw == {"name": "Unmapped"}
-    assert entities[1]._kw["device"]._kw["site"]._kw == {"name": "Unmapped"}
-    assert "location" not in entities[1]._kw["device"]._kw
+    assert entities == []
+    assert "sw-lost" in caplog.text
 
 
 def test_scope_devices_filters_on_the_resolved_site():
     in_scope = _record(location={"site_name": "HQ"})
     out_of_scope = _record(location={"site_name": "Branch"})
 
-    scoped = mapper.scope_devices([in_scope, out_of_scope], default_site="Unmapped", site_scope={"HQ"})
+    scoped = mapper.scope_devices([in_scope, out_of_scope], site_scope={"HQ"})
 
     assert scoped == [in_scope]
 
 
 def test_scope_devices_without_a_scope_returns_everything():
     records = [_record(), _record(location={"site_name": "HQ"})]
-    assert mapper.scope_devices(records, default_site="Unmapped", site_scope=None) == records
+    assert mapper.scope_devices(records, site_scope=None) == records
 
 
 PORT_CONFIG = {
