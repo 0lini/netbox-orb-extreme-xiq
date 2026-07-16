@@ -52,21 +52,25 @@ def test_devices_to_entities_maps_the_assets_fields(stub_sdk):
     assert device["site"]._kw == {"name": "Assets-Site"}
     assert device["device_type"]._kw["model"] == "5320-48P-8XE-FabricEngine"
     assert device["device_type"]._kw["manufacturer"] == "Extreme Networks"
-    assert device["platform"]._kw["name"] == "Fabric Engine"
+    assert device["platform"]._kw["name"] == "Fabric Engine 9.2.1.0"
     assert device["platform"]._kw["manufacturer"] == "Extreme Networks"
     assert device["primary_ip4"] == "10.0.0.2/32"
     assert cf(device["custom_fields"]["platformone_device_id"]._kw) == "42"
-    assert cf(device["custom_fields"]["platformone_os_version"]._kw) == "9.2.1.0"
     assert device["tags"] == ["extreme-networks", "platform-one", "discovered"]
 
 
-def test_devices_to_entities_non_switch_function_asserts_no_platform(stub_sdk):
+def test_devices_to_entities_non_switch_function_platform_is_version_only(stub_sdk):
     asset = {**SWITCH_ASSET, "function": "AP"}
     entities = mapper.devices_to_entities([_record(asset=asset)], default_site="Unmapped")
 
-    device = entities[-1]._kw["device"]._kw
-    assert "platform" not in device
-    assert cf(device["custom_fields"]["platformone_os_version"]._kw) == "9.2.1.0"
+    assert entities[-1]._kw["device"]._kw["platform"]._kw["name"] == "9.2.1.0"
+
+
+def test_devices_to_entities_without_function_or_version_asserts_no_platform(stub_sdk):
+    asset = {**SWITCH_ASSET, "function": None, "os_version": None}
+    entities = mapper.devices_to_entities([_record(asset=asset)], default_site="Unmapped")
+
+    assert "platform" not in entities[-1]._kw["device"]._kw
 
 
 def test_devices_to_entities_disconnected_device_is_offline(stub_sdk):
