@@ -4,17 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "netbox-orb-extreme-platformone"
-# Single-sourced from orb_extreme_platformone.__version__ (see [tool.setuptools.dynamic]).
 dynamic = ["version"]
 description = "Extreme Platform ONE discovery worker for the NetBox Labs Orb Agent (ingests into NetBox via Diode)"
 requires-python = ">=3.10"
 dependencies = [
-    "requests>=2.31",       # all Platform ONE HTTP calls (Assets + ConfigState APIs)
-    # The Orb Agent image already ships these, but pin them here so the
-    # package is testable/runnable standalone too. Confirm the exact versions
-    # against the orb-agent image you deploy on -- the Backend contract
-    # (describe()/run()) and Diode entity kwargs are both generated code that
-    # can move between releases.
+    "requests>=2.31",
+    # The Orb Agent image ships these; pinned here so the package is
+    # testable/runnable standalone too.
     "netboxlabs-diode-sdk>=1.0.0",
     "netboxlabs-orb-worker>=1.0.0",
 ]
@@ -22,8 +18,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "responses>=0.25", "ruff>=0.15"]
 
-# The import name the worker policy references as `config.package`
-# i.e.  policies.worker.<name>.config.package: orb_extreme_platformone
 [tool.setuptools.packages.find]
 include = ["orb_extreme_platformone*"]
 

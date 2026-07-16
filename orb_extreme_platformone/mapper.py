@@ -1,23 +1,13 @@
-"""Platform ONE -> Diode entities: device/site/location inventory + interfaces.
+"""Map Extreme Platform ONE records to Diode entities.
 
-Asserts name, serial, status, site, location, device_type/manufacturer,
-platform, and primary_ip4 whenever the Assets API reports the underlying
-field, and interface config/state whenever ConfigState reports it -- all
-unconditionally (no configurable field-authority system, no opt-in flags),
-matching this worker's "just always sync what's available" convention.
+Fields are asserted unconditionally whenever Platform ONE reports the
+underlying data; fields with no Platform ONE equivalent are never asserted.
+Device identity uses the native `serial` field plus deterministic names
+(see `identity`), with `platformone_*` custom fields carried as provenance.
 
-`custom_fields` and `tags` are always emitted alongside -- they're
-provenance metadata (extreme-networks/platform-one/discovered tags,
-platformone_device_id / platformone_interface_id), not fields a human would
-meaningfully contest. Identity relies on the native `serial` field (see
-`_device_kwargs`) rather than a separate immutable ID custom field --
-neither the real Cisco Meraki integration nor NetBox Labs' generic
-discovery backends carry one; they rely on native `serial` the same way.
-
-Input shape: backend.py correlates each Assets device with its ConfigState
-device UUID and AssetLocation record up front, and passes "device records"
--- {"asset": <Assets Device>, "cs_device_id": str|None, "location":
-<AssetLocation>|None} -- so every mapper here works from one joined view.
+Callers pass "device records" pre-joined by backend.py:
+{"asset": <Assets Device>, "cs_device_id": str | None,
+ "location": <AssetLocation> | None}.
 """
 
 from __future__ import annotations
@@ -52,10 +42,6 @@ __all__ = [
 
 MANUFACTURER = "Extreme Networks"
 
-# Vendor/product/lifecycle tags, mirroring the flat-tag pattern NetBox Labs'
-# own Cisco Meraki integration uses (e.g. "cisco", "meraki", "discovered")
-# rather than one namespaced "source:platform-one" tag. Derived from
-# bootstrap.TAGS so the two can't drift apart.
 PROVENANCE_TAGS = [tag["name"] for tag in bootstrap.TAGS]
 
 
@@ -103,12 +89,10 @@ def _device_kwargs(asset: dict, *, site_name: str, location: Location | None, na
 def scope_devices(records: list[dict], *, default_site: str, site_scope: set[str] | None) -> list[dict]:
     """Return the device records whose resolved site is in site_scope (all, if no scope).
 
-    The single source of truth for scope filtering: devices_to_entities uses
-    it, and any caller that fans out per-device API calls afterwards (wired
-    ports) must filter through it too -- otherwise an out-of-scope device's
-    Interface entities would reference a Device that was never emitted,
-    recreating the device in NetBox through Diode's implicit reference
-    handling.
+    Single source of truth for scope filtering: any caller that fans out
+    per-device API calls afterwards (wired ports) must filter through it too,
+    or Interface entities would reference devices that were never emitted and
+    Diode would recreate them.
     """
     if not site_scope:
         return records
@@ -127,8 +111,7 @@ def devices_to_entities(
     site_scope: set[str] | None = None,
 ) -> list[Entity]:
     """Map device records to Diode entities: one Site per distinct site, one
-    nested Location per Building/Floor level actually in use, plus one
-    Device per device.
+    nested Location per Building/Floor level in use, one Device per device.
     """
     entities: list[Entity] = []
     resolved: list[tuple[dict, str, list[str]]] = []
@@ -146,9 +129,8 @@ def devices_to_entities(
     for site_name in sorted(site_names):
         entities.append(Entity(site=Site(name=site_name)))
 
-    # expand_location_paths orders every path's ancestors before itself, so a
-    # single pass can thread `parent` through a cache instead of rebuilding
-    # each prefix's chain from scratch (O(total locations), not O(depth^2)).
+    # expand_location_paths orders ancestors before descendants, so one pass
+    # can thread `parent` through the cache.
     location_cache: dict[tuple[str, tuple[str, ...]], Location] = {}
     for site_name, path in expand_location_paths(location_paths):
         parent = location_cache.get((site_name, path[:-1])) if len(path) > 1 else None
@@ -164,21 +146,16 @@ def devices_to_entities(
     return entities
 
 
-# ConfigState publishes oper_speed / oper_duplex / connector_type as bare
-# integer enumerations with NO value table anywhere in its OpenAPI spec
-# (verified: zero `enum` definitions across the whole document). The maps
-# below therefore contain only codes verified against a production Fabric
-# Engine device; unknown codes assert nothing rather than guessing.
-# oper_state is the exception: its schema description is lifted verbatim
-# from IF-MIB ifOperStatus, so standard IF-MIB numbering applies.
-VERIFIED_OPER_SPEED_KBPS = {4: 1_000_000}  # 4 = 1 Gbit/s
-VERIFIED_DUPLEX = {2: "full"}  # 1 = not-applicable (link down): assert nothing
-OPER_STATE_UP = 1  # IF-MIB ifOperStatus: 1=up, 2=down, ...
+# ConfigState reports oper_speed / oper_duplex / connector_type as integer
+# codes with no value table in its OpenAPI spec. Only codes verified against
+# production hardware are mapped; unknown codes assert nothing. oper_state is
+# the exception: its schema description matches IF-MIB ifOperStatus.
+VERIFIED_OPER_SPEED_KBPS = {4: 1_000_000}
+VERIFIED_DUPLEX = {2: "full"}
+OPER_STATE_UP = 1
 
-# NetBox interface type from (verified oper_speed code, verified
-# connector_type code). connector_type: 1 = copper, 2 = fiber (verified as
-# above). Combinations not listed (including any unknown code) leave `type`
-# unset rather than misrepresenting hardware.
+# (oper_speed, connector_type) -> NetBox interface type. connector_type:
+# 1 = copper, 2 = fiber. Unlisted combinations leave `type` unset.
 _TYPE_BY_SPEED_AND_CONNECTOR = {
     (4, 1): "1000base-t",
     (4, 2): "1000base-x-sfp",
@@ -186,8 +163,8 @@ _TYPE_BY_SPEED_AND_CONNECTOR = {
 
 
 def _record_key(record: dict) -> str:
-    """Join key across ConfigState port tables: the shared asset_interface_id,
-    falling back to the front-panel port name for tables/rows without it."""
+    """Join key across ConfigState port tables: asset_interface_id, falling
+    back to the front-panel port name for rows without it."""
     return str(record.get("asset_interface_id") or record.get("name") or record.get("interface_name") or "")
 
 
@@ -203,14 +180,11 @@ def _by_key(records: list[dict]) -> dict[str, list[dict]]:
 def _vlan_fields(vlan_records: list[dict]) -> dict:
     """untagged_vlan / tagged_vlans / mode from AssetInterfaceVlanProperties rows.
 
-    `port_vlan` is the untagged VLAN; the nested `vlans` list
-    (AssetInterfaceVlanMap) is every VLAN mapped onto the interface, so the
-    tagged set is that list minus the untagged VLAN. `mode` follows NetBox
-    convention: any tagged VLANs -> "tagged", only an untagged VLAN ->
-    "access". Interfaces with no VLAN rows assert none of the three -- on
-    Fabric Engine FLEX-UNI/Fabric-Attach deployments a port can be mapped
-    straight into an I-SID instead of a VLAN, and inventing an access mode
-    for it would misrepresent real configuration.
+    `port_vlan` is the untagged VLAN; the nested `vlans` list is every VLAN
+    mapped onto the interface, so the tagged set is that list minus the
+    untagged VLAN. Interfaces with no VLAN rows assert none of the three:
+    on Fabric Engine a port can be mapped straight into an I-SID instead of
+    a VLAN, and inventing an access mode would misrepresent configuration.
     """
     untagged: int | None = None
     mapped: set[int] = set()
@@ -245,15 +219,14 @@ def _port_kwargs(
         "tags": PROVENANCE_TAGS,
     }
 
-    # Admin state -- the field the legacy XIQ portlist endpoint never had.
     enabled = config.get("enabled")
     if isinstance(enabled, bool):
         kwargs["enabled"] = enabled
 
+    # Link state maps to mark_connected, never to `enabled` -- admin state is
+    # asserted separately above.
     oper_state = state.get("oper_state")
     if oper_state is not None:
-        # Link state as mark_connected ("physically connected to something"),
-        # never as `enabled` -- admin state is asserted separately above.
         kwargs["mark_connected"] = oper_state == OPER_STATE_UP
 
     speed = VERIFIED_OPER_SPEED_KBPS.get(state.get("oper_speed"))
@@ -278,12 +251,10 @@ def _port_kwargs(
 def ports_to_entities(tables: dict[str, list[dict]], *, device: str) -> list[Entity]:
     """Map one switch's ConfigState port tables to Interface entities.
 
-    `tables` holds this device's rows of "port_configs"
-    (retrieve-asset-port-config), "port_states" (retrieve-asset-port-state),
-    and "vlan_properties" (retrieve-asset-interface-vlan-properties). The
-    port list is the union of config+state rows joined on
-    asset_interface_id (name as fallback): config alone still yields a port
-    (admin state, description, VLANs), state alone still yields link state.
+    `tables` holds the device's "port_configs", "port_states", and
+    "vlan_properties" rows. The port list is the union of config+state rows
+    joined on asset_interface_id (name as fallback): config alone still
+    yields a port, state alone still yields link state.
     """
     configs = _by_key(tables.get("port_configs") or [])
     states = _by_key(tables.get("port_states") or [])

@@ -1,14 +1,13 @@
-"""Orb Agent Worker entrypoint for the Extreme Platform ONE integration.
+"""Orb Agent worker entrypoint for the Extreme Platform ONE integration.
 
 Implements the `worker.backend.Backend` contract from `netboxlabs-orb-worker`:
 `describe()` reports identity, `run()` returns the Diode entities for one
-policy tick. The worker (PolicyRunner) owns scheduling and the Diode client
-entirely -- this module only ever produces entities, it never pushes them.
+policy tick. The PolicyRunner owns scheduling and the Diode client; this
+module only produces entities.
 
-Per-tick API call budget is flat, not per-device: one paginated Assets
-device listing, one paginated ConfigState device listing (for correlation),
-then one batched ConfigState call per port table covering every in-scope
-switch at once (every ConfigState filter field takes a list of values).
+The per-tick API call budget is flat, not per-device: one paginated Assets
+listing, one ConfigState device listing (for correlation), then one batched
+ConfigState call per port table covering every in-scope switch at once.
 """
 
 from __future__ import annotations
@@ -32,10 +31,9 @@ APP_VERSION = __version__
 DEFAULT_SITE = "PlatformONE-Unmapped"
 DEFAULT_CLASSIFICATION = "SWITCH"
 
-# ConfigState port tables fetched per tick, batched across every in-scope
-# switch: {mapper table key: (retrieve-* table, GetRequest device filter field)}.
-# interface-vlan-properties is the one table whose device filter field is
-# named `device_id` instead of `asset_device_id` (per its GetRequest schema).
+# {mapper table key: (retrieve-* table, GetRequest device filter field)}.
+# vlan-properties is the one table whose device filter field is `device_id`
+# rather than `asset_device_id`.
 PORT_TABLES = {
     "port_configs": ("asset-port-config", "asset_device_id"),
     "port_states": ("asset-port-state", "asset_device_id"),
@@ -76,8 +74,7 @@ def _build_client(config) -> PlatformOneClient:
 
 
 def _normalize_mac(value) -> str:
-    """Lowercase hex digits only -- Assets sends 'aabbccddeeff', ConfigState
-    may use separators; both normalize to the same string for matching."""
+    """Lowercase hex digits only: Assets and ConfigState format MACs differently."""
     return "".join(ch for ch in str(value or "").lower() if ch in "0123456789abcdef")
 
 
@@ -85,11 +82,9 @@ def _correlate(assets: list[dict], cs_devices: list[dict]) -> dict[int, dict]:
     """Match Assets devices to ConfigState AssetDevice records.
 
     Returns {Assets device_id: ConfigState device record}. Serial number is
-    the primary key (same physical value in both APIs); base MAC and IP are
-    fallbacks for records ConfigState hasn't stored a serial for. Devices
-    without a match simply have no ConfigState data yet (not onboarded /
-    initial collection pending) -- they still sync as Devices, minus ports
-    and building/floor detail.
+    the primary key; base MAC and management IP are fallbacks. Devices with
+    no match have no ConfigState data yet and still sync as Devices, minus
+    ports and building/floor detail.
     """
     by_serial = {str(d["serial_number"]).casefold(): d for d in cs_devices if d.get("serial_number")}
     by_mac = {_normalize_mac(d["base_mac_address"]): d for d in cs_devices if d.get("base_mac_address")}
@@ -137,9 +132,8 @@ class Backend(WorkerBackend):
 
         scope_sites = _scope_sites(getattr(policy, "scope", None))
         default_site = _cfg(config, "default_site", DEFAULT_SITE)
-        # Scope once, up front: the port fan-out below must see the same
-        # filtered list as devices_to_entities, or out-of-scope devices leak
-        # back in as Interface entities (see mapper.scope_devices).
+        # Scope once, up front: the port fan-out must see the same filtered
+        # list as devices_to_entities (see mapper.scope_devices).
         scoped = mapper.scope_devices(
             records,
             default_site=default_site,
@@ -168,9 +162,8 @@ class Backend(WorkerBackend):
         """Join each Assets device with its ConfigState identity + location.
 
         A ConfigState outage degrades to Assets-only data (flat site, no
-        ports) instead of failing the whole sync: Diode ingestion is
-        upsert-style, so a tick without building/floor/port detail is
-        harmless while losing the entire device/site sync is not.
+        ports) instead of failing the sync: Diode ingestion is upsert-style,
+        so a tick without building/floor/port detail is harmless.
         """
         try:
             cs_devices = list(client.retrieve("asset-device"))
@@ -220,9 +213,7 @@ class Backend(WorkerBackend):
         in-scope switch that resolved to a ConfigState device.
 
         A failed table degrades that table's fields for this tick instead of
-        aborting the sync (same upsert-style reasoning as
-        _correlated_records); ports still map from whichever of
-        port-config/port-state survived.
+        aborting the sync; ports still map from whichever tables survived.
         """
         switches = {
             record["cs_device_id"]: record

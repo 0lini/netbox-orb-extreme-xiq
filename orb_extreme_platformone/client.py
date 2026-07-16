@@ -1,19 +1,17 @@
-"""Thin Extreme Platform ONE client (bearer-token auth), on plain `requests`.
+"""Thin Extreme Platform ONE client (bearer-token auth) on plain `requests`.
 
-Covers the two Platform ONE API families this worker consumes, both served
-from the same host and taking the same API token:
+Covers the two API families this worker consumes, both served from the same
+host with the same token:
 
-  - Assets API   (POST /assets/v1/devices) -- device inventory. Contract per
-    the "Extreme Platform ONE REST API - Asset Management" OpenAPI spec
-    (v25.11.0): `page`/`limit` query params (limit max 500), a
-    `ListDevicesRequestFilter` JSON body (e.g. {"classification": "SWITCH"}),
-    and a `PagedDevice` response with top-level `data` + `total_pages`.
-  - ConfigState API (POST /configstate/v1/retrieve-*) -- per-device switch
-    configuration/state tables. Contract per the "Config State Service."
-    OpenAPI spec (v1.0.0): `page_number`/`page_size` query params, a
-    per-table GetRequest body whose filter fields are all *lists* (so one
-    call can cover many devices), and a response keyed by the table's
-    schema name (e.g. "AssetPortState") plus a `Pagination` object.
+  - Assets API (POST /assets/v1/devices): `page`/`limit` query params, a
+    filter JSON body, and a response with top-level `data` + `total_pages`.
+  - ConfigState API (POST /configstate/v1/retrieve-*): `page_number`/
+    `page_size` query params, a per-table GetRequest body whose filter
+    fields all take lists, and a response keyed by the table's schema name
+    plus a `Pagination` object.
+
+Contracts verified against the Platform ONE OpenAPI specs; see
+tests/test_openapi_contract.py.
 """
 
 from __future__ import annotations
@@ -35,9 +33,7 @@ def configstate_response_key(table: str) -> str:
     """Derive a ConfigState response key from its table name.
 
     Every retrieve-<table> endpoint wraps its records under the table's
-    PascalCase schema name: retrieve-asset-port-state -> "AssetPortState",
-    retrieve-asset-l2-vsn-suni-config -> "AssetL2VsnSuniConfig". Verified
-    against every path/response pair in the ConfigState OpenAPI spec.
+    PascalCase schema name: retrieve-asset-port-state -> "AssetPortState".
     """
     return "".join(part.capitalize() for part in table.split("-"))
 
@@ -75,9 +71,8 @@ class PlatformOneClient:
     ) -> Iterator[dict]:
         """Yield every Assets-API device of `classification`, across all pages.
 
-        `classification` is the documented ListDevicesRequestFilter enum
-        (SWITCH, WIRELESS, ROUTER, ... or ALL); it is passed through verbatim
-        so new upstream values need no client change.
+        `classification` (SWITCH, WIRELESS, ROUTER, ... or ALL) is passed
+        through verbatim so new upstream values need no client change.
         """
         page = 1
         while True:
@@ -98,9 +93,8 @@ class PlatformOneClient:
         """Yield every ConfigState record of retrieve-`table`, across all pages.
 
         `filters` is the table's GetRequest body; every filter field takes a
-        list, so batching many devices into one call is
-        `retrieve("asset-port-state", {"asset_device_id": [id1, id2, ...]})`.
-        An empty/None filter body returns the whole tenant-visible table.
+        list, e.g. retrieve("asset-port-state", {"asset_device_id": [a, b]}).
+        An empty filter body returns the whole tenant-visible table.
         """
         response_key = configstate_response_key(table)
         page = 1
