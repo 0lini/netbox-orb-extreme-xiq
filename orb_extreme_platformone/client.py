@@ -16,6 +16,7 @@ tests/test_openapi_contract.py.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
 
 import requests
@@ -39,7 +40,12 @@ def configstate_response_key(table: str) -> str:
 
 
 class PlatformOneClient:
-    """Minimal client for the Platform ONE endpoints this worker consumes."""
+    """Minimal client for the Platform ONE endpoints this worker consumes.
+
+    HTTP sessions are thread-local so independent ConfigState retrieves can
+    run concurrently (see backend parallel table fetches) without sharing a
+    `requests.Session` across threads.
+    """
 
     def __init__(
         self,
@@ -52,16 +58,25 @@ class PlatformOneClient:
             raise ValueError("PlatformOneClient requires api_token")
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
-        self._session = requests.Session()
+        self._local = threading.local()
         self._headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_token}",
         }
 
+    def _session(self) -> requests.Session:
+        session = getattr(self._local, "session", None)
+        if session is None:
+            session = requests.Session()
+            self._local.session = session
+        return session
+
     def _post(self, path: str, params: dict, body: dict) -> dict:
         url = f"{self._base_url}{path}"
-        resp = self._session.post(url, headers=self._headers, params=params, json=body, timeout=self._timeout)
+        resp = self._session().post(
+            url, headers=self._headers, params=params, json=body, timeout=self._timeout
+        )
         if resp.status_code >= 400:
             raise PlatformOneApiError(f"Platform ONE API error {resp.status_code} for {path}: {resp.text}")
         return resp.json()

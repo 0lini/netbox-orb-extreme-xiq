@@ -9,6 +9,8 @@ from orb_extreme_platformone.identity import (
     is_switch,
     platform_name,
     resolve_location,
+    role_for,
+    slugify,
 )
 
 
@@ -44,6 +46,19 @@ def test_platform_name_tolerates_a_missing_family_or_version():
     assert platform_name(None, "10.6.4.0") == "10.6.4.0"
     assert platform_name(None, None) is None
     assert platform_name("Unknown", None) is None
+
+
+def test_role_for_slugifies_assets_function():
+    assert role_for("Fabric Engine") == ("Fabric Engine", "fabric-engine")
+    assert role_for("AP") == ("AP", "ap")
+    assert role_for("  Switch Engine  ") == ("Switch Engine", "switch-engine")
+    assert role_for(None) is None
+    assert role_for("") is None
+    assert role_for("   ") is None
+    assert role_for("Unknown") is None
+    assert role_for("!!!") is None
+    assert slugify("VOSS") == "voss"
+    assert slugify("!!!") == ""
 
 
 def test_device_type_model_for_moves_the_fabric_engine_prefix_to_a_suffix():

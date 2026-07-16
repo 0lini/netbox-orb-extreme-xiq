@@ -1,11 +1,14 @@
 """Stable device naming + site/location resolution for Platform ONE devices.
 
 Site resolution prefers the ConfigState AssetLocation record (site +
-building/floor chain), falls back to the Assets record's flat `site_name`,
-then to the configured default site.
+building/floor chain), then falls back to the Assets record's flat
+`site_name`. There is no worker-side default site: callers skip devices
+that resolve to neither (Platform ONE assigns every device a site).
 """
 
 from __future__ import annotations
+
+import re
 
 # Assets API `Device.function` values that are switch OSes, mapped to the
 # canonical OS-family name used in the NetBox Platform.
@@ -45,6 +48,35 @@ def platform_name(function: str | None, os_version: str | None) -> str | None:
     """
     parts = [part for part in (platform_for(function), os_version) if part]
     return " ".join(parts) or None
+
+
+def slugify(value: str) -> str:
+    """NetBox-style slug: lowercase, non-alnum runs collapsed to hyphens.
+
+    Returns an empty string when the value has no alphanumeric characters —
+    callers must not invent a fallback slug.
+    """
+    return re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+
+
+def role_for(function: str | None) -> tuple[str, str] | None:
+    """Map Assets `function` to a NetBox DeviceRole (name, slug).
+
+    Convention: keep the Platform ONE function string as the role `name`
+    (e.g. "Fabric Engine", "AP") and derive `slug` via `slugify` (e.g.
+    `fabric-engine`, `ap`). Returns None when function is empty, the Assets
+    sentinel ``Unknown``, or when no valid slug can be derived — never
+    invents a static default role (``switch``, ``network``, ``unknown``, …).
+    """
+    if not function or not str(function).strip():
+        return None
+    name = str(function).strip()
+    if name.casefold() == "unknown":
+        return None
+    slug = slugify(name)
+    if not slug:
+        return None
+    return name, slug
 
 
 _FABRIC_ENGINE_PREFIX = "FabricEngine_"

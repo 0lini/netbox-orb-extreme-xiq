@@ -7,11 +7,18 @@ Device identity uses the native `serial` field plus deterministic names
 
 Callers pass "device records" pre-joined by backend.py:
 {"asset": <Assets Device>, "cs_device_id": str | None,
+ "cs_device": <ConfigState AssetDevice> | None,
  "location": <AssetLocation> | None}.
+
+InferredCluster rows (ConfigState retrieve-inferred-cluster) map to
+VirtualChassis via `virtual_chassis_to_entities`. LAG interfaces and
+membership come from AssetLagConfig / AssetLagState (and nested or
+fetched member ports) via `ports_to_entities`.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from collections import defaultdict
 
@@ -19,12 +26,15 @@ from netboxlabs.diode.sdk.ingester import (
     VLAN,
     CustomFieldValue,
     Device,
+    DeviceRole,
     DeviceType,
     Entity,
     Interface,
+    IPAddress,
     Location,
     Platform,
     Site,
+    VirtualChassis,
 )
 
 from . import bootstrap
@@ -34,12 +44,15 @@ from .identity import (
     expand_location_paths,
     platform_name,
     resolve_location,
+    role_for,
 )
 
 __all__ = [
+    "PORT_ENTITY_TABLE_KEYS",
     "devices_to_entities",
     "ports_to_entities",
     "scope_devices",
+    "virtual_chassis_to_entities",
 ]
 
 logger = logging.getLogger(__name__)
@@ -48,64 +61,210 @@ MANUFACTURER = "Extreme Networks"
 
 PROVENANCE_TAGS = [tag["name"] for tag in bootstrap.TAGS]
 
+# Keys `ports_to_entities` reads from its `tables` dict. Kept in sync with
+# backend.PORT_TABLES ∪ backend.INTERFACE_ID_TABLES (see unit test).
+PORT_ENTITY_TABLE_KEYS = frozenset(
+    {
+        "port_configs",
+        "port_states",
+        "vlan_properties",
+        "lag_configs",
+        "lag_states",
+        "port_capabilities",
+        "poe_configs",
+        "poe_states",
+        "interface_ips",
+    }
+)
+
 
 def _status_for(asset: dict) -> str:
     return "active" if asset.get("is_connected") else "offline"
 
 
-def _primary_ip4(asset: dict) -> str | None:
-    ip = asset.get("ip_address")
-    if not ip:
-        return None
-    return ip if "/" in ip else f"{ip}/32"
+def _primary_ips(asset: dict) -> dict[str, str]:
+    """Split Assets/AssetDevice `ip_address` into primary_ip4 vs primary_ip6.
+
+    Bare addresses get family-appropriate defaults (/32 or /128). Invalid
+    values assert nothing rather than inventing a family.
+    """
+    raw = (asset.get("ip_address") or "").strip()
+    if not raw:
+        return {}
+    try:
+        iface = ipaddress.ip_interface(raw)
+    except ValueError:
+        return {}
+    key = "primary_ip4" if iface.version == 4 else "primary_ip6"
+    return {key: str(iface)}
 
 
 def _cf_text(value: str) -> CustomFieldValue:
     return CustomFieldValue(text=value)
 
 
-def _device_kwargs(asset: dict, *, site_name: str, location: Location | None, name_source: str) -> dict:
+def _coord(value) -> float | None:
+    """Return a finite float coordinate, or None when unset/invalid."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number:  # NaN
+        return None
+    return number
+
+
+def _site_kwargs(site_name: str, coords: tuple[float | None, float | None] | None) -> dict:
+    kwargs: dict = {"name": site_name}
+    if coords:
+        lat, lon = coords
+        if lat is not None:
+            kwargs["latitude"] = lat
+        if lon is not None:
+            kwargs["longitude"] = lon
+    return kwargs
+
+
+def _device_kwargs(
+    asset: dict,
+    *,
+    site_name: str,
+    location: Location | None,
+    name_source: str,
+    cs_device_id: str | None = None,
+    cs_device: dict | None = None,
+    vc_membership: dict | None = None,
+) -> dict:
+    custom_fields: dict = {}
+    if asset.get("device_id") is not None:
+        custom_fields["platformone_device_id"] = _cf_text(str(asset["device_id"]))
+    if cs_device_id:
+        custom_fields["platformone_configstate_device_id"] = _cf_text(cs_device_id)
+
     kwargs = {
         "name": device_name(asset, name_source),
         "serial": asset.get("serial_number") or None,
         "status": _status_for(asset),
         "site": Site(name=site_name),
-        "custom_fields": {"platformone_device_id": _cf_text(str(asset["device_id"]))}
-        if asset.get("device_id") is not None
-        else {},
+        "custom_fields": custom_fields,
         "tags": PROVENANCE_TAGS,
     }
     if location is not None:
         kwargs["location"] = location
-    if asset.get("product_type"):
+
+    role = role_for(asset.get("function"))
+    if role:
+        role_name, role_slug = role
+        kwargs["role"] = DeviceRole(name=role_name, slug=role_slug)
+
+    # Assets product_type / os_version preferred; ConfigState model_name /
+    # firmware_version fill gaps when Assets omitted them (D5).
+    product_type = asset.get("product_type") or (cs_device or {}).get("model_name")
+    if product_type:
         kwargs["device_type"] = DeviceType(
-            model=device_type_model_for(asset["product_type"]), manufacturer=MANUFACTURER
+            model=device_type_model_for(product_type), manufacturer=MANUFACTURER
         )
         kwargs["manufacturer"] = MANUFACTURER
-    platform = platform_name(asset.get("function"), asset.get("os_version"))
+    os_version = asset.get("os_version") or (cs_device or {}).get("firmware_version")
+    platform = platform_name(asset.get("function"), os_version)
     if platform:
         kwargs["platform"] = Platform(name=platform, manufacturer=MANUFACTURER)
-    primary_ip4 = _primary_ip4(asset)
-    if primary_ip4:
-        kwargs["primary_ip4"] = primary_ip4
+    kwargs.update(_primary_ips(asset))
+    if vc_membership:
+        kwargs["virtual_chassis"] = VirtualChassis(name=vc_membership["name"])
+        kwargs["vc_position"] = vc_membership["position"]
     return kwargs
 
 
-def scope_devices(records: list[dict], *, site_scope: set[str] | None) -> list[dict]:
-    """Return the device records whose resolved site is in site_scope (all, if no scope).
+def _virtual_chassis_name(cluster: dict, device_one_name: str, device_two_name: str) -> str:
+    """Stable VirtualChassis name from InferredCluster peer names or member device names.
 
-    Single source of truth for scope filtering: any caller that fans out
-    per-device API calls afterwards (wired ports) must filter through it too,
-    or Interface entities would reference devices that were never emitted and
-    Diode would recreate them.
-
-    Platform ONE assigns every device a site itself, so a record without one
-    is unexpected and skipped (with a warning) rather than given an invented
-    fallback site.
+    Requires two distinct peer names so a shared placeholder like "Default" does
+    not collapse every chassis to the same NetBox name. Falls back to distinct
+    member device names, then the cluster UUID.
     """
-    scoped: list[dict] = []
+    peers = sorted(
+        {name for name in (cluster.get("device_one_peer_name"), cluster.get("device_two_peer_name")) if name}
+    )
+    if len(peers) >= 2:
+        return " / ".join(peers)
+    members = sorted({device_one_name, device_two_name} - {""})
+    if len(members) >= 2:
+        return " / ".join(members)
+    if cluster.get("id"):
+        return f"cluster-{cluster['id']}"
+    if peers:
+        return peers[0]
+    if members:
+        return members[0]
+    return "cluster-unknown"
+
+
+def virtual_chassis_to_entities(
+    clusters: list[dict],
+    *,
+    records_by_cs_id: dict[str, dict],
+    name_source: str = "hostname",
+) -> tuple[list[Entity], dict[str, dict]]:
+    """Map ConfigState InferredCluster rows to VirtualChassis entities + memberships.
+
+    `device_one_id` / `device_two_id` must already be AssetDevice UUIDs
+    (backend remaps from InferredDevice IDs). Both members must be present in
+    `records_by_cs_id` (already site-scoped); partial clusters are skipped so
+    Diode never creates an orphan half-chassis.
+
+    Returns (VC entities, {cs_device_id: {"name", "position"}}) for
+    `devices_to_entities` to attach `virtual_chassis` / `vc_position`.
+    device_one is the primary/master per the InferredCluster schema.
+    """
+    entities: list[Entity] = []
+    memberships: dict[str, dict] = {}
+    used_names: set[str] = set()
+
+    for cluster in clusters:
+        one_id = str(cluster.get("device_one_id") or "")
+        two_id = str(cluster.get("device_two_id") or "")
+        if not one_id or not two_id:
+            continue
+        record_one = records_by_cs_id.get(one_id)
+        record_two = records_by_cs_id.get(two_id)
+        if record_one is None or record_two is None:
+            continue
+
+        name_one = device_name(record_one["asset"], name_source)
+        name_two = device_name(record_two["asset"], name_source)
+        chassis_name = _virtual_chassis_name(cluster, name_one, name_two)
+        # Disambiguate when Assets hostnames collide across clusters.
+        if chassis_name in used_names and cluster.get("id"):
+            chassis_name = f"{chassis_name} ({str(cluster['id'])[:8]})"
+        used_names.add(chassis_name)
+
+        vc_kwargs: dict = {
+            "name": chassis_name,
+            "master": name_one,
+            "tags": PROVENANCE_TAGS,
+        }
+        if cluster.get("id"):
+            vc_kwargs["custom_fields"] = {"platformone_cluster_id": _cf_text(str(cluster["id"]))}
+        entities.append(Entity(virtual_chassis=VirtualChassis(**vc_kwargs)))
+
+        memberships[one_id] = {"name": chassis_name, "position": 1}
+        memberships[two_id] = {"name": chassis_name, "position": 2}
+
+    return entities, memberships
+
+
+def _iter_scoped_devices(records: list[dict], *, site_scope: set[str] | None):
+    """Yield (record, site_name, location_path) for devices that pass scope.
+
+    Single resolve_location pass used by both `scope_devices` and
+    `devices_to_entities`. Platform ONE assigns every device a site itself, so
+    a record without one is unexpected and skipped (with a warning).
+    """
     for record in records:
-        site_name = resolve_location(record.get("location"), record["asset"])[0]
+        site_name, location_path = resolve_location(record.get("location"), record["asset"])
         if site_name is None:
             asset = record["asset"]
             logger.warning(
@@ -115,8 +274,42 @@ def scope_devices(records: list[dict], *, site_scope: set[str] | None) -> list[d
             continue
         if site_scope and site_name not in site_scope:
             continue
-        scoped.append(record)
-    return scoped
+        yield record, site_name, location_path
+
+
+def scope_devices(records: list[dict], *, site_scope: set[str] | None) -> list[dict]:
+    """Return the device records whose resolved site is in site_scope (all, if no scope).
+
+    Ownership: the backend scopes once up front (port fan-out must match the
+    device list). Pass the result to `devices_to_entities` with
+    `site_scope=None` so mapping does not re-filter by site. Direct callers
+    that have not scoped yet may pass `site_scope` into `devices_to_entities`
+    instead.
+    """
+    return [record for record, _, _ in _iter_scoped_devices(records, site_scope=site_scope)]
+
+
+def _merge_site_coords(
+    site_coords: dict[str, tuple[float | None, float | None]],
+    site_name: str,
+    location: dict | None,
+) -> None:
+    """Keep the first non-null lat/lon seen per site name."""
+    if not location:
+        return
+    lat = _coord(location.get("site_latitude"))
+    lon = _coord(location.get("site_longitude"))
+    if lat is None and lon is None:
+        return
+    existing = site_coords.get(site_name)
+    if existing is None:
+        site_coords[site_name] = (lat, lon)
+        return
+    prev_lat, prev_lon = existing
+    site_coords[site_name] = (
+        prev_lat if prev_lat is not None else lat,
+        prev_lon if prev_lon is not None else lon,
+    )
 
 
 def devices_to_entities(
@@ -124,25 +317,46 @@ def devices_to_entities(
     *,
     name_source: str = "hostname",
     site_scope: set[str] | None = None,
+    virtual_chassis_entities: list[Entity] | None = None,
+    vc_memberships: dict[str, dict] | None = None,
 ) -> list[Entity]:
     """Map device records to Diode entities: one Site per distinct site, one
-    nested Location per Building/Floor level in use, one Device per device.
+    nested Location per Building/Floor level in use, VirtualChassis (if any),
+    then one Device per device.
+
+    When the caller has already run `scope_devices` (backend tick path), pass
+    `site_scope=None` so this does not re-filter by site. When calling
+    directly with an unscoped list, pass `site_scope` here instead.
+
+    `vc_memberships` is keyed by ConfigState device UUID (`cs_device_id`).
+    VirtualChassis entities are emitted after locations and before devices so
+    Diode can resolve membership references in the same ingest batch.
     """
     entities: list[Entity] = []
-    resolved: list[tuple[dict, str, list[str]]] = []
+    resolved: list[tuple[dict, str, list[str], str | None, dict | None]] = []
     site_names: set[str] = set()
     location_paths: set[tuple[str, tuple[str, ...]]] = set()
+    site_coords: dict[str, tuple[float | None, float | None]] = {}
 
-    scoped = scope_devices(records, site_scope=site_scope)
-    for record in scoped:
-        site_name, location_path = resolve_location(record.get("location"), record["asset"])
-        resolved.append((record["asset"], site_name, location_path))
+    # One pass: filter (if site_scope set) + resolve. Does not call
+    # scope_devices separately (avoids a second filter pass inside the mapper).
+    for record, site_name, location_path in _iter_scoped_devices(records, site_scope=site_scope):
+        resolved.append(
+            (
+                record["asset"],
+                site_name,
+                location_path,
+                record.get("cs_device_id"),
+                record.get("cs_device"),
+            )
+        )
         site_names.add(site_name)
+        _merge_site_coords(site_coords, site_name, record.get("location"))
         if location_path:
             location_paths.add((site_name, tuple(location_path)))
 
     for site_name in sorted(site_names):
-        entities.append(Entity(site=Site(name=site_name)))
+        entities.append(Entity(site=Site(**_site_kwargs(site_name, site_coords.get(site_name)))))
 
     # expand_location_paths orders ancestors before descendants, so one pass
     # can thread `parent` through the cache.
@@ -153,9 +367,21 @@ def devices_to_entities(
         location_cache[(site_name, path)] = location
         entities.append(Entity(location=location))
 
-    for asset, site_name, location_path in resolved:
+    if virtual_chassis_entities:
+        entities.extend(virtual_chassis_entities)
+
+    for asset, site_name, location_path, cs_device_id, cs_device in resolved:
         location = location_cache.get((site_name, tuple(location_path))) if location_path else None
-        kwargs = _device_kwargs(asset, site_name=site_name, location=location, name_source=name_source)
+        membership = (vc_memberships or {}).get(cs_device_id) if cs_device_id else None
+        kwargs = _device_kwargs(
+            asset,
+            site_name=site_name,
+            location=location,
+            name_source=name_source,
+            cs_device_id=cs_device_id,
+            cs_device=cs_device,
+            vc_membership=membership,
+        )
         entities.append(Entity(device=Device(**kwargs)))
 
     return entities
@@ -163,8 +389,12 @@ def devices_to_entities(
 
 # ConfigState reports oper_speed / oper_duplex / connector_type as integer
 # codes with no value table in its OpenAPI spec. Only codes verified against
-# production hardware are mapped; unknown codes assert nothing. oper_state is
-# the exception: its schema description matches IF-MIB ifOperStatus.
+# production hardware (or fixtures derived from that gear) are mapped;
+# unknown codes assert nothing. oper_state is the exception: its schema
+# description matches IF-MIB ifOperStatus.
+#
+# Verified in-repo today (I3): oper_speed 4, oper_duplex 2, connector_type 1/2.
+# Config-side speed/duplex integers remain unverified (I7) and are not used.
 VERIFIED_OPER_SPEED_KBPS = {4: 1_000_000}
 VERIFIED_DUPLEX = {2: "full"}
 OPER_STATE_UP = 1
@@ -190,6 +420,74 @@ def _by_key(records: list[dict]) -> dict[str, list[dict]]:
         if key:
             grouped[key].append(record)
     return grouped
+
+
+def _first_row(grouped: dict[str, list[dict]], key: str, *, table: str) -> dict:
+    """First row for a join key, or `{}` when the key is absent.
+
+    Warns when multiple rows share the key: callers that take only the first
+    row would otherwise silently drop siblings.
+    """
+    rows = grouped.get(key)
+    if not rows:
+        return {}
+    if len(rows) > 1:
+        logger.warning(
+            "Multiple %s rows share join key %r (%d rows); using the first",
+            table,
+            key,
+            len(rows),
+        )
+    return rows[0]
+
+
+def _optional_first_row(grouped: dict[str, list[dict]], key: str, *, table: str) -> dict | None:
+    """First row when the key is present, else None (distinguishes missing PoE)."""
+    if key not in grouped:
+        return None
+    return _first_row(grouped, key, table=table)
+
+
+def _capabilities_by_port(records: list[dict]) -> dict[tuple[str, str], dict]:
+    """Index AssetPortCapabilities by (asset_device_id, port_name).
+
+    Capabilities have no asset_interface_id. `port_name` alone is reused across
+    every switch (e.g. `1:43`), so the ConfigState device id must be part of
+    the join key — same device scope other port tables get from backend
+    bucketing / asset_interface_id.
+    """
+    by_key: dict[tuple[str, str], dict] = {}
+    for record in records:
+        name = record.get("port_name")
+        if not name:
+            continue
+        device_id = str(record.get("asset_device_id") or record.get("device_id") or "")
+        key = (device_id, str(name))
+        if key in by_key:
+            logger.warning(
+                "Multiple port_capabilities rows share port_name %r on device %r; using the first",
+                str(name),
+                device_id or "?",
+            )
+            continue
+        by_key[key] = record
+    return by_key
+
+
+def _capability_for_port(
+    capabilities: dict[tuple[str, str], dict], *, device_id: str, name: str
+) -> dict | None:
+    """Look up a capability row for one port on one device.
+
+    Falls back to an empty device id when capability rows omit asset_device_id
+    but the caller already scoped the table to a single switch.
+    """
+    hit = capabilities.get((device_id, name))
+    if hit is not None:
+        return hit
+    if device_id:
+        return capabilities.get(("", name))
+    return None
 
 
 def _vlan_fields(vlan_records: list[dict]) -> dict:
@@ -224,8 +522,74 @@ def _vlan_fields(vlan_records: list[dict]) -> dict:
     return fields
 
 
+def _vlan_fields_from_port_config(config: dict) -> dict:
+    """Fallback VLANs from AssetPortConfig when vlan-properties rows are absent.
+
+    `native_vlan` is the untagged VLAN on a trunk; `port_mode` True enables
+    tagging (Fabric Engine). Applied only as a fallback (I6).
+    """
+    native = config.get("native_vlan")
+    if not isinstance(native, int) or native <= 0:
+        return {}
+    fields: dict = {"untagged_vlan": VLAN(vid=native)}
+    port_mode = config.get("port_mode")
+    if port_mode is True:
+        fields["mode"] = "tagged"
+    elif port_mode is False:
+        fields["mode"] = "access"
+    return fields
+
+
+def _poe_mode(config: dict, state: dict) -> str | None:
+    """NetBox poe_mode=pse when the port is a PoE PSE; omit otherwise.
+
+    `supported` (state) is authoritative; `enable` (config) True also implies
+    PSE. classification/standard → poe_type is intentionally not mapped (I4):
+    OpenAPI has no verified value table for those integers.
+    """
+    if state.get("supported") is True:
+        return "pse"
+    if config.get("enable") is True:
+        return "pse"
+    return None
+
+
+def _interface_ip_cidr(row: dict) -> str | None:
+    """Build address/prefix for AssetInterfaceIpAddress → Diode IPAddress."""
+    address = row.get("address")
+    if not address:
+        return None
+    raw = str(address).strip()
+    if not raw:
+        return None
+    if "/" in raw:
+        try:
+            return str(ipaddress.ip_interface(raw))
+        except ValueError:
+            return None
+    mask = row.get("mask_length")
+    if isinstance(mask, int) and 0 <= mask <= 128:
+        try:
+            return str(ipaddress.ip_interface(f"{raw}/{mask}"))
+        except ValueError:
+            return None
+    try:
+        return str(ipaddress.ip_interface(raw))
+    except ValueError:
+        return None
+
+
 def _port_kwargs(
-    *, device: str, name: str, interface_id: str | None, config: dict, state: dict, vlan_records: list[dict]
+    *,
+    device: str,
+    name: str,
+    interface_id: str | None,
+    config: dict,
+    state: dict,
+    vlan_records: list[dict],
+    capability: dict | None = None,
+    poe_config: dict | None = None,
+    poe_state: dict | None = None,
 ) -> dict:
     kwargs: dict = {
         "device": device,
@@ -259,30 +623,212 @@ def _port_kwargs(
     if state.get("mac_address"):
         kwargs["primary_mac_address"] = state["mac_address"]
 
-    kwargs.update(_vlan_fields(vlan_records))
+    if capability is not None and isinstance(capability.get("management_port"), bool):
+        kwargs["mgmt_only"] = capability["management_port"]
+
+    poe = _poe_mode(poe_config or {}, poe_state or {})
+    if poe is not None:
+        kwargs["poe_mode"] = poe
+
+    vlan_fields = _vlan_fields(vlan_records)
+    if not vlan_fields:
+        vlan_fields = _vlan_fields_from_port_config(config)
+    kwargs.update(vlan_fields)
     return kwargs
 
 
-def ports_to_entities(tables: dict[str, list[dict]], *, device: str) -> list[Entity]:
-    """Map one switch's ConfigState port tables to Interface entities.
+def _lag_name(config: dict, state: dict) -> str | None:
+    """LAG Interface name: prefer `name`, else `lag-{lag_number}`."""
+    name = config.get("name") or state.get("name")
+    if name:
+        return str(name)
+    lag_number = config.get("lag_number") or state.get("lag_number")
+    if lag_number is not None and str(lag_number):
+        return f"lag-{lag_number}"
+    return None
 
-    `tables` holds the device's "port_configs", "port_states", and
-    "vlan_properties" rows. The port list is the union of config+state rows
-    joined on asset_interface_id (name as fallback): config alone still
-    yields a port, state alone still yields link state.
+
+def _member_interface_names(lag_row: dict) -> list[str]:
+    """Member port names from a nested `member_ports` list on a LAG row."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for member in lag_row.get("member_ports") or []:
+        if not isinstance(member, dict):
+            continue
+        name = member.get("interface_name")
+        if name and str(name) not in seen:
+            seen.add(str(name))
+            names.append(str(name))
+    return names
+
+
+def _lag_membership(configs: list[dict], states: list[dict]) -> dict[str, str]:
+    """Map member interface name → LAG interface name.
+
+    Config membership is authoritative; state membership fills gaps when
+    config rows omit nested members.
     """
-    configs = _by_key(tables.get("port_configs") or [])
-    states = _by_key(tables.get("port_states") or [])
-    vlans = _by_key(tables.get("vlan_properties") or [])
+    membership: dict[str, str] = {}
+    for config in configs:
+        lag = _lag_name(config, {})
+        if not lag:
+            continue
+        for member in _member_interface_names(config):
+            membership.setdefault(member, lag)
+    for state in states:
+        lag = _lag_name({}, state)
+        if not lag:
+            continue
+        for member in _member_interface_names(state):
+            membership.setdefault(member, lag)
+    return membership
 
+
+def _lag_kwargs(
+    *,
+    device: str,
+    name: str,
+    interface_id: str | None,
+    config: dict,
+    vlan_records: list[dict],
+    poe_config: dict | None = None,
+    poe_state: dict | None = None,
+) -> dict:
+    kwargs: dict = {
+        "device": device,
+        "name": name,
+        "type": "lag",
+        "custom_fields": {"platformone_interface_id": _cf_text(interface_id)} if interface_id else {},
+        "tags": PROVENANCE_TAGS,
+    }
+    enabled = config.get("enabled")
+    if isinstance(enabled, bool):
+        kwargs["enabled"] = enabled
+    poe = _poe_mode(poe_config or {}, poe_state or {})
+    if poe is not None:
+        kwargs["poe_mode"] = poe
+    vlan_fields = _vlan_fields(vlan_records)
+    if not vlan_fields:
+        vlan_fields = _vlan_fields_from_port_config(config)
+    kwargs.update(vlan_fields)
+    return kwargs
+
+
+def _ip_entities_for_interface(
+    *,
+    device: str,
+    interface_name: str,
+    rows: list[dict],
+) -> list[Entity]:
     entities: list[Entity] = []
+    seen: set[str] = set()
+    for row in rows:
+        cidr = _interface_ip_cidr(row)
+        if not cidr or cidr in seen:
+            continue
+        seen.add(cidr)
+        entities.append(
+            Entity(
+                ip_address=IPAddress(
+                    address=cidr,
+                    assigned_object_interface=Interface(device=device, name=interface_name),
+                    tags=PROVENANCE_TAGS,
+                )
+            )
+        )
+    return entities
+
+
+def _lag_entities(
+    *,
+    device: str,
+    lag_configs: list[dict],
+    lag_states: list[dict],
+    vlans: dict[str, list[dict]],
+    poe_configs: dict[str, list[dict]],
+    poe_states: dict[str, list[dict]],
+    interface_ips: dict[str, list[dict]],
+) -> tuple[list[Entity], set[str], set[str], dict[str, str], dict[str, str]]:
+    """Emit LAG parent interfaces. Returns entities plus join bookkeeping."""
+    lag_configs_by_key = _by_key(lag_configs)
+    lag_states_by_key = _by_key(lag_states)
+    lag_keys = set(lag_configs_by_key) | set(lag_states_by_key)
+
+    lag_interface_ids = {
+        str(record["asset_interface_id"])
+        for records in (*lag_configs_by_key.values(), *lag_states_by_key.values())
+        for record in records
+        if record.get("asset_interface_id")
+    }
+    membership = _lag_membership(lag_configs, lag_states)
+    lag_names: set[str] = set()
+    entities: list[Entity] = []
+    emitted_keys: dict[str, str] = {}
+
+    for key in sorted(lag_keys):
+        config = _first_row(lag_configs_by_key, key, table="lag_configs")
+        state = _first_row(lag_states_by_key, key, table="lag_states")
+        name = _lag_name(config, state)
+        if not name:
+            continue
+        lag_names.add(name)
+        interface_id = config.get("asset_interface_id") or state.get("asset_interface_id")
+        kwargs = _lag_kwargs(
+            device=device,
+            name=name,
+            interface_id=str(interface_id) if interface_id else None,
+            config=config,
+            vlan_records=vlans.get(key, []),
+            poe_config=_optional_first_row(poe_configs, key, table="poe_configs"),
+            poe_state=_optional_first_row(poe_states, key, table="poe_states"),
+        )
+        entities.append(Entity(interface=Interface(**kwargs)))
+        emitted_keys[key] = name
+        entities.extend(
+            _ip_entities_for_interface(device=device, interface_name=name, rows=interface_ips.get(key, []))
+        )
+
+    return entities, lag_names, lag_interface_ids, membership, emitted_keys
+
+
+def _physical_port_entities(
+    *,
+    device: str,
+    configs: dict[str, list[dict]],
+    states: dict[str, list[dict]],
+    vlans: dict[str, list[dict]],
+    capabilities: dict[tuple[str, str], dict],
+    poe_configs: dict[str, list[dict]],
+    poe_states: dict[str, list[dict]],
+    interface_ips: dict[str, list[dict]],
+    lag_names: set[str],
+    lag_interface_ids: set[str],
+    membership: dict[str, str],
+) -> tuple[list[Entity], set[str], dict[str, str]]:
+    """Emit physical (non-LAG) port interfaces joined on asset_interface_id."""
+    entities: list[Entity] = []
+    emitted_port_names: set[str] = set(lag_names)
+    emitted_keys: dict[str, str] = {}
+
     for key in sorted(set(configs) | set(states)):
-        config = configs.get(key, [{}])[0]
-        state = states.get(key, [{}])[0]
+        config = _first_row(configs, key, table="port_configs")
+        state = _first_row(states, key, table="port_states")
         name = config.get("name") or state.get("name")
         if not name:
             continue
         interface_id = config.get("asset_interface_id") or state.get("asset_interface_id")
+        # Skip rows that are the LAG interface itself (same asset_interface_id).
+        if interface_id and str(interface_id) in lag_interface_ids:
+            continue
+        if str(name) in lag_names:
+            continue
+        port_device_id = str(
+            config.get("asset_device_id")
+            or state.get("asset_device_id")
+            or config.get("device_id")
+            or state.get("device_id")
+            or ""
+        )
         kwargs = _port_kwargs(
             device=device,
             name=str(name),
@@ -290,6 +836,131 @@ def ports_to_entities(tables: dict[str, list[dict]], *, device: str) -> list[Ent
             config=config,
             state=state,
             vlan_records=vlans.get(key, []),
+            capability=_capability_for_port(
+                capabilities, device_id=port_device_id, name=str(name)
+            ),
+            poe_config=_optional_first_row(poe_configs, key, table="poe_configs"),
+            poe_state=_optional_first_row(poe_states, key, table="poe_states"),
         )
+        lag_parent = membership.get(str(name))
+        if lag_parent:
+            kwargs["lag"] = Interface(device=device, name=lag_parent)
         entities.append(Entity(interface=Interface(**kwargs)))
+        emitted_port_names.add(str(name))
+        emitted_keys[key] = str(name)
+        entities.extend(
+            _ip_entities_for_interface(
+                device=device, interface_name=str(name), rows=interface_ips.get(key, [])
+            )
+        )
+
+    return entities, emitted_port_names, emitted_keys
+
+
+def _orphan_member_entities(
+    *,
+    device: str,
+    membership: dict[str, str],
+    emitted_port_names: set[str],
+) -> list[Entity]:
+    """Members known only from LAG membership (no port-config/state row yet)."""
+    entities: list[Entity] = []
+    for member_name, lag_parent in sorted(membership.items()):
+        if member_name in emitted_port_names:
+            continue
+        entities.append(
+            Entity(
+                interface=Interface(
+                    device=device,
+                    name=member_name,
+                    lag=Interface(device=device, name=lag_parent),
+                    tags=PROVENANCE_TAGS,
+                )
+            )
+        )
+        emitted_port_names.add(member_name)
+    return entities
+
+
+def _orphan_ip_entities(
+    *,
+    device: str,
+    interface_ips: dict[str, list[dict]],
+    emitted_keys: dict[str, str],
+) -> list[Entity]:
+    """IPs keyed only by id/name that did not match an emitted interface above."""
+    entities: list[Entity] = []
+    for key, rows in sorted(interface_ips.items()):
+        if key in emitted_keys:
+            continue
+        name = None
+        for row in rows:
+            name = row.get("interface_name") or row.get("name")
+            if name:
+                break
+        if not name and key and ("/" in key or key.startswith("lag")):
+            # Key may itself be a front-panel name when asset_interface_id absent.
+            name = key
+        if not name:
+            continue
+        entities.extend(_ip_entities_for_interface(device=device, interface_name=str(name), rows=rows))
+    return entities
+
+
+def ports_to_entities(tables: dict[str, list[dict]], *, device: str) -> list[Entity]:
+    """Map one switch's ConfigState port + LAG tables to Interface entities.
+
+    `tables` holds the device's "port_configs", "port_states",
+    "vlan_properties", "lag_configs", "lag_states", optional
+    "port_capabilities", "poe_configs", "poe_states", and "interface_ips"
+    rows. Physical ports are the union of config+state rows joined on
+    asset_interface_id (name as fallback). LAG interfaces come from lag
+    config/state (type `lag`); member ports get Diode `Interface.lag`
+    pointing at the parent LAG. Interface IP rows become Diode IPAddress
+    entities assigned to the matching interface.
+    """
+    configs = _by_key(tables.get("port_configs") or [])
+    states = _by_key(tables.get("port_states") or [])
+    vlans = _by_key(tables.get("vlan_properties") or [])
+    capabilities = _capabilities_by_port(tables.get("port_capabilities") or [])
+    poe_configs = _by_key(tables.get("poe_configs") or [])
+    poe_states = _by_key(tables.get("poe_states") or [])
+    interface_ips = _by_key(tables.get("interface_ips") or [])
+    lag_configs = tables.get("lag_configs") or []
+    lag_states = tables.get("lag_states") or []
+
+    entities, lag_names, lag_interface_ids, membership, emitted_keys = _lag_entities(
+        device=device,
+        lag_configs=lag_configs,
+        lag_states=lag_states,
+        vlans=vlans,
+        poe_configs=poe_configs,
+        poe_states=poe_states,
+        interface_ips=interface_ips,
+    )
+
+    port_entities, emitted_port_names, port_keys = _physical_port_entities(
+        device=device,
+        configs=configs,
+        states=states,
+        vlans=vlans,
+        capabilities=capabilities,
+        poe_configs=poe_configs,
+        poe_states=poe_states,
+        interface_ips=interface_ips,
+        lag_names=lag_names,
+        lag_interface_ids=lag_interface_ids,
+        membership=membership,
+    )
+    entities.extend(port_entities)
+    emitted_keys.update(port_keys)
+
+    entities.extend(
+        _orphan_member_entities(
+            device=device, membership=membership, emitted_port_names=emitted_port_names
+        )
+    )
+    entities.extend(
+        _orphan_ip_entities(device=device, interface_ips=interface_ips, emitted_keys=emitted_keys)
+    )
     return entities
