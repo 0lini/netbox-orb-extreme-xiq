@@ -39,9 +39,11 @@ from netboxlabs.diode.sdk.ingester import (
 
 from . import bootstrap
 from .identity import (
+    SLASH_PORT_FUNCTIONS,
     device_name,
     device_type_model_for,
     expand_location_paths,
+    native_port_name,
     platform_name,
     resolve_location,
     role_for,
@@ -848,9 +850,7 @@ def _physical_port_entities(
         emitted_port_names.add(name)
         emitted_keys[key] = name
         entities.extend(
-            _ip_entities_for_interface(
-                device=device, interface_name=name, rows=interface_ips.get(key, [])
-            )
+            _ip_entities_for_interface(device=device, interface_name=name, rows=interface_ips.get(key, []))
         )
 
     return entities, emitted_port_names, emitted_keys
@@ -906,7 +906,37 @@ def _orphan_ip_entities(
     return entities
 
 
-def ports_to_entities(tables: dict[str, list[dict]], *, device: str) -> list[Entity]:
+# Row fields that carry a front-panel port name across the ConfigState port
+# tables (port/LAG `name`, vlan/IP/member `interface_name`, capabilities
+# `port_name`). Normalized together so name-based joins stay consistent.
+_PORT_NAME_FIELDS = ("name", "interface_name", "port_name")
+
+
+def _native_port_name_row(row: dict, function: str | None) -> dict:
+    new = dict(row)
+    for field in _PORT_NAME_FIELDS:
+        value = new.get(field)
+        if isinstance(value, str):
+            new[field] = native_port_name(value, function)
+    if isinstance(new.get("member_ports"), list):
+        new["member_ports"] = [
+            _native_port_name_row(member, function) if isinstance(member, dict) else member
+            for member in new["member_ports"]
+        ]
+    return new
+
+
+def _native_port_name_tables(tables: dict[str, list[dict]], function: str | None) -> dict[str, list[dict]]:
+    """Copy `tables` with slot:port names rewritten to the OS-native notation.
+
+    Rows are copied (not mutated) so callers' table dicts stay untouched.
+    """
+    return {key: [_native_port_name_row(row, function) for row in rows or []] for key, rows in tables.items()}
+
+
+def ports_to_entities(
+    tables: dict[str, list[dict]], *, device: str, function: str | None = None
+) -> list[Entity]:
     """Map one switch's ConfigState port + LAG tables to Interface entities.
 
     `tables` holds the device's "port_configs", "port_states",
@@ -917,7 +947,13 @@ def ports_to_entities(tables: dict[str, list[dict]], *, device: str) -> list[Ent
     config/state (type `lag`); member ports get Diode `Interface.lag`
     pointing at the parent LAG. Interface IP rows become Diode IPAddress
     entities assigned to the matching interface.
+
+    `function` (the Assets OS family) rewrites ConfigState's slot:port
+    notation to the OS-native form (1:52 -> 1/52 on Fabric Engine / VOSS)
+    before any joining, so every emitted name and cross-reference agrees.
     """
+    if function and function.upper() in SLASH_PORT_FUNCTIONS:
+        tables = _native_port_name_tables(tables, function)
     configs = _by_key(tables.get("port_configs") or [])
     states = _by_key(tables.get("port_states") or [])
     vlans = _by_key(tables.get("vlan_properties") or [])
@@ -955,9 +991,7 @@ def ports_to_entities(tables: dict[str, list[dict]], *, device: str) -> list[Ent
     emitted_keys.update(port_keys)
 
     entities.extend(
-        _orphan_member_entities(
-            device=device, membership=membership, emitted_port_names=emitted_port_names
-        )
+        _orphan_member_entities(device=device, membership=membership, emitted_port_names=emitted_port_names)
     )
     entities.extend(
         _orphan_ip_entities(device=device, interface_ips=interface_ips, emitted_keys=emitted_keys)

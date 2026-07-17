@@ -22,10 +22,29 @@ PLATFORM_BY_FUNCTION = {
 # Gates the per-switch ConfigState port sync in backend.py.
 SWITCH_DEVICE_FUNCTIONS = frozenset(PLATFORM_BY_FUNCTION)
 
+# OS families whose CLI names ports slot/port (1/52). Platform ONE ConfigState
+# reports slot:port (1:52) for every OS; Switch Engine / EXOS are colon-native
+# and keep that form.
+SLASH_PORT_FUNCTIONS = frozenset({"FABRIC ENGINE", "VOSS"})
+
+# slot:port with optional channel levels, e.g. "1:52" or "1:52:1".
+_COLON_PORT_NAME_RE = re.compile(r"^\d+(?::\d+)+$")
+
 
 def is_switch(function: str | None) -> bool:
     """Whether an Assets `function` value is a switch OS (see SWITCH_DEVICE_FUNCTIONS)."""
     return bool(function) and function.upper() in SWITCH_DEVICE_FUNCTIONS
+
+
+def native_port_name(name: str, function: str | None) -> str:
+    """Rewrite ConfigState's slot:port notation to the switch OS's native form.
+
+    "1:52" becomes "1/52" on Fabric Engine / VOSS; every other OS (and any
+    name that is not pure slot:port, e.g. "lag 1" or "vlan10") passes through.
+    """
+    if function and function.upper() in SLASH_PORT_FUNCTIONS and _COLON_PORT_NAME_RE.match(name):
+        return name.replace(":", "/")
+    return name
 
 
 def platform_for(function: str | None) -> str | None:
@@ -59,20 +78,35 @@ def slugify(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
 
 
-def role_for(function: str | None) -> tuple[str, str] | None:
-    """Map Assets `function` to a NetBox DeviceRole (name, slug).
+# Assets `function` -> functional NetBox DeviceRole name. The function field
+# holds the OS family for switches, which already lives in Platform; the role
+# collapses those to one "Switch". Functions not listed here (e.g. "Router",
+# "Appliance") pass through as-is.
+ROLE_BY_FUNCTION = {
+    "SWITCH ENGINE": "Switch",
+    "FABRIC ENGINE": "Switch",
+    "EXOS": "Switch",
+    "VOSS": "Switch",
+    "AP": "Wireless AP",
+}
 
-    Convention: keep the Platform ONE function string as the role `name`
-    (e.g. "Fabric Engine", "AP") and derive `slug` via `slugify` (e.g.
-    `fabric-engine`, `ap`). Returns None when function is empty, the Assets
-    sentinel ``Unknown``, or when no valid slug can be derived — never
-    invents a static default role (``switch``, ``network``, ``unknown``, …).
+
+def role_for(function: str | None) -> tuple[str, str] | None:
+    """Map Assets `function` to a functional NetBox DeviceRole (name, slug).
+
+    Switch OS families become "Switch" and APs "Wireless AP" (see
+    ROLE_BY_FUNCTION); unlisted functions keep the Platform ONE string as
+    the role `name`. `slug` derives via `slugify` (e.g. `wireless-ap`).
+    Returns None when function is empty, the Assets sentinel ``Unknown``,
+    or when no valid slug can be derived — never invents a static default
+    role (``network``, ``unknown``, …).
     """
     if not function or not str(function).strip():
         return None
     name = str(function).strip()
     if name.casefold() == "unknown":
         return None
+    name = ROLE_BY_FUNCTION.get(name.upper(), name)
     slug = slugify(name)
     if not slug:
         return None

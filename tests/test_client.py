@@ -55,7 +55,7 @@ def test_get_devices_paginates_and_sends_the_classification_filter():
             ASSETS_URL,
             match=[
                 responses.matchers.query_param_matcher({"page": str(page), "limit": "500"}),
-                responses.matchers.json_params_matcher({"classification": "SWITCH"}),
+                responses.matchers.json_params_matcher({"classification": "ALL"}),
             ],
             json={"data": data, "page": page, "total_pages": 2, "total_count": 2},
             status=200,
@@ -71,12 +71,12 @@ def test_get_devices_passes_a_custom_classification_through_verbatim():
     responses.add(
         responses.POST,
         ASSETS_URL,
-        match=[responses.matchers.json_params_matcher({"classification": "ALL"})],
+        match=[responses.matchers.json_params_matcher({"classification": "WIRELESS"})],
         json={"data": [], "page": 1, "total_pages": 1, "total_count": 0},
         status=200,
     )
 
-    assert list(_client().get_devices(classification="ALL")) == []
+    assert list(_client().get_devices(classification="WIRELESS")) == []
 
 
 @responses.activate

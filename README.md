@@ -85,7 +85,8 @@ No undocumented endpoints are used.
 | `orb_extreme_platformone/identity.py` | Device naming, switch detection, site/building/floor resolution, device-type model mapping. |
 | `orb_extreme_platformone/mapper.py` | Platform ONE → Diode entity mapping: devices, sites, locations, switch ports, LAGs, VLANs, VirtualChassis. |
 | `orb_extreme_platformone/bootstrap.py` | Idempotent NetBox schema setup (custom fields and tags). |
-| `orb_extreme_platformone/backend.py` | Orb Agent worker entrypoint: Assets↔ConfigState correlation, batched table fetches, standalone dry-run runner. |
+| `orb_extreme_platformone/backend.py` | Orb Agent worker entrypoint: Assets↔ConfigState correlation, batched table fetches. |
+| `orb_extreme_platformone/__main__.py` | Standalone dry-run runner (`python -m orb_extreme_platformone`). |
 | `agent.yaml` | Example Orb Agent policy. |
 | `tests/` | Offline pytest suite, plus opt-in contract checks against downloaded Platform ONE OpenAPI specs. |
 
@@ -122,7 +123,7 @@ Policy `config:` keys (see `agent.yaml` for a complete example):
 | Key | Description | Default |
 |-----|-------------|---------|
 | `BOOTSTRAP` | Run schema setup before the sync (first run only). | `false` |
-| `classification` | Assets device filter: `SWITCH`, `WIRELESS`, `ROUTER`, … or `ALL`. Port sync only runs for switch-OS devices regardless. | `SWITCH` |
+| `classification` | Assets device filter: `ALL`, `SWITCH`, `WIRELESS`, `ROUTER`, …. Port sync only runs for switch-OS devices regardless. | `ALL` |
 | `name_source` | Device naming source: `hostname` or `serial`. | `hostname` |
 | `scope.sites` | Restrict the sync to specific resolved sites; `["*"]` for all. | `["*"]` |
 
@@ -142,7 +143,7 @@ same-named environment variable; policy config takes precedence.
 ```bash
 pip install -e ".[dev]"
 export PLATFORMONE_API_TOKEN=...            # or put it in .env (gitignored)
-python -m orb_extreme_platformone.backend   # dry run: fetch, map, print entities
+python -m orb_extreme_platformone           # dry run: fetch, map, print entities
 pytest                                      # offline test suite
 ruff check . && ruff format --check .       # lint + format
 ```

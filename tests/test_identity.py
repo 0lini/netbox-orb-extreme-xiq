@@ -7,11 +7,28 @@ from orb_extreme_platformone.identity import (
     device_type_model_for,
     expand_location_paths,
     is_switch,
+    native_port_name,
     platform_name,
     resolve_location,
     role_for,
     slugify,
 )
+
+
+def test_native_port_name_rewrites_colon_ports_for_slash_native_oses():
+    assert native_port_name("1:52", "Fabric Engine") == "1/52"
+    assert native_port_name("1:52", "FABRIC ENGINE") == "1/52"
+    assert native_port_name("1:52", "VOSS") == "1/52"
+    assert native_port_name("2:52:1", "Fabric Engine") == "2/52/1"
+
+
+def test_native_port_name_keeps_colon_native_oses_and_non_port_names():
+    assert native_port_name("1:52", "Switch Engine") == "1:52"
+    assert native_port_name("1:52", "EXOS") == "1:52"
+    assert native_port_name("1:52", None) == "1:52"
+    assert native_port_name("vlan10", "Fabric Engine") == "vlan10"
+    assert native_port_name("lag 1", "Fabric Engine") == "lag 1"
+    assert native_port_name("mgmt", "Fabric Engine") == "mgmt"
 
 
 def test_device_name_prefers_hostname_then_serial_then_mac_then_id():
@@ -48,10 +65,17 @@ def test_platform_name_tolerates_a_missing_family_or_version():
     assert platform_name("Unknown", None) is None
 
 
-def test_role_for_slugifies_assets_function():
-    assert role_for("Fabric Engine") == ("Fabric Engine", "fabric-engine")
-    assert role_for("AP") == ("AP", "ap")
-    assert role_for("  Switch Engine  ") == ("Switch Engine", "switch-engine")
+def test_role_for_maps_functions_to_functional_roles():
+    assert role_for("Fabric Engine") == ("Switch", "switch")
+    assert role_for("Switch Engine") == ("Switch", "switch")
+    assert role_for("EXOS") == ("Switch", "switch")
+    assert role_for("VOSS") == ("Switch", "switch")
+    assert role_for("AP") == ("Wireless AP", "wireless-ap")
+    assert role_for("  Switch Engine  ") == ("Switch", "switch")
+
+
+def test_role_for_passes_unlisted_functions_through_slugified():
+    assert role_for("Router") == ("Router", "router")
     assert role_for(None) is None
     assert role_for("") is None
     assert role_for("   ") is None
