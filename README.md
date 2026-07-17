@@ -26,7 +26,7 @@ Platform ONE APIs (Assets + ConfigState) ──► orb_extreme_platformone ─�
 | Switch ports (ConfigState) | `Interface` — name, admin state (`enabled`), link state (`mark_connected`), speed/duplex/type, description, MAC address, `mgmt_only`, `poe_mode`, untagged/tagged VLANs with 802.1Q `mode`, `platformone_id` custom field |
 | VLAN definitions (ConfigState) | `VLAN` — `vid` from `vlan_number`, `name` from `vlan_name` when non-empty, optional `site` from the device's resolved site, provenance tags |
 | Interface IP addresses (ConfigState) | `IPAddress` — address/prefix assigned to the matching interface |
-| Link aggregation (ConfigState) | `Interface` — LAG parent (`type=lag`, name, admin `enabled`, VLAN trunk/access, `poe_mode` when joined, `platformone_id`); member ports reference the parent via Diode `Interface.lag` |
+| Link aggregation (ConfigState) | `Interface` — LAG parent (`type=lag`, name, admin `enabled`, VLAN trunk/access, `poe_mode` when joined, optional description/link/MAC from duplicate port rows, `platformone_id`); member ports use the same physical-port fields plus Diode `Interface.lag` |
 | Inferred clusters (ConfigState) | `VirtualChassis` — name from peer names, master = primary member (`device_one`), member `vc_position`, provenance tags, `platformone_id` custom field |
 
 The worker asserts a **fixed field set**: each field is either always
@@ -330,18 +330,41 @@ filtered by lag row id.
 
 - **LAG parent** is an `Interface` with `type=lag`, name from `name` (or
   `lag-{lag_number}` when name is absent), admin `enabled` from config, and
-  `platformone_id` from `asset_interface_id`. VLAN properties that
-  share the LAG's `asset_interface_id` are applied the same way as for
-  physical ports (bare `vid` refs).
-  PoE and interface IP joins also apply on that interface id.
-- **Members** set Diode `Interface.lag` to the parent LAG (by device + name).
-  Membership prefers config member ports; state members fill gaps. A member
-  named only on the LAG (no port-config/state row) is still emitted so
-  membership is not lost.
-- **Not mapped:** LACP `mode` / `load_balance_algo` / `lacp_key` (integer
-  enums without a published value table, and no first-class Diode fields),
-  MLAG peer tables, or `InferredLag` (the asset lag tables already carry
-  name, admin state, and membership under AssetDevice UUIDs).
+  `platformone_id` from `asset_interface_id` (the existing interface UUID CF —
+  `lag_number` is naming-only, not a second custom field). Shared joins on
+  that interface id apply vlan-properties (untagged / tagged VLANs by bare
+  `vid` and 802.1Q `mode`), PoE (`poe_mode`), and interface IP addresses the
+  same way as for physical ports. When AssetPortConfig/State also returns the
+  LAG's `asset_interface_id`, description, `mark_connected`, and
+  `primary_mac_address` are taken from those rows (and port-config
+  `native_vlan` is a VLAN fallback); speed/duplex/connector type are not,
+  so `type=lag` is never overwritten. Port-table duplicates are not emitted
+  as a second Interface.
+- **Members** set Diode `Interface.lag` to the parent LAG (by device + name)
+  and otherwise use the full physical-port field set when port
+  config/state/capability/PoE/VLAN data exists. Membership prefers config
+  member ports; state members fill gaps. A member named only on the LAG (no
+  port-config/state row) is still emitted with device, name, `lag`, and
+  provenance tags so membership is not lost.
+- **Not mapped (LACP / MLT extras):** AssetLagConfig also reports `mode`
+  (schema: STATIC / LACP / VLACP on Fabric Engine; STATIC / LACP /
+  HEALTH_CHECK on Switch Engine), `lacp_key` (string, VOSS only),
+  `load_balance_algo` (integer; VOSS always CUSTOM), and `dynamic`. Diode's
+  Interface exposes `lag` for membership and `mode` for **802.1Q**
+  access/tagged only — there is no `lacp_key`, load-balance, or LACP-mode
+  field. The `mode` / `load_balance_algo` integers have no published value
+  table in OpenAPI (same rule as unverified `oper_speed` codes), so they
+  are not guessed into `description` or invented custom fields. Revisit
+  when Platform ONE publishes enum tables or Diode/NetBox gains first-class
+  LACP attributes. Also not mapped: MLAG peer tables
+  (`retrieve-asset-mlag-*`), RSMLT, or `InferredLag` (the asset lag tables
+  already carry name, admin state, and membership under AssetDevice UUIDs).
+  AssetLagState has no oper_state / MAC / speed of its own — those only
+  appear if port tables also list the LAG interface id.
+
+A failed lag-config or lag-state fetch degrades that table for the tick;
+ports still map from whichever tables survived. VirtualChassis sync is
+unchanged and independent.
 
 ### VirtualChassis from inferred clusters
 
