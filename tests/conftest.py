@@ -57,30 +57,6 @@ VLAN_PROPERTIES = {
     "vlans": [{"vlan_number": 10}, {"vlan_number": 20}, {"vlan_number": 30}],
 }
 
-VLAN_CONFIGS = [
-    {
-        "device_id": "cs-uuid-42",
-        "asset_interface_id": "if-vlan-10",
-        "vlan_number": 10,
-        "vlan_name": "Users",
-        "vlan_type": 1,
-    },
-    {
-        "device_id": "cs-uuid-42",
-        "asset_interface_id": "if-vlan-20",
-        "vlan_number": 20,
-        "vlan_name": "Servers",
-        "vlan_type": 1,
-    },
-    {
-        "device_id": "cs-uuid-42",
-        "asset_interface_id": "if-vlan-30",
-        "vlan_number": 30,
-        "vlan_name": "Guest",
-        "vlan_type": 1,
-    },
-]
-
 
 class Rec:
     """Records constructor kwargs so tests can assert on them without the real protobuf SDK."""
