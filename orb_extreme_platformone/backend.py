@@ -472,19 +472,14 @@ class Backend(WorkerBackend):
     ) -> dict[str, str]:
         """Map each collected asset_interface_id to its device UUID.
 
-        Includes vlan_properties so interface-IP / PoE-config retrieves cover
-        VLAN-facing interfaces that never appear in port/LAG/PoE-state rows.
+        Scans every PORT_TABLES key: vlan_properties matters so interface-IP /
+        PoE-config retrieves cover VLAN-facing interfaces that never appear in
+        port/LAG/PoE-state rows; port_capabilities rows carry no
+        asset_interface_id and contribute nothing.
         """
         interface_to_device: dict[str, str] = {}
         for device_id, tables in tables_by_device.items():
-            for key in (
-                "port_configs",
-                "port_states",
-                "vlan_properties",
-                "lag_configs",
-                "lag_states",
-                "poe_states",
-            ):
+            for key in PORT_TABLES:
                 for row in tables.get(key) or []:
                     interface_id = str(row.get("asset_interface_id") or "")
                     if interface_id:

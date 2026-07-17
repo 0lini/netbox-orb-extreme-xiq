@@ -340,7 +340,7 @@ def devices_to_entities(
     Diode can resolve membership references in the same ingest batch.
     """
     entities: list[Entity] = []
-    resolved: list[tuple[dict, str, list[str], str | None, dict | None]] = []
+    resolved: list[tuple[dict, str, list[str]]] = []
     site_names: set[str] = set()
     location_paths: set[tuple[str, tuple[str, ...]]] = set()
     site_coords: dict[str, tuple[float | None, float | None]] = {}
@@ -348,15 +348,7 @@ def devices_to_entities(
     # One pass: filter (if site_scope set) + resolve. Does not call
     # scope_devices separately (avoids a second filter pass inside the mapper).
     for record, site_name, location_path in _iter_scoped_devices(records, site_scope=site_scope):
-        resolved.append(
-            (
-                record["asset"],
-                site_name,
-                location_path,
-                record.get("cs_device_id"),
-                record.get("cs_device"),
-            )
-        )
+        resolved.append((record, site_name, location_path))
         site_names.add(site_name)
         _merge_site_coords(site_coords, site_name, record.get("location"))
         if location_path:
@@ -377,15 +369,16 @@ def devices_to_entities(
     if virtual_chassis_entities:
         entities.extend(virtual_chassis_entities)
 
-    for asset, site_name, location_path, cs_device_id, cs_device in resolved:
+    for record, site_name, location_path in resolved:
         location = location_cache.get((site_name, tuple(location_path))) if location_path else None
+        cs_device_id = record.get("cs_device_id")
         membership = (vc_memberships or {}).get(cs_device_id) if cs_device_id else None
         kwargs = _device_kwargs(
-            asset,
+            record["asset"],
             site_name=site_name,
             location=location,
             name_source=name_source,
-            cs_device=cs_device,
+            cs_device=record.get("cs_device"),
             vc_membership=membership,
         )
         entities.append(Entity(device=Device(**kwargs)))
@@ -762,8 +755,7 @@ def _lag_entities(
 
     lag_interface_ids = {
         str(record["asset_interface_id"])
-        for records in (*lag_configs_by_key.values(), *lag_states_by_key.values())
-        for record in records
+        for record in (*lag_configs, *lag_states)
         if record.get("asset_interface_id")
     }
     membership = _lag_membership(lag_configs, lag_states)
