@@ -82,13 +82,7 @@ def slugify(value: str) -> str:
 # holds the OS family for switches, which already lives in Platform; the role
 # collapses those to one "Switch". Functions not listed here (e.g. "Router",
 # "Appliance") pass through as-is.
-ROLE_BY_FUNCTION = {
-    "SWITCH ENGINE": "Switch",
-    "FABRIC ENGINE": "Switch",
-    "EXOS": "Switch",
-    "VOSS": "Switch",
-    "AP": "Wireless AP",
-}
+ROLE_BY_FUNCTION = dict.fromkeys(SWITCH_DEVICE_FUNCTIONS, "Switch") | {"AP": "Wireless AP"}
 
 
 def role_for(function: str | None) -> tuple[str, str] | None:
@@ -134,7 +128,7 @@ def device_type_model_for(product_type: str | None) -> str | None:
 
 
 def device_name(device: dict, name_source: str = "hostname") -> str:
-    """Deterministic device name; falls back to serial/MAC/Assets device_id."""
+    """Deterministic device name; falls back to serial, then Assets device_id."""
     serial = device.get("serial_number")
     if name_source == "serial" and serial:
         return serial
@@ -143,9 +137,6 @@ def device_name(device: dict, name_source: str = "hostname") -> str:
         return hostname
     if serial:
         return serial
-    mac = device.get("mac_address")
-    if mac:
-        return mac
     return f"platformone-{device.get('device_id')}"
 
 

@@ -165,10 +165,7 @@ def _fetch_cs_devices(client: PlatformOneClient, assets: list[dict]) -> list[dic
     serials = sorted({str(a["serial_number"]) for a in assets if a.get("serial_number")})
     if not serials:
         return []
-    records: dict[str, dict] = {}
-    for rec in client.retrieve("asset-device", {"serial_number": serials}):
-        records.setdefault(str(rec.get("id")), rec)
-    return list(records.values())
+    return list(client.retrieve("asset-device", {"serial_number": serials}))
 
 
 def _index_unique(items: Iterable[dict], key_fn, *, label: str) -> dict:
@@ -270,26 +267,6 @@ class Backend(WorkerBackend):
         return entities
 
     @staticmethod
-    def _asset_id_for_cluster_member(
-        cluster: dict, member_field: str, nested_field: str, inferred_to_asset: dict[str, str]
-    ) -> str:
-        """Resolve an InferredCluster member to an AssetDevice UUID.
-
-        Prefers the InferredDevice lookup map; falls back to a nested
-        `device_one` / `device_two` object's `asset_device_id` when the API
-        expands it (undocumented on InferredCluster but present in practice).
-        """
-        raw = str(cluster.get(member_field) or "")
-        if raw in inferred_to_asset:
-            return inferred_to_asset[raw]
-        nested = cluster.get(nested_field)
-        if isinstance(nested, dict):
-            nested_asset_id = str(nested.get("asset_device_id") or "")
-            if nested_asset_id:
-                return nested_asset_id
-        return raw
-
-    @staticmethod
     def _fetch_inferred_clusters(client: PlatformOneClient, asset_device_ids: list[str]) -> list[dict]:
         """Fetch InferredCluster rows for the given AssetDevice UUIDs.
 
@@ -315,22 +292,16 @@ class Backend(WorkerBackend):
         by_id: dict[str, dict] = {}
         for filter_field in CLUSTER_MEMBER_FILTERS:
             for cluster in client.retrieve("inferred-cluster", {filter_field: inferred_ids}):
+                one = str(cluster.get("device_one_id") or "")
+                two = str(cluster.get("device_two_id") or "")
+                # Members the map misses are out of scope; the mapper skips
+                # those clusters, so the raw InferredDevice UUID passes through.
                 remapped = {
                     **cluster,
-                    "device_one_id": Backend._asset_id_for_cluster_member(
-                        cluster, "device_one_id", "device_one", inferred_to_asset
-                    ),
-                    "device_two_id": Backend._asset_id_for_cluster_member(
-                        cluster, "device_two_id", "device_two", inferred_to_asset
-                    ),
+                    "device_one_id": inferred_to_asset.get(one, one),
+                    "device_two_id": inferred_to_asset.get(two, two),
                 }
-                cluster_id = str(remapped.get("id") or "")
-                if cluster_id:
-                    by_id[cluster_id] = remapped
-                else:
-                    # Spec marks id optional in practice; fall back to member pair.
-                    key = f"{remapped.get('device_one_id')}:{remapped.get('device_two_id')}"
-                    by_id.setdefault(key, remapped)
+                by_id[str(remapped.get("id"))] = remapped
         return list(by_id.values())
 
     @staticmethod
@@ -472,19 +443,14 @@ class Backend(WorkerBackend):
     ) -> dict[str, str]:
         """Map each collected asset_interface_id to its device UUID.
 
-        Includes vlan_properties so interface-IP / PoE-config retrieves cover
-        VLAN-facing interfaces that never appear in port/LAG/PoE-state rows.
+        Scans every PORT_TABLES key: vlan_properties matters so interface-IP /
+        PoE-config retrieves cover VLAN-facing interfaces that never appear in
+        port/LAG/PoE-state rows; port_capabilities rows carry no
+        asset_interface_id and contribute nothing.
         """
         interface_to_device: dict[str, str] = {}
         for device_id, tables in tables_by_device.items():
-            for key in (
-                "port_configs",
-                "port_states",
-                "vlan_properties",
-                "lag_configs",
-                "lag_states",
-                "poe_states",
-            ):
+            for key in PORT_TABLES:
                 for row in tables.get(key) or []:
                     interface_id = str(row.get("asset_interface_id") or "")
                     if interface_id:
