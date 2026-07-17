@@ -718,11 +718,24 @@ def test_ports_to_entities_skips_lag_row_duplicated_in_port_tables(stub_sdk):
         "asset_interface_id": "lag-if-1",
         "name": "lag1",
         "enabled": True,
+        "description": "core lag",
+        "native_vlan": 99,
+        "port_mode": True,
+    }
+    lag_as_state = {
+        "asset_device_id": "cs-uuid-42",
+        "asset_interface_id": "lag-if-1",
+        "name": "lag1",
+        "oper_state": 1,
+        "mac_address": "aa:bb:cc:dd:ee:99",
+        "oper_speed": 4,
+        "oper_duplex": 1,
+        "connector_type": 1,
     }
     entities = mapper.ports_to_entities(
         _tables(
             port_configs=[lag_as_port],
-            port_states=[],
+            port_states=[lag_as_state],
             vlan_properties=[],
             lag_configs=[{**LAG_CONFIG, "member_ports": []}],
             lag_states=[],
@@ -734,8 +747,96 @@ def test_ports_to_entities_skips_lag_row_duplicated_in_port_tables(stub_sdk):
     assert len(ports) == 1
     assert ports[0]["name"] == "lag1"
     assert ports[0]["type"] == "lag"
+    assert ports[0]["description"] == "core lag"
+    assert ports[0]["mark_connected"] is True
+    assert ports[0]["primary_mac_address"] == "aa:bb:cc:dd:ee:99"
+    assert ports[0]["mode"] == "tagged"
+    assert ports[0]["untagged_vlan"]._kw["vid"] == 99
+    assert "speed" not in ports[0]
+    assert "duplex" not in ports[0]
 
 
+def test_ports_to_entities_lag_applies_vlan_trunk_from_vlan_properties(stub_sdk):
+    """Trunk VLANs on the LAG parent come from vlan-properties on its interface id."""
+    vlan_on_lag = {
+        "asset_interface_id": "lag-if-1",
+        "port_vlan": 10,
+        "vlans": [{"vlan_number": 10}, {"vlan_number": 20}, {"vlan_number": 30}],
+    }
+    entities = mapper.ports_to_entities(
+        _tables(
+            port_configs=[],
+            port_states=[],
+            vlan_properties=[vlan_on_lag],
+            lag_configs=[{**LAG_CONFIG, "member_ports": []}],
+            lag_states=[],
+        ),
+        device="sw-idf1",
+    )
+
+    lag = entities[0]._kw["interface"]._kw
+    assert lag["type"] == "lag"
+    assert lag["mode"] == "tagged"
+    assert lag["untagged_vlan"]._kw["vid"] == 10
+    assert [v._kw["vid"] for v in lag["tagged_vlans"]] == [20, 30]
+
+
+def test_ports_to_entities_lag_joins_poe_and_ip_like_physical_ports(stub_sdk):
+    """PoE + IP joins use the LAG's asset_interface_id the same way as ports."""
+    poe_state = {"asset_interface_id": "lag-if-1", "supported": True}
+    poe_config = {"asset_interface_id": "lag-if-1", "enable": True}
+    ips = [
+        {
+            "asset_interface_id": "lag-if-1",
+            "interface_name": "lag1",
+            "address": "10.0.0.1",
+            "mask_length": 24,
+        }
+    ]
+    entities = mapper.ports_to_entities(
+        _tables(
+            port_configs=[],
+            port_states=[],
+            vlan_properties=[],
+            lag_configs=[{**LAG_CONFIG, "member_ports": []}],
+            lag_states=[],
+            poe_states=[poe_state],
+            poe_configs=[poe_config],
+            interface_ips=ips,
+        ),
+        device="sw-idf1",
+    )
+
+    interfaces = [e._kw["interface"]._kw for e in entities if "interface" in e._kw]
+    ips_out = [e._kw["ip_address"]._kw for e in entities if "ip_address" in e._kw]
+    assert interfaces[0]["type"] == "lag"
+    assert interfaces[0]["poe_mode"] == "pse"
+    assert cf(interfaces[0]["custom_fields"]["platformone_id"]._kw) == "lag-if-1"
+    assert "lag_number" not in interfaces[0].get("custom_fields", {})
+    assert ips_out[0]["address"] == "10.0.0.1/24"
+    assert ips_out[0]["assigned_object_interface"]._kw["name"] == "lag1"
+
+
+def test_ports_to_entities_ignores_unmapped_lacp_fields_on_lag(stub_sdk):
+    """LACP mode/key/algo have no Diode target; do not invent description or mode."""
+    lag = {
+        **LAG_CONFIG,
+        "member_ports": [],
+        "mode": 2,
+        "lacp_key": "100",
+        "load_balance_algo": 1,
+        "dynamic": True,
+    }
+    entities = mapper.ports_to_entities(
+        _tables(port_configs=[], port_states=[], vlan_properties=[], lag_configs=[lag], lag_states=[]),
+        device="sw-idf1",
+    )
+
+    kwargs = entities[0]._kw["interface"]._kw
+    assert kwargs["type"] == "lag"
+    assert "mode" not in kwargs  # 802.1Q mode only; not LACP mode
+    assert "description" not in kwargs
+    assert "lacp_key" not in kwargs
 
 
 SWITCH_ASSET_PEER = {

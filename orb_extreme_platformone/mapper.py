@@ -785,14 +785,25 @@ def _lag_kwargs(
     vlan_records: list[dict],
     poe_config: dict | None = None,
     poe_state: dict | None = None,
+    port_config: dict | None = None,
+    port_state: dict | None = None,
     vlan_names: dict[int, str] | None = None,
 ) -> dict:
     """Build Diode kwargs for a LAG parent interface.
 
     Native fields from AssetLagConfig/State: `type=lag`, name, admin
     `enabled`, `platformone_id` (`asset_interface_id`). Shared joins on that
-    interface id fill VLAN trunk/access and PoE the same way as physical
-    ports. Interface IP rows are attached separately via `_lag_entities`.
+    interface id fill VLAN trunk/access, PoE, and (separately) IPAddress
+    entities. When port config/state also lists the same id, pull fields lag
+    tables lack (`description`, `mark_connected`, MAC, port-config VLAN
+    fallback) — never speed/duplex/connector `type`, which would overwrite
+    `type=lag`.
+
+    AssetLagConfig also carries LACP `mode` / `lacp_key` / `load_balance_algo`
+    / `dynamic`, but Diode's Interface has no matching fields and the mode /
+    algo integers have no published value table — leave them unmapped (see
+    README). `lag_number` is naming-only (`lag-{n}` fallback); it is not a
+    second custom field (redundant with `platformone_id`).
     """
     kwargs = _iface_base_kwargs(
         device=device,
@@ -805,11 +816,19 @@ def _lag_kwargs(
     kwargs["type"] = "lag"
 
     vlan_fields = _vlan_fields(vlan_records, names=vlan_names)
-    if not vlan_fields:
-        vlan_fields = _vlan_fields_from_port_config(config, names=vlan_names)
+    if not vlan_fields and port_config:
+        vlan_fields = _vlan_fields_from_port_config(port_config, names=vlan_names)
     kwargs.update(vlan_fields)
-    return kwargs
 
+    if port_config and port_config.get("description"):
+        kwargs["description"] = port_config["description"]
+    if port_state:
+        oper_state = port_state.get("oper_state")
+        if oper_state is not None:
+            kwargs["mark_connected"] = oper_state == OPER_STATE_UP
+        if port_state.get("mac_address"):
+            kwargs["primary_mac_address"] = port_state["mac_address"]
+    return kwargs
 
 
 def _ip_entities_for_interface(
@@ -846,12 +865,16 @@ def _lag_entities(
     poe_configs: dict[str, list[dict]],
     poe_states: dict[str, list[dict]],
     interface_ips: dict[str, list[dict]],
+    port_configs: dict[str, list[dict]] | None = None,
+    port_states: dict[str, list[dict]] | None = None,
     vlan_names: dict[int, str] | None = None,
 ) -> tuple[list[Entity], set[str], set[str], dict[str, str], dict[str, str]]:
     """Emit LAG parent interfaces. Returns entities plus join bookkeeping."""
     lag_configs_by_key = _by_key(lag_configs)
     lag_states_by_key = _by_key(lag_states)
     lag_keys = set(lag_configs_by_key) | set(lag_states_by_key)
+    port_configs = port_configs or {}
+    port_states = port_states or {}
 
     lag_interface_ids = {
         str(record["asset_interface_id"])
@@ -879,6 +902,8 @@ def _lag_entities(
             vlan_records=vlans.get(key, []),
             poe_config=_optional_first_row(poe_configs, key, table="poe_configs"),
             poe_state=_optional_first_row(poe_states, key, table="poe_states"),
+            port_config=_optional_first_row(port_configs, key, table="port_configs"),
+            port_state=_optional_first_row(port_states, key, table="port_states"),
             vlan_names=vlan_names,
         )
         entities.append(Entity(interface=Interface(**kwargs)))
@@ -888,7 +913,6 @@ def _lag_entities(
         )
 
     return entities, lag_names, lag_interface_ids, membership, emitted_keys
-
 
 
 def _physical_port_entities(
@@ -1071,6 +1095,8 @@ def ports_to_entities(
         poe_configs=poe_configs,
         poe_states=poe_states,
         interface_ips=interface_ips,
+        port_configs=configs,
+        port_states=states,
         vlan_names=vlan_names,
     )
     entities.extend(lag_entities)

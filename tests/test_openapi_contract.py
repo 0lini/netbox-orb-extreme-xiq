@@ -104,7 +104,12 @@ def test_configstate_response_keys_and_filter_fields_match(configstate_spec):
 
 
 def test_asset_lag_schema_fields_still_exist(configstate_spec):
-    """LAG sync depends on name/enabled/member_ports on config and names on members."""
+    """LAG sync depends on name/enabled/member_ports on config and names on members.
+
+    LACP extras (`mode`, `lacp_key`, `load_balance_algo`, `dynamic`) are
+    intentionally unmapped today but must remain on the schema so a future
+    verified enum / Diode field can pick them up without a silent drop.
+    """
     schemas = configstate_spec["components"]["schemas"]
     lag_config = schemas["AssetLagConfig"]["properties"]
     for field in (
@@ -115,6 +120,10 @@ def test_asset_lag_schema_fields_still_exist(configstate_spec):
         "enabled",
         "member_ports",
         "id",
+        "mode",
+        "lacp_key",
+        "load_balance_algo",
+        "dynamic",
     ):
         assert field in lag_config
     lag_state = schemas["AssetLagState"]["properties"]
