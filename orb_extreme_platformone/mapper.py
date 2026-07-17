@@ -63,6 +63,17 @@ MANUFACTURER = "Extreme Networks"
 
 PROVENANCE_TAGS = [tag["name"] for tag in bootstrap.TAGS]
 
+# Extreme Networks reserves VIDs 4060–4094 for internal use (e.g. Fabric
+# Engine). These are filtered from Diode ingest — not emitted as VLAN
+# entities and not asserted on Interface untagged/tagged memberships.
+EXTREME_RESERVED_VLAN_VID_MIN = 4060
+EXTREME_RESERVED_VLAN_VID_MAX = 4094
+
+
+def _is_extreme_reserved_vlan(vid: int) -> bool:
+    """True for Extreme reserved internal VLAN IDs (4060–4094 inclusive)."""
+    return EXTREME_RESERVED_VLAN_VID_MIN <= vid <= EXTREME_RESERVED_VLAN_VID_MAX
+
 # Keys `ports_to_entities` reads from its `tables` dict. Kept in sync with
 # backend.PORT_TABLES ∪ backend.INTERFACE_ID_TABLES (see unit test).
 PORT_ENTITY_TABLE_KEYS = frozenset(
@@ -70,6 +81,7 @@ PORT_ENTITY_TABLE_KEYS = frozenset(
         "port_configs",
         "port_states",
         "vlan_properties",
+        "vlan_configs",
         "lag_configs",
         "lag_states",
         "port_capabilities",
@@ -466,14 +478,92 @@ def _capabilities_by_port(records: list[dict]) -> dict[tuple[str, str], dict]:
     return by_key
 
 
-def _vlan_fields(vlan_records: list[dict]) -> dict:
+def _vlan_names_by_vid(vlan_configs: list[dict]) -> dict[int, str]:
+    """vid → name from AssetVlanConfig rows.
+
+    First non-empty `vlan_name` wins; conflicting names for the same vid are
+    logged and ignored. Empty / missing names and Extreme reserved VIDs are
+    omitted so callers keep bare-vid references (or skip reserved entirely).
+    """
+    names: dict[int, str] = {}
+    for record in vlan_configs:
+        vid = record.get("vlan_number")
+        if not isinstance(vid, int) or vid <= 0 or _is_extreme_reserved_vlan(vid):
+            continue
+        raw = record.get("vlan_name")
+        if not isinstance(raw, str):
+            continue
+        name = raw.strip()
+        if not name:
+            continue
+        existing = names.get(vid)
+        if existing is None:
+            names[vid] = name
+        elif existing != name:
+            logger.warning(
+                "Conflicting vlan_name for vid %s (%r vs %r); keeping %r",
+                vid,
+                existing,
+                name,
+                existing,
+            )
+    return names
+
+
+def _vlan_ref(vid: int, *, names: dict[int, str] | None = None) -> VLAN:
+    """Build a Diode VLAN reference: vid always, name only when known."""
+    kwargs: dict = {"vid": vid}
+    if names and vid in names:
+        kwargs["name"] = names[vid]
+    return VLAN(**kwargs)
+
+
+def _vlan_entities(
+    vlan_configs: list[dict],
+    *,
+    site: str | None = None,
+    names: dict[int, str] | None = None,
+) -> list[Entity]:
+    """Emit Diode VLAN entities from AssetVlanConfig (one per vid).
+
+    `vlan_number` is required; `vlan_name` and `site` are asserted only when
+    Platform ONE / the device record actually provides them. Provenance tags
+    mark discovery ownership. Pass `names` from `_vlan_names_by_vid` when the
+    caller already built that map (avoids a second scan).
+    """
+    if names is None:
+        names = _vlan_names_by_vid(vlan_configs)
+    seen: set[int] = set()
+    for record in vlan_configs:
+        vid = record.get("vlan_number")
+        if isinstance(vid, int) and vid > 0 and not _is_extreme_reserved_vlan(vid):
+            seen.add(vid)
+    entities: list[Entity] = []
+    for vid in sorted(seen):
+        kwargs: dict = {"vid": vid, "tags": PROVENANCE_TAGS}
+        if vid in names:
+            kwargs["name"] = names[vid]
+        if site:
+            kwargs["site"] = Site(name=site)
+        entities.append(Entity(vlan=VLAN(**kwargs)))
+    return entities
+
+
+def _vlan_fields(
+    vlan_records: list[dict],
+    *,
+    names: dict[int, str] | None = None,
+) -> dict:
     """untagged_vlan / tagged_vlans / mode from AssetInterfaceVlanProperties rows.
 
     `port_vlan` is the untagged VLAN; the nested `vlans` list is every VLAN
     mapped onto the interface, so the tagged set is that list minus the
-    untagged VLAN. Interfaces with no VLAN rows assert none of the three:
-    on Fabric Engine a port can be mapped straight into an I-SID instead of
-    a VLAN, and inventing an access mode would misrepresent configuration.
+    untagged VLAN. Extreme reserved VIDs (4060–4094) are omitted from both.
+    Interfaces with no VLAN rows — or only reserved VIDs after filtering —
+    assert none of the three: on Fabric Engine a port can be mapped straight
+    into an I-SID instead of a VLAN, and inventing an access mode would
+    misrepresent configuration. When AssetVlanConfig supplied a name for a
+    vid, interface refs include it.
     """
     untagged: int | None = None
     mapped: set[int] = set()
@@ -485,29 +575,42 @@ def _vlan_fields(vlan_records: list[dict]) -> dict:
             number = vlan_map.get("vlan_number") if isinstance(vlan_map, dict) else None
             if isinstance(number, int) and number > 0:
                 mapped.add(number)
-    tagged = sorted(mapped - {untagged} if untagged is not None else mapped)
+    if untagged is not None and _is_extreme_reserved_vlan(untagged):
+        untagged = None
+    tagged = sorted(
+        vid
+        for vid in (mapped - {untagged} if untagged is not None else mapped)
+        if not _is_extreme_reserved_vlan(vid)
+    )
 
     fields: dict = {}
     if untagged is not None:
-        fields["untagged_vlan"] = VLAN(vid=untagged)
+        fields["untagged_vlan"] = _vlan_ref(untagged, names=names)
     if tagged:
-        fields["tagged_vlans"] = [VLAN(vid=vid) for vid in tagged]
+        fields["tagged_vlans"] = [_vlan_ref(vid, names=names) for vid in tagged]
         fields["mode"] = "tagged"
     elif untagged is not None:
         fields["mode"] = "access"
     return fields
 
 
-def _vlan_fields_from_port_config(config: dict) -> dict:
+def _vlan_fields_from_port_config(
+    config: dict, *, names: dict[int, str] | None = None
+) -> dict:
     """Fallback VLANs from AssetPortConfig when vlan-properties rows are absent.
 
     `native_vlan` is the untagged VLAN on a trunk; `port_mode` True enables
-    tagging (Fabric Engine). Applied only as a fallback.
+    tagging (Fabric Engine). Applied only as a fallback. Extreme reserved
+    VIDs (4060–4094) are omitted entirely (no VLAN fields, no mode).
     """
     native = config.get("native_vlan")
-    if not isinstance(native, int) or native <= 0:
+    if (
+        not isinstance(native, int)
+        or native <= 0
+        or _is_extreme_reserved_vlan(native)
+    ):
         return {}
-    fields: dict = {"untagged_vlan": VLAN(vid=native)}
+    fields: dict = {"untagged_vlan": _vlan_ref(native, names=names)}
     port_mode = config.get("port_mode")
     if port_mode is True:
         fields["mode"] = "tagged"
@@ -548,6 +651,31 @@ def _interface_ip_cidr(row: dict) -> str | None:
         return None
 
 
+def _iface_base_kwargs(
+    *,
+    device: str,
+    name: str,
+    interface_id: str | None,
+    config: dict,
+    poe_config: dict | None = None,
+    poe_state: dict | None = None,
+) -> dict:
+    """Shared identity / admin / PoE fields for physical ports and LAG parents."""
+    kwargs: dict = {
+        "device": device,
+        "name": name,
+        "custom_fields": {"platformone_id": _cf_text(interface_id)} if interface_id else {},
+        "tags": PROVENANCE_TAGS,
+    }
+    enabled = config.get("enabled")
+    if isinstance(enabled, bool):
+        kwargs["enabled"] = enabled
+    poe = _poe_mode(poe_config or {}, poe_state or {})
+    if poe is not None:
+        kwargs["poe_mode"] = poe
+    return kwargs
+
+
 def _port_kwargs(
     *,
     device: str,
@@ -559,17 +687,16 @@ def _port_kwargs(
     capability: dict | None = None,
     poe_config: dict | None = None,
     poe_state: dict | None = None,
+    vlan_names: dict[int, str] | None = None,
 ) -> dict:
-    kwargs: dict = {
-        "device": device,
-        "name": name,
-        "custom_fields": {"platformone_id": _cf_text(interface_id)} if interface_id else {},
-        "tags": PROVENANCE_TAGS,
-    }
-
-    enabled = config.get("enabled")
-    if isinstance(enabled, bool):
-        kwargs["enabled"] = enabled
+    kwargs = _iface_base_kwargs(
+        device=device,
+        name=name,
+        interface_id=interface_id,
+        config=config,
+        poe_config=poe_config,
+        poe_state=poe_state,
+    )
 
     # Link state maps to mark_connected, never to `enabled` -- admin state is
     # asserted separately above.
@@ -595,13 +722,9 @@ def _port_kwargs(
     if capability is not None and isinstance(capability.get("management_port"), bool):
         kwargs["mgmt_only"] = capability["management_port"]
 
-    poe = _poe_mode(poe_config or {}, poe_state or {})
-    if poe is not None:
-        kwargs["poe_mode"] = poe
-
-    vlan_fields = _vlan_fields(vlan_records)
+    vlan_fields = _vlan_fields(vlan_records, names=vlan_names)
     if not vlan_fields:
-        vlan_fields = _vlan_fields_from_port_config(config)
+        vlan_fields = _vlan_fields_from_port_config(config, names=vlan_names)
     kwargs.update(vlan_fields)
     return kwargs
 
@@ -662,25 +785,31 @@ def _lag_kwargs(
     vlan_records: list[dict],
     poe_config: dict | None = None,
     poe_state: dict | None = None,
+    vlan_names: dict[int, str] | None = None,
 ) -> dict:
-    kwargs: dict = {
-        "device": device,
-        "name": name,
-        "type": "lag",
-        "custom_fields": {"platformone_id": _cf_text(interface_id)} if interface_id else {},
-        "tags": PROVENANCE_TAGS,
-    }
-    enabled = config.get("enabled")
-    if isinstance(enabled, bool):
-        kwargs["enabled"] = enabled
-    poe = _poe_mode(poe_config or {}, poe_state or {})
-    if poe is not None:
-        kwargs["poe_mode"] = poe
-    vlan_fields = _vlan_fields(vlan_records)
+    """Build Diode kwargs for a LAG parent interface.
+
+    Native fields from AssetLagConfig/State: `type=lag`, name, admin
+    `enabled`, `platformone_id` (`asset_interface_id`). Shared joins on that
+    interface id fill VLAN trunk/access and PoE the same way as physical
+    ports. Interface IP rows are attached separately via `_lag_entities`.
+    """
+    kwargs = _iface_base_kwargs(
+        device=device,
+        name=name,
+        interface_id=interface_id,
+        config=config,
+        poe_config=poe_config,
+        poe_state=poe_state,
+    )
+    kwargs["type"] = "lag"
+
+    vlan_fields = _vlan_fields(vlan_records, names=vlan_names)
     if not vlan_fields:
-        vlan_fields = _vlan_fields_from_port_config(config)
+        vlan_fields = _vlan_fields_from_port_config(config, names=vlan_names)
     kwargs.update(vlan_fields)
     return kwargs
+
 
 
 def _ip_entities_for_interface(
@@ -717,6 +846,7 @@ def _lag_entities(
     poe_configs: dict[str, list[dict]],
     poe_states: dict[str, list[dict]],
     interface_ips: dict[str, list[dict]],
+    vlan_names: dict[int, str] | None = None,
 ) -> tuple[list[Entity], set[str], set[str], dict[str, str], dict[str, str]]:
     """Emit LAG parent interfaces. Returns entities plus join bookkeeping."""
     lag_configs_by_key = _by_key(lag_configs)
@@ -749,6 +879,7 @@ def _lag_entities(
             vlan_records=vlans.get(key, []),
             poe_config=_optional_first_row(poe_configs, key, table="poe_configs"),
             poe_state=_optional_first_row(poe_states, key, table="poe_states"),
+            vlan_names=vlan_names,
         )
         entities.append(Entity(interface=Interface(**kwargs)))
         emitted_keys[key] = name
@@ -757,6 +888,7 @@ def _lag_entities(
         )
 
     return entities, lag_names, lag_interface_ids, membership, emitted_keys
+
 
 
 def _physical_port_entities(
@@ -772,6 +904,7 @@ def _physical_port_entities(
     lag_names: set[str],
     lag_interface_ids: set[str],
     membership: dict[str, str],
+    vlan_names: dict[int, str] | None = None,
 ) -> tuple[list[Entity], set[str], dict[str, str]]:
     """Emit physical (non-LAG) port interfaces joined on asset_interface_id."""
     entities: list[Entity] = []
@@ -801,6 +934,7 @@ def _physical_port_entities(
             capability=capabilities.get((port_device_id, name)),
             poe_config=_optional_first_row(poe_configs, key, table="poe_configs"),
             poe_state=_optional_first_row(poe_states, key, table="poe_states"),
+            vlan_names=vlan_names,
         )
         lag_parent = membership.get(name)
         if lag_parent:
@@ -888,28 +1022,38 @@ def _native_port_name_tables(tables: dict[str, list[dict]], function: str | None
 
 
 def ports_to_entities(
-    tables: dict[str, list[dict]], *, device: str, function: str | None = None
+    tables: dict[str, list[dict]],
+    *,
+    device: str,
+    function: str | None = None,
+    site: str | None = None,
 ) -> list[Entity]:
-    """Map one switch's ConfigState port + LAG tables to Interface entities.
+    """Map one switch's ConfigState port + LAG + VLAN tables to Diode entities.
 
     `tables` holds the device's "port_configs", "port_states",
-    "vlan_properties", "lag_configs", "lag_states", optional
+    "vlan_properties", "vlan_configs", "lag_configs", "lag_states", optional
     "port_capabilities", "poe_configs", "poe_states", and "interface_ips"
     rows. Physical ports are the union of config+state rows joined on
     asset_interface_id. LAG interfaces come from lag
     config/state (type `lag`); member ports get Diode `Interface.lag`
     pointing at the parent LAG. Interface IP rows become Diode IPAddress
-    entities assigned to the matching interface.
+    entities assigned to the matching interface. AssetVlanConfig rows become
+    Diode VLAN entities (`vid` + optional `name` / `site`) and enrich
+    interface untagged/tagged VLAN references when names are known.
 
     `function` (the Assets OS family) rewrites ConfigState's slot:port
     notation to the OS-native form (1:52 -> 1/52 on Fabric Engine / VOSS)
     before any joining, so every emitted name and cross-reference agrees.
+    `site` is the device's resolved site name (when known) and is attached to
+    VLAN entities without inventing a fallback.
     """
     if function and function.upper() in SLASH_PORT_FUNCTIONS:
         tables = _native_port_name_tables(tables, function)
     configs = _by_key(tables.get("port_configs") or [])
     states = _by_key(tables.get("port_states") or [])
     vlans = _by_key(tables.get("vlan_properties") or [])
+    vlan_config_rows = tables.get("vlan_configs") or []
+    vlan_names = _vlan_names_by_vid(vlan_config_rows)
     capabilities = _capabilities_by_port(tables.get("port_capabilities") or [])
     poe_configs = _by_key(tables.get("poe_configs") or [])
     poe_states = _by_key(tables.get("poe_states") or [])
@@ -917,7 +1061,9 @@ def ports_to_entities(
     lag_configs = tables.get("lag_configs") or []
     lag_states = tables.get("lag_states") or []
 
-    entities, lag_names, lag_interface_ids, membership, emitted_keys = _lag_entities(
+    entities = _vlan_entities(vlan_config_rows, site=site, names=vlan_names)
+
+    lag_entities, lag_names, lag_interface_ids, membership, emitted_keys = _lag_entities(
         device=device,
         lag_configs=lag_configs,
         lag_states=lag_states,
@@ -925,7 +1071,9 @@ def ports_to_entities(
         poe_configs=poe_configs,
         poe_states=poe_states,
         interface_ips=interface_ips,
+        vlan_names=vlan_names,
     )
+    entities.extend(lag_entities)
 
     port_entities, emitted_port_names, port_keys = _physical_port_entities(
         device=device,
@@ -939,6 +1087,7 @@ def ports_to_entities(
         lag_names=lag_names,
         lag_interface_ids=lag_interface_ids,
         membership=membership,
+        vlan_names=vlan_names,
     )
     entities.extend(port_entities)
     emitted_keys.update(port_keys)
