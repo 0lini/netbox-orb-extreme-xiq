@@ -411,6 +411,24 @@ def test_ports_to_entities_emits_interface_ip_addresses(stub_sdk):
     assert all(ip["assigned_object_interface"]._kw["device"] == "sw-idf1" for ip in ip_entities)
 
 
+def test_ports_to_entities_emits_svi_ips_via_interface_name(stub_sdk):
+    """An IP on an interface with no port/LAG row (e.g. a VLAN/SVI interface)
+    is still emitted, assigned by the row's own interface_name."""
+    ips = [
+        {
+            "asset_interface_id": "if-svi",
+            "interface_name": "vlan10",
+            "address": "10.0.10.1",
+            "mask_length": 24,
+        }
+    ]
+    entities = mapper.ports_to_entities(_tables(vlan_properties=[], interface_ips=ips), device="sw-idf1")
+
+    ip_entities = [e._kw["ip_address"]._kw for e in entities if "ip_address" in e._kw]
+    assert [ip["address"] for ip in ip_entities] == ["10.0.10.1/24"]
+    assert ip_entities[0]["assigned_object_interface"]._kw["name"] == "vlan10"
+
+
 def test_ports_to_entities_untagged_only_is_access_mode(stub_sdk):
     vlan = {**VLAN_PROPERTIES, "vlans": [{"vlan_number": 10}]}
     entities = mapper.ports_to_entities(_tables(vlan_properties=[vlan]), device="sw-idf1")
