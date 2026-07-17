@@ -239,9 +239,16 @@ def virtual_chassis_to_entities(
         name_one = device_name(record_one["asset"], name_source)
         name_two = device_name(record_two["asset"], name_source)
         chassis_name = _virtual_chassis_name(cluster, name_one, name_two)
-        # Disambiguate when Assets hostnames collide across clusters.
-        if chassis_name in used_names and cluster.get("id"):
-            chassis_name = f"{chassis_name} ({str(cluster['id'])[:8]})"
+        # Colliding names are emitted as-is: the unique platformone_cluster_id
+        # custom field makes NetBox reject the merge at ingest, surfacing the
+        # upstream data problem (e.g. stale Assets hostnames) instead of
+        # hiding it behind an invented suffix.
+        if chassis_name in used_names:
+            logger.warning(
+                "Duplicate VirtualChassis name %r (cluster %s); NetBox uniqueness will reject it at ingest",
+                chassis_name,
+                cluster.get("id"),
+            )
         used_names.add(chassis_name)
 
         vc_kwargs: dict = {

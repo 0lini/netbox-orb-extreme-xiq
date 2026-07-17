@@ -19,6 +19,7 @@ CUSTOM_FIELDS = [
             "correlation key even if the device is renamed."
         ),
         "filter_logic": "exact",
+        "unique": True,
     },
     {
         "name": "platformone_interface_id",
@@ -30,6 +31,7 @@ CUSTOM_FIELDS = [
             "stable correlation key even if the port is renamed."
         ),
         "filter_logic": "exact",
+        "unique": True,
     },
     {
         "name": "platformone_cluster_id",
@@ -42,6 +44,7 @@ CUSTOM_FIELDS = [
             "even if peer names change."
         ),
         "filter_logic": "exact",
+        "unique": True,
     },
     {
         "name": "platformone_configstate_device_id",
@@ -54,6 +57,7 @@ CUSTOM_FIELDS = [
             "port and location tables."
         ),
         "filter_logic": "exact",
+        "unique": True,
     },
 ]
 
@@ -83,16 +87,34 @@ def _headers(token: str) -> dict:
     return {"Authorization": f"Token {token}", "Content-Type": "application/json"}
 
 
-def _exists(url: str, token: str, name: str) -> bool:
+def _lookup(url: str, token: str, name: str) -> dict | None:
     resp = requests.get(url, headers=_headers(token), params={"name": name}, timeout=30)
     resp.raise_for_status()
-    return resp.json().get("count", 0) > 0
+    results = resp.json().get("results") or []
+    return results[0] if results else None
 
 
 def _ensure_all(url: str, token: str, definitions: list[dict]) -> None:
+    """Create missing definitions; align `unique` on existing ones.
+
+    Only `unique` is reconciled on existing records: it is the one flag with
+    enforcement semantics, and pre-uniqueness bootstraps must pick it up.
+    Everything else (label, description, ...) is left to manual edits.
+    """
     for definition in definitions:
-        if not _exists(url, token, definition["name"]):
+        existing = _lookup(url, token, definition["name"])
+        if existing is None:
             resp = requests.post(url, headers=_headers(token), json=definition, timeout=30)
+            resp.raise_for_status()
+            continue
+        desired_unique = definition.get("unique")
+        if desired_unique is not None and existing.get("unique") != desired_unique:
+            resp = requests.patch(
+                f"{url}{existing['id']}/",
+                headers=_headers(token),
+                json={"unique": desired_unique},
+                timeout=30,
+            )
             resp.raise_for_status()
 
 
