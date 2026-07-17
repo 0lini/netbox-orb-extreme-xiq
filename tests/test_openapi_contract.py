@@ -141,6 +141,16 @@ def test_inferred_cluster_member_filters_still_exist(configstate_spec):
     assert "id" in inferred_device
 
 
+def test_asset_vlan_config_schema_fields_still_exist(configstate_spec):
+    """Named VLAN sync depends on vlan_number / vlan_name on AssetVlanConfig."""
+    schemas = configstate_spec["components"]["schemas"]
+    vlan_config = schemas["AssetVlanConfig"]["properties"]
+    for field in ("device_id", "asset_interface_id", "vlan_number", "vlan_name", "vlan_type"):
+        assert field in vlan_config
+    request = schemas["AssetVlanConfigGetRequest"]["properties"]
+    assert "device_id" in request
+
+
 def test_configstate_pagination_params_still_exist(configstate_spec):
     post = configstate_spec["paths"]["/retrieve-asset-device"]["post"]
     names = {p.get("name") for p in post.get("parameters", [])}
