@@ -3,7 +3,7 @@
 Fixture payloads are shaped exactly like the two Platform ONE OpenAPI
 specs' schemas: Assets `Device`, ConfigState `AssetLocation`,
 `AssetPortConfig`, `AssetPortState`, `AssetInterfaceVlanProperties` (with
-nested `AssetInterfaceVlanMap` rows), `AssetVlanConfig`, `AssetLagConfig` /
+nested `AssetInterfaceVlanMap` rows), `AssetLagConfig` /
 `AssetLagState` (with nested member ports), and `InferredCluster`.
 """
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from orb_extreme_platformone import mapper
 from orb_extreme_platformone.backend import INTERFACE_ID_TABLES, PORT_TABLES
-from tests.conftest import PORT_CONFIG, PORT_STATE, SWITCH_ASSET, VLAN_CONFIGS, VLAN_PROPERTIES, cf
+from tests.conftest import PORT_CONFIG, PORT_STATE, SWITCH_ASSET, VLAN_PROPERTIES, cf
 
 
 def _record(asset=SWITCH_ASSET, location=None, cs_device_id="cs-uuid-42", cs_device=None):
@@ -446,39 +446,6 @@ def test_ports_to_entities_no_vlan_rows_asserts_no_mode():
     assert fields == {}
 
 
-def test_vlan_entities_skip_extreme_reserved_vids(stub_sdk):
-    """Extreme reserved VIDs 4060–4094 are not emitted as Diode VLAN entities."""
-    configs = [
-        {
-            "device_id": "cs-uuid-42",
-            "asset_interface_id": "if-vlan-10",
-            "vlan_number": 10,
-            "vlan_name": "Users",
-            "vlan_type": 1,
-        },
-        {
-            "device_id": "cs-uuid-42",
-            "asset_interface_id": "if-vlan-4060",
-            "vlan_number": 4060,
-            "vlan_name": "Reserved-low",
-            "vlan_type": 1,
-        },
-        {
-            "device_id": "cs-uuid-42",
-            "asset_interface_id": "if-vlan-4094",
-            "vlan_number": 4094,
-            "vlan_name": "Reserved-high",
-            "vlan_type": 1,
-        },
-    ]
-    entities = mapper.ports_to_entities(
-        _tables(vlan_configs=configs, vlan_properties=[]),
-        device="sw-idf1",
-    )
-    vlan_entities = [e._kw["vlan"]._kw for e in entities if "vlan" in e._kw]
-    assert [v["vid"] for v in vlan_entities] == [10]
-
-
 def test_ports_to_entities_omits_reserved_untagged_vlan(stub_sdk):
     """Untagged VID 4094 (Extreme reserved) is omitted from the interface."""
     vlan = {
@@ -522,100 +489,16 @@ def test_ports_to_entities_only_reserved_vlan_asserts_no_vlan_or_mode():
     assert mapper._vlan_fields([vlan]) == {}
 
 
-def test_ports_to_entities_emits_named_vlan_entities_and_enriches_refs(stub_sdk):
-    """AssetVlanConfig → Diode VLAN entities; interface refs pick up names."""
+def test_ports_to_entities_omits_reserved_native_vlan_fallback(stub_sdk):
+    """native_vlan fallback also strips Extreme reserved VIDs."""
+    config = {**PORT_CONFIG, "native_vlan": 4094, "port_mode": True}
     entities = mapper.ports_to_entities(
-        _tables(vlan_configs=VLAN_CONFIGS),
-        device="sw-idf1",
-        site="HQ",
-    )
-
-    vlan_entities = [e._kw["vlan"]._kw for e in entities if "vlan" in e._kw]
-    assert [(v["vid"], v["name"], v["site"]._kw["name"]) for v in vlan_entities] == [
-        (10, "Users", "HQ"),
-        (20, "Servers", "HQ"),
-        (30, "Guest", "HQ"),
-    ]
-    assert vlan_entities[0]["tags"] == mapper.PROVENANCE_TAGS
-
-    port = next(e._kw["interface"]._kw for e in entities if "interface" in e._kw)
-    assert port["untagged_vlan"]._kw == {"vid": 10, "name": "Users"}
-    assert [v._kw for v in port["tagged_vlans"]] == [
-        {"vid": 20, "name": "Servers"},
-        {"vid": 30, "name": "Guest"},
-    ]
-
-
-def test_ports_to_entities_vlan_without_name_stays_bare_vid(stub_sdk):
-    """Empty / missing vlan_name still emits the VLAN entity but not a name."""
-    configs = [
-        {
-            "device_id": "cs-uuid-42",
-            "asset_interface_id": "if-vlan-10",
-            "vlan_number": 10,
-            "vlan_name": "",
-            "vlan_type": 1,
-        },
-        {
-            "device_id": "cs-uuid-42",
-            "asset_interface_id": "if-vlan-20",
-            "vlan_number": 20,
-            "vlan_type": 1,
-        },
-    ]
-    entities = mapper.ports_to_entities(
-        _tables(vlan_configs=configs),
+        _tables(port_configs=[config], vlan_properties=[]),
         device="sw-idf1",
     )
-
-    vlan_entities = [e._kw["vlan"]._kw for e in entities if "vlan" in e._kw]
-    assert [v["vid"] for v in vlan_entities] == [10, 20]
-    assert all("name" not in v for v in vlan_entities)
-    assert all("site" not in v for v in vlan_entities)
-
-    port = next(e._kw["interface"]._kw for e in entities if "interface" in e._kw)
-    assert port["untagged_vlan"]._kw == {"vid": 10}
-    assert [v._kw for v in port["tagged_vlans"]] == [{"vid": 20}, {"vid": 30}]
-
-
-def test_ports_to_entities_names_native_vlan_fallback_when_vlan_configs_present(stub_sdk):
-    config = {**PORT_CONFIG, "native_vlan": 99, "port_mode": True}
-    vlan_configs = [
-        {
-            "device_id": "cs-uuid-42",
-            "asset_interface_id": "if-vlan-99",
-            "vlan_number": 99,
-            "vlan_name": "Native",
-            "vlan_type": 1,
-        }
-    ]
-    entities = mapper.ports_to_entities(
-        _tables(port_configs=[config], vlan_properties=[], vlan_configs=vlan_configs),
-        device="sw-idf1",
-    )
-
-    port = next(e._kw["interface"]._kw for e in entities if "interface" in e._kw)
-    assert port["untagged_vlan"]._kw == {"vid": 99, "name": "Native"}
-
-
-def test_vlan_names_by_vid_keeps_first_on_conflict(caplog):
-    rows = [
-        {"vlan_number": 10, "vlan_name": "Users"},
-        {"vlan_number": 10, "vlan_name": "Other"},
-    ]
-    assert mapper._vlan_names_by_vid(rows) == {10: "Users"}
-    assert "Conflicting vlan_name for vid 10" in caplog.text
-
-
-def test_ports_to_entities_dedupes_vlan_configs_by_vid(stub_sdk):
-    dup = {**VLAN_CONFIGS[0], "asset_interface_id": "if-vlan-10-dup"}
-    entities = mapper.ports_to_entities(
-        _tables(vlan_configs=[*VLAN_CONFIGS, dup], vlan_properties=[]),
-        device="sw-idf1",
-        site="HQ",
-    )
-    vlan_entities = [e._kw["vlan"]._kw for e in entities if "vlan" in e._kw]
-    assert [v["vid"] for v in vlan_entities] == [10, 20, 30]
+    port = entities[0]._kw["interface"]._kw
+    assert "untagged_vlan" not in port
+    assert "mode" not in port
 
 
 def test_ports_to_entities_ports_join_on_interface_id_not_row_order(stub_sdk):
