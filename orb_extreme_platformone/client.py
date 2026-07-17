@@ -81,12 +81,10 @@ class PlatformOneClient:
             raise PlatformOneApiError(f"Platform ONE API error {resp.status_code} for {path}: {resp.text}")
         return resp.json()
 
-    def get_devices(
-        self, *, classification: str = "SWITCH", limit: int = ASSETS_PAGE_LIMIT
-    ) -> Iterator[dict]:
+    def get_devices(self, *, classification: str = "ALL", limit: int = ASSETS_PAGE_LIMIT) -> Iterator[dict]:
         """Yield every Assets-API device of `classification`, across all pages.
 
-        `classification` (SWITCH, WIRELESS, ROUTER, ... or ALL) is passed
+        `classification` (ALL, SWITCH, WIRELESS, ROUTER, ...) is passed
         through verbatim so new upstream values need no client change.
         """
         page = 1

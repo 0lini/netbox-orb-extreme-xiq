@@ -61,7 +61,7 @@ def test_devices_to_entities_maps_the_assets_fields(stub_sdk):
     assert device["platform"]._kw["manufacturer"] == "Extreme Networks"
     assert device["primary_ip4"] == "10.0.0.2/32"
     assert "primary_ip6" not in device
-    assert device["role"]._kw == {"name": "Fabric Engine", "slug": "fabric-engine"}
+    assert device["role"]._kw == {"name": "Switch", "slug": "switch"}
     assert cf(device["custom_fields"]["platformone_device_id"]._kw) == "42"
     assert cf(device["custom_fields"]["platformone_configstate_device_id"]._kw) == "cs-uuid-42"
     assert device["tags"] == ["extreme-networks", "platform-one", "discovered"]
@@ -245,9 +245,7 @@ def test_ports_to_entities_maps_mgmt_only_from_capabilities(stub_sdk):
             "management_port": True,
         }
     ]
-    entities = mapper.ports_to_entities(
-        _tables(vlan_properties=[], port_capabilities=caps), device="sw-idf1"
-    )
+    entities = mapper.ports_to_entities(_tables(vlan_properties=[], port_capabilities=caps), device="sw-idf1")
 
     assert entities[0]._kw["interface"]._kw["mgmt_only"] is True
 
@@ -263,9 +261,7 @@ def test_ports_to_entities_capabilities_scoped_per_device(stub_sdk, caplog):
         {"asset_device_id": "cs-uuid-OTHER", "port_name": "1/1", "management_port": True},
         {"asset_device_id": "cs-uuid-42", "port_name": "1/1", "management_port": False},
     ]
-    entities = mapper.ports_to_entities(
-        _tables(vlan_properties=[], port_capabilities=caps), device="sw-idf1"
-    )
+    entities = mapper.ports_to_entities(_tables(vlan_properties=[], port_capabilities=caps), device="sw-idf1")
 
     assert entities[0]._kw["interface"]._kw["mgmt_only"] is False
     assert "Multiple port_capabilities rows share port_name" not in caplog.text
@@ -276,9 +272,7 @@ def test_ports_to_entities_warns_on_per_device_capability_duplicates(stub_sdk, c
         {"asset_device_id": "cs-uuid-42", "port_name": "1/1", "management_port": True},
         {"asset_device_id": "cs-uuid-42", "port_name": "1/1", "management_port": False},
     ]
-    entities = mapper.ports_to_entities(
-        _tables(vlan_properties=[], port_capabilities=caps), device="sw-idf1"
-    )
+    entities = mapper.ports_to_entities(_tables(vlan_properties=[], port_capabilities=caps), device="sw-idf1")
 
     assert entities[0]._kw["interface"]._kw["mgmt_only"] is True
     assert "Multiple port_capabilities rows share port_name '1/1' on device 'cs-uuid-42'" in caplog.text
@@ -324,9 +318,7 @@ def test_ports_to_entities_omits_poe_when_not_supported_or_enabled(stub_sdk):
 
 def test_ports_to_entities_falls_back_to_native_vlan_when_no_vlan_properties(stub_sdk):
     config = {**PORT_CONFIG, "native_vlan": 99, "port_mode": True}
-    entities = mapper.ports_to_entities(
-        _tables(port_configs=[config], vlan_properties=[]), device="sw-idf1"
-    )
+    entities = mapper.ports_to_entities(_tables(port_configs=[config], vlan_properties=[]), device="sw-idf1")
 
     port = entities[0]._kw["interface"]._kw
     assert port["untagged_vlan"]._kw == {"vid": 99}
@@ -340,6 +332,55 @@ def test_ports_to_entities_vlan_properties_win_over_native_vlan_fallback(stub_sd
     port = entities[0]._kw["interface"]._kw
     assert port["untagged_vlan"]._kw == {"vid": 10}
     assert port["mode"] == "tagged"
+
+
+def test_ports_to_entities_rewrites_colon_ports_to_native_notation(stub_sdk):
+    """ConfigState reports slot:port for every OS; on Fabric Engine the ports
+    must come out slash-native with capability and LAG-member joins intact."""
+    config = {
+        "asset_device_id": "cs-uuid-42",
+        "asset_interface_id": "if-uuid-52",
+        "name": "1:52",
+        "enabled": True,
+    }
+    caps = [{"asset_device_id": "cs-uuid-42", "port_name": "1:52", "management_port": True}]
+    lag_config = {
+        "asset_device_id": "cs-uuid-42",
+        "asset_interface_id": "if-uuid-lag",
+        "name": "lag 1",
+        "member_ports": [{"interface_name": "1:52"}],
+    }
+    entities = mapper.ports_to_entities(
+        _tables(
+            port_configs=[config],
+            port_states=[],
+            vlan_properties=[],
+            port_capabilities=caps,
+            lag_configs=[lag_config],
+        ),
+        device="sw-idf1",
+        function="Fabric Engine",
+    )
+
+    lag = entities[0]._kw["interface"]._kw
+    port = entities[1]._kw["interface"]._kw
+    assert lag["name"] == "lag 1"
+    assert port["name"] == "1/52"
+    assert port["mgmt_only"] is True
+    assert port["lag"]._kw["name"] == "lag 1"
+    # Caller rows stay untouched (tables are copied, not mutated).
+    assert config["name"] == "1:52"
+
+
+def test_ports_to_entities_keeps_colon_ports_for_switch_engine(stub_sdk):
+    config = {"asset_device_id": "cs-uuid-42", "asset_interface_id": "if-uuid-52", "name": "1:52"}
+    entities = mapper.ports_to_entities(
+        _tables(port_configs=[config], port_states=[], vlan_properties=[]),
+        device="sw-idf1",
+        function="Switch Engine",
+    )
+
+    assert entities[0]._kw["interface"]._kw["name"] == "1:52"
 
 
 def test_ports_to_entities_emits_interface_ip_addresses(stub_sdk):
@@ -632,9 +673,7 @@ def test_virtual_chassis_disambiguates_duplicate_computed_names(stub_sdk):
         "cs-uuid-45": _record(asset=twin_peer, cs_device_id="cs-uuid-45"),
     }
 
-    entities, memberships = mapper.virtual_chassis_to_entities(
-        clusters, records_by_cs_id=records_by_cs_id
-    )
+    entities, memberships = mapper.virtual_chassis_to_entities(clusters, records_by_cs_id=records_by_cs_id)
 
     names = [e._kw["virtual_chassis"]._kw["name"] for e in entities]
     assert names == ["peer-a / peer-b", "peer-a / peer-b (aaaaaaaa)"]

@@ -154,7 +154,7 @@ def test_run_produces_site_location_device_and_interface_entities():
     assert entities[3].device.name == "sw-idf1"
     assert entities[3].device.site.name == "HQ"
     assert entities[3].device.location.name == "F2"
-    assert entities[3].device.role.name == "Fabric Engine"
+    assert entities[3].device.role.name == "Switch"
     assert entities[3].device.custom_fields["platformone_configstate_device_id"].text == "cs-uuid-42"
     interface = entities[4].interface
     assert interface.name == "1/1"
@@ -325,9 +325,7 @@ def test_run_maps_inferred_cluster_to_virtual_chassis():
     entities = list(Backend().run("platformone_worker", _policy()))
 
     inferred_calls = [c for c in responses.calls if "/retrieve-inferred-device" in c.request.url]
-    assert json.loads(inferred_calls[0].request.body) == {
-        "asset_device_id": ["cs-uuid-42", "cs-uuid-43"]
-    }
+    assert json.loads(inferred_calls[0].request.body) == {"asset_device_id": ["cs-uuid-42", "cs-uuid-43"]}
     cluster_calls = [c for c in responses.calls if "/retrieve-inferred-cluster" in c.request.url]
     assert len(cluster_calls) == 2
     bodies = [json.loads(c.request.body) for c in cluster_calls]
@@ -512,7 +510,6 @@ def test_collect_interface_ids_includes_vlan_only_interfaces():
         }
     }
 
-    ids, mapping = Backend._collect_interface_ids(tables_by_device)
+    mapping = Backend._collect_interface_ids(tables_by_device)
 
-    assert ids == ["if-port", "if-svi"]
     assert mapping == {"if-port": "cs-uuid-42", "if-svi": "cs-uuid-42"}
