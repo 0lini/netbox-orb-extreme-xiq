@@ -31,10 +31,9 @@ def test_native_port_name_keeps_colon_native_oses_and_non_port_names():
     assert native_port_name("mgmt", "Fabric Engine") == "mgmt"
 
 
-def test_device_name_prefers_hostname_then_serial_then_mac_then_id():
+def test_device_name_prefers_hostname_then_serial_then_id():
     assert device_name({"host_name": "sw1", "serial_number": "SN1"}) == "sw1"
     assert device_name({"serial_number": "SN1"}) == "SN1"
-    assert device_name({"mac_address": "aabbccddeeff"}) == "aabbccddeeff"
     assert device_name({"device_id": 42}) == "platformone-42"
 
 
