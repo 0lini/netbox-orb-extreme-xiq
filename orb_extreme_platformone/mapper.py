@@ -746,6 +746,7 @@ def _lag_kwargs(
             kwargs["primary_mac_address"] = port_state["mac_address"]
     return kwargs
 
+
 def _ip_entities_for_interface(
     *,
     device: str,
