@@ -160,14 +160,15 @@ def _device_kwargs(
         kwargs["role"] = DeviceRole(name=role_name, slug=role_slug)
 
     # Assets product_type / os_version preferred; ConfigState model_name /
-    # firmware_version fill gaps when Assets omitted them (D5).
-    product_type = asset.get("product_type") or (cs_device or {}).get("model_name")
+    # firmware_version fill gaps when Assets omitted them.
+    cs = cs_device or {}
+    product_type = asset.get("product_type") or cs.get("model_name")
     if product_type:
         kwargs["device_type"] = DeviceType(
             model=device_type_model_for(product_type), manufacturer=MANUFACTURER
         )
         kwargs["manufacturer"] = MANUFACTURER
-    os_version = asset.get("os_version") or (cs_device or {}).get("firmware_version")
+    os_version = asset.get("os_version") or cs.get("firmware_version")
     platform = platform_name(asset.get("function"), os_version)
     if platform:
         kwargs["platform"] = Platform(name=platform, manufacturer=MANUFACTURER)
@@ -393,8 +394,8 @@ def devices_to_entities(
 # unknown codes assert nothing. oper_state is the exception: its schema
 # description matches IF-MIB ifOperStatus.
 #
-# Verified in-repo today (I3): oper_speed 4, oper_duplex 2, connector_type 1/2.
-# Config-side speed/duplex integers remain unverified (I7) and are not used.
+# Verified in-repo today: oper_speed 4, oper_duplex 2, connector_type 1/2.
+# Config-side speed/duplex integers remain unverified and are not used.
 VERIFIED_OPER_SPEED_KBPS = {4: 1_000_000}
 VERIFIED_DUPLEX = {2: "full"}
 OPER_STATE_UP = 1
@@ -526,7 +527,7 @@ def _vlan_fields_from_port_config(config: dict) -> dict:
     """Fallback VLANs from AssetPortConfig when vlan-properties rows are absent.
 
     `native_vlan` is the untagged VLAN on a trunk; `port_mode` True enables
-    tagging (Fabric Engine). Applied only as a fallback (I6).
+    tagging (Fabric Engine). Applied only as a fallback.
     """
     native = config.get("native_vlan")
     if not isinstance(native, int) or native <= 0:
@@ -544,7 +545,7 @@ def _poe_mode(config: dict, state: dict) -> str | None:
     """NetBox poe_mode=pse when the port is a PoE PSE; omit otherwise.
 
     `supported` (state) is authoritative; `enable` (config) True also implies
-    PSE. classification/standard → poe_type is intentionally not mapped (I4):
+    PSE. classification/standard → poe_type is intentionally not mapped:
     OpenAPI has no verified value table for those integers.
     """
     if state.get("supported") is True:
@@ -813,14 +814,14 @@ def _physical_port_entities(
     for key in sorted(set(configs) | set(states)):
         config = _first_row(configs, key, table="port_configs")
         state = _first_row(states, key, table="port_states")
-        name = config.get("name") or state.get("name")
+        name = str(config.get("name") or state.get("name") or "")
         if not name:
             continue
         interface_id = config.get("asset_interface_id") or state.get("asset_interface_id")
         # Skip rows that are the LAG interface itself (same asset_interface_id).
         if interface_id and str(interface_id) in lag_interface_ids:
             continue
-        if str(name) in lag_names:
+        if name in lag_names:
             continue
         port_device_id = str(
             config.get("asset_device_id")
@@ -831,26 +832,24 @@ def _physical_port_entities(
         )
         kwargs = _port_kwargs(
             device=device,
-            name=str(name),
+            name=name,
             interface_id=str(interface_id) if interface_id else None,
             config=config,
             state=state,
             vlan_records=vlans.get(key, []),
-            capability=_capability_for_port(
-                capabilities, device_id=port_device_id, name=str(name)
-            ),
+            capability=_capability_for_port(capabilities, device_id=port_device_id, name=name),
             poe_config=_optional_first_row(poe_configs, key, table="poe_configs"),
             poe_state=_optional_first_row(poe_states, key, table="poe_states"),
         )
-        lag_parent = membership.get(str(name))
+        lag_parent = membership.get(name)
         if lag_parent:
             kwargs["lag"] = Interface(device=device, name=lag_parent)
         entities.append(Entity(interface=Interface(**kwargs)))
-        emitted_port_names.add(str(name))
-        emitted_keys[key] = str(name)
+        emitted_port_names.add(name)
+        emitted_keys[key] = name
         entities.extend(
             _ip_entities_for_interface(
-                device=device, interface_name=str(name), rows=interface_ips.get(key, [])
+                device=device, interface_name=name, rows=interface_ips.get(key, [])
             )
         )
 
