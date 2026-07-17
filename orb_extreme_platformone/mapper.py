@@ -141,7 +141,7 @@ def _device_kwargs(
 ) -> dict:
     custom_fields: dict = {}
     if asset.get("device_id") is not None:
-        custom_fields["platformone_device_id"] = _cf_text(str(asset["device_id"]))
+        custom_fields["platformone_id"] = _cf_text(str(asset["device_id"]))
     if cs_device_id:
         custom_fields["platformone_configstate_device_id"] = _cf_text(cs_device_id)
 
@@ -239,7 +239,7 @@ def virtual_chassis_to_entities(
         name_one = device_name(record_one["asset"], name_source)
         name_two = device_name(record_two["asset"], name_source)
         chassis_name = _virtual_chassis_name(cluster, name_one, name_two)
-        # Colliding names are emitted as-is: the unique platformone_cluster_id
+        # Colliding names are emitted as-is: the unique platformone_id
         # custom field makes NetBox reject the merge at ingest, surfacing the
         # upstream data problem (e.g. stale Assets hostnames) instead of
         # hiding it behind an invented suffix.
@@ -257,7 +257,7 @@ def virtual_chassis_to_entities(
             "tags": PROVENANCE_TAGS,
         }
         if cluster.get("id"):
-            vc_kwargs["custom_fields"] = {"platformone_cluster_id": _cf_text(str(cluster["id"]))}
+            vc_kwargs["custom_fields"] = {"platformone_id": _cf_text(str(cluster["id"]))}
         entities.append(Entity(virtual_chassis=VirtualChassis(**vc_kwargs)))
 
         memberships[one_id] = {"name": chassis_name, "position": 1}
@@ -604,7 +604,7 @@ def _port_kwargs(
     kwargs: dict = {
         "device": device,
         "name": name,
-        "custom_fields": {"platformone_interface_id": _cf_text(interface_id)} if interface_id else {},
+        "custom_fields": {"platformone_id": _cf_text(interface_id)} if interface_id else {},
         "tags": PROVENANCE_TAGS,
     }
 
@@ -708,7 +708,7 @@ def _lag_kwargs(
         "device": device,
         "name": name,
         "type": "lag",
-        "custom_fields": {"platformone_interface_id": _cf_text(interface_id)} if interface_id else {},
+        "custom_fields": {"platformone_id": _cf_text(interface_id)} if interface_id else {},
         "tags": PROVENANCE_TAGS,
     }
     enabled = config.get("enabled")

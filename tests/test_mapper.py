@@ -62,7 +62,7 @@ def test_devices_to_entities_maps_the_assets_fields(stub_sdk):
     assert device["primary_ip4"] == "10.0.0.2/32"
     assert "primary_ip6" not in device
     assert device["role"]._kw == {"name": "Switch", "slug": "switch"}
-    assert cf(device["custom_fields"]["platformone_device_id"]._kw) == "42"
+    assert cf(device["custom_fields"]["platformone_id"]._kw) == "42"
     assert cf(device["custom_fields"]["platformone_configstate_device_id"]._kw) == "cs-uuid-42"
     assert device["tags"] == ["extreme-networks", "platform-one", "discovered"]
 
@@ -183,7 +183,7 @@ def test_ports_to_entities_maps_config_state_and_vlans_onto_one_interface(stub_s
     assert port["untagged_vlan"]._kw == {"vid": 10}
     assert [v._kw["vid"] for v in port["tagged_vlans"]] == [20, 30]
     assert port["mode"] == "tagged"
-    assert cf(port["custom_fields"]["platformone_interface_id"]._kw) == "if-uuid-1"
+    assert cf(port["custom_fields"]["platformone_id"]._kw) == "if-uuid-1"
 
 
 def test_ports_to_entities_config_only_port_still_syncs_admin_state(stub_sdk):
@@ -485,7 +485,7 @@ def test_ports_to_entities_maps_lag_parent_and_member_refs(stub_sdk):
     assert [e._kw["interface"]._kw["name"] for e in entities][0] == "lag1"
     assert ports["lag1"]["type"] == "lag"
     assert ports["lag1"]["enabled"] is True
-    assert cf(ports["lag1"]["custom_fields"]["platformone_interface_id"]._kw) == "lag-if-1"
+    assert cf(ports["lag1"]["custom_fields"]["platformone_id"]._kw) == "lag-if-1"
     assert ports["1/1"]["lag"]._kw == {"device": "sw-idf1", "name": "lag1"}
     assert ports["1/2"]["lag"]._kw == {"device": "sw-idf1", "name": "lag1"}
 
@@ -586,7 +586,7 @@ def test_virtual_chassis_to_entities_maps_inferred_cluster(stub_sdk):
     assert vc["master"] == "sw-idf1"
     assert "description" not in vc
     assert vc["tags"] == ["extreme-networks", "platform-one", "discovered"]
-    assert cf(vc["custom_fields"]["platformone_cluster_id"]._kw) == "cluster-uuid-1"
+    assert cf(vc["custom_fields"]["platformone_id"]._kw) == "cluster-uuid-1"
     assert "domain" not in vc
     assert "comments" not in vc
     assert memberships == {
@@ -646,7 +646,7 @@ def test_virtual_chassis_ignores_identical_placeholder_peer_names(stub_sdk):
 
 def test_virtual_chassis_warns_on_duplicate_computed_names(stub_sdk, caplog):
     """Colliding names are emitted as-is (no invented suffix): the unique
-    platformone_cluster_id custom field rejects the merge at ingest, and the
+    platformone_id custom field rejects the merge at ingest, and the
     worker warns so the upstream data problem is visible in the logs."""
     twin = {
         "device_id": 44,
