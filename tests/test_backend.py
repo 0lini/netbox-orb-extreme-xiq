@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import json
 
+import pytest
 import responses
 from worker.models import Config, Policy
 
 from orb_extreme_platformone.backend import INTERFACE_ID_TABLES, PORT_TABLES, Backend
-from orb_extreme_platformone.client import DEFAULT_BASE_URL, configstate_response_key
+from orb_extreme_platformone.client import DEFAULT_BASE_URL, PlatformOneApiError, configstate_response_key
 from tests.conftest import CS_SWITCH, SWITCH_ASSET
 
 ASSETS_URL = f"{DEFAULT_BASE_URL}/assets/v1/devices"
@@ -246,11 +247,12 @@ def test_run_out_of_scope_devices_get_no_port_calls_and_no_entities():
 
 
 @responses.activate
-def test_run_survives_a_failed_port_table_and_keeps_the_rest(caplog):
-    """One failing ConfigState table (here port-state) degrades that table's
-    fields for the tick; ports still map from port-config.
+def test_run_aborts_when_a_port_table_fails():
+    """A failed ConfigState port table aborts the tick -- no per-table degradation.
 
-    Tables are fetched concurrently; a single failure must not abort siblings.
+    Full-outage resilience is handled earlier, before any cs_device_id
+    resolves (see test_run_survives_a_configstate_outage_with_assets_only_data);
+    a partial failure after correlation succeeds propagates.
     """
     _mock_assets([SWITCH_ASSET])
     _mock_cs("asset-device", "AssetDevice", [CS_SWITCH])
@@ -266,18 +268,10 @@ def test_run_survives_a_failed_port_table_and_keeps_the_rest(caplog):
     _mock_cs("asset-lag-state", "AssetLagState", [])
     _mock_cs("asset-port-capabilities", "AssetPortCapabilities", [])
     _mock_cs("asset-poe-power-ports-state", "AssetPoePowerPortsState", [])
-    _mock_interface_id_tables_empty()
     _mock_empty_clusters()
 
-    entities = list(Backend().run("platformone_worker", _policy()))
-
-    interfaces = [e.interface for e in entities if e.HasField("interface")]
-    assert [i.name for i in interfaces] == ["1/1"]
-    assert interfaces[0].enabled is True
-    assert "ConfigState degradation this tick; failed tables: asset-port-state" in caplog.text
-    # Sibling tables still ran (concurrent degrade-on-failure).
-    assert any("/retrieve-asset-port-config" in c.request.url for c in responses.calls)
-    assert any("/retrieve-asset-lag-config" in c.request.url for c in responses.calls)
+    with pytest.raises(PlatformOneApiError):
+        list(Backend().run("platformone_worker", _policy()))
 
 
 def test_correlate_warns_on_duplicate_serial(caplog):

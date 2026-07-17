@@ -119,21 +119,18 @@ def _colon_mac(value) -> str:
 
 def _retrieve_parallel(
     client: PlatformOneClient, jobs: list[tuple[str, dict]]
-) -> list[tuple[str, list[dict] | None, PlatformOneApiError | None]]:
+) -> list[tuple[str, list[dict]]]:
     """Run independent ConfigState retrieves concurrently.
 
-    Returns one result per job in submission order (deterministic merge /
-    failure lists). A failed job yields ``(table, None, exc)`` and does not
-    abort siblings.
+    Returns one ``(table, rows)`` result per job in submission order
+    (deterministic merge). A job's PlatformOneApiError propagates out of
+    ``result()`` and aborts the batch.
     """
     if not jobs:
         return []
 
-    def _one(table: str, filters: dict) -> tuple[str, list[dict] | None, PlatformOneApiError | None]:
-        try:
-            return table, list(client.retrieve(table, filters)), None
-        except PlatformOneApiError as exc:
-            return table, None, exc
+    def _one(table: str, filters: dict) -> tuple[str, list[dict]]:
+        return table, list(client.retrieve(table, filters))
 
     workers = min(len(jobs), 8)
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -436,8 +433,6 @@ class Backend(WorkerBackend):
     def _attach_lag_members(
         client: PlatformOneClient,
         tables_by_device: dict[str, dict[str, list[dict]]],
-        policy_name: str,
-        failed_tables: list[str],
     ) -> None:
         """Fill empty nested `member_ports` from dedicated member-port retrieves.
 
@@ -447,7 +442,7 @@ class Backend(WorkerBackend):
         concurrently.
         """
         jobs: list[tuple[str, dict]] = []
-        job_meta: list[tuple[str, str, dict[str, dict]]] = []
+        job_meta: list[tuple[str, dict[str, dict]]] = []
         for table_key, (member_table, id_field) in LAG_MEMBER_TABLES.items():
             lag_ids: list[str] = []
             rows_by_id: dict[str, dict] = {}
@@ -463,21 +458,11 @@ class Backend(WorkerBackend):
             if not lag_ids:
                 continue
             jobs.append((member_table, {id_field: sorted(set(lag_ids))}))
-            job_meta.append((member_table, id_field, rows_by_id))
+            job_meta.append((id_field, rows_by_id))
 
-        for (member_table, id_field, rows_by_id), (_table, members, exc) in zip(
+        for (id_field, rows_by_id), (_table, members) in zip(
             job_meta, _retrieve_parallel(client, jobs), strict=True
         ):
-            if exc is not None:
-                failed_tables.append(member_table)
-                logger.warning(
-                    "Policy %s: ConfigState %s fetch failed, LAG membership may be incomplete: %s",
-                    policy_name,
-                    member_table,
-                    exc,
-                )
-                continue
-            assert members is not None
             by_lag: dict[str, list[dict]] = {}
             for member in members:
                 parent_id = str(member.get(id_field) or "")
@@ -516,8 +501,6 @@ class Backend(WorkerBackend):
     def _attach_interface_id_tables(
         client: PlatformOneClient,
         tables_by_device: dict[str, dict[str, list[dict]]],
-        policy_name: str,
-        failed_tables: list[str],
     ) -> None:
         """Fetch PoE config + interface IPs by collected interface UUIDs.
 
@@ -535,18 +518,7 @@ class Backend(WorkerBackend):
             (table, {filter_field: interface_ids})
             for table, filter_field in INTERFACE_ID_TABLES.values()
         ]
-        keys = list(INTERFACE_ID_TABLES)
-        for key, (table, rows, exc) in zip(keys, _retrieve_parallel(client, jobs), strict=True):
-            if exc is not None:
-                failed_tables.append(table)
-                logger.warning(
-                    "Policy %s: ConfigState %s fetch failed, ports sync without it: %s",
-                    policy_name,
-                    table,
-                    exc,
-                )
-                continue
-            assert rows is not None
+        for key, (_table, rows) in zip(INTERFACE_ID_TABLES, _retrieve_parallel(client, jobs), strict=True):
             for row in rows:
                 interface_id = str(row.get("asset_interface_id") or "")
                 device_id = interface_to_device.get(interface_id)
@@ -562,10 +534,10 @@ class Backend(WorkerBackend):
 
         Independent device-filtered tables fetch concurrently; LAG member-port
         and interface-UUID tables run in later phases once their filter IDs
-        are known. A failed table degrades that table's fields for this tick
-        instead of aborting the sync; ports still map from whichever tables
-        survived. Entity order stays deterministic (device_ids sorted, tables
-        merged in PORT_TABLES key order).
+        are known. Any table's failure aborts the tick (the full-outage case
+        is handled earlier, before any cs_device_id resolves). Entity order
+        stays deterministic (device_ids sorted, tables merged in PORT_TABLES
+        key order).
         """
         switches = {
             record["cs_device_id"]: record
@@ -576,33 +548,20 @@ class Backend(WorkerBackend):
             return []
         device_ids = sorted(switches)
 
-        failed_tables: list[str] = []
         tables_by_device: dict[str, dict[str, list[dict]]] = {
             device_id: {key: [] for key in PORT_TABLES} for device_id in device_ids
         }
         jobs = [
             (table, {filter_field: device_ids}) for table, filter_field in PORT_TABLES.values()
         ]
-        for key, (table, rows, exc) in zip(
-            PORT_TABLES, _retrieve_parallel(client, jobs), strict=True
-        ):
-            if exc is not None:
-                failed_tables.append(table)
-                logger.warning(
-                    "Policy %s: ConfigState %s fetch failed, ports sync without it: %s",
-                    policy_name,
-                    table,
-                    exc,
-                )
-                continue
-            assert rows is not None
+        for key, (_table, rows) in zip(PORT_TABLES, _retrieve_parallel(client, jobs), strict=True):
             for row in rows:
                 device_id = str(row.get("asset_device_id") or row.get("device_id") or "")
                 if device_id in tables_by_device:
                     tables_by_device[device_id][key].append(row)
 
-        Backend._attach_lag_members(client, tables_by_device, policy_name, failed_tables)
-        Backend._attach_interface_id_tables(client, tables_by_device, policy_name, failed_tables)
+        Backend._attach_lag_members(client, tables_by_device)
+        Backend._attach_interface_id_tables(client, tables_by_device)
 
         entities: list[Entity] = []
         for device_id in device_ids:
@@ -614,12 +573,6 @@ class Backend(WorkerBackend):
                 )
             )
         logger.info("Policy %s: mapped %d wired port entities", policy_name, len(entities))
-        if failed_tables:
-            logger.warning(
-                "Policy %s: ConfigState degradation this tick; failed tables: %s",
-                policy_name,
-                ", ".join(failed_tables),
-            )
         return entities
 
 
