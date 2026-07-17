@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import requests
 
-# Both fields are one-to-one Platform ONE correlation keys, so `unique` is
-# enforced (NetBox >= 3.7): two NetBox objects claiming the same Platform ONE
-# id is always a sync defect worth failing loudly on. One shared field carries
-# the primary id on every synced object type; the value spaces are disjoint
+# One shared one-to-one Platform ONE correlation key with `unique` enforced
+# (NetBox >= 3.7): two NetBox objects claiming the same Platform ONE id is
+# always a sync defect worth failing loudly on. The value spaces are disjoint
 # (Assets device ids are numeric, interface/cluster ids are UUIDs), so shared
-# uniqueness cannot cross-collide.
+# uniqueness cannot cross-collide. The ConfigState AssetDevice UUID is
+# deliberately NOT stored in NetBox: the worker re-correlates by serial every
+# tick, so it stays an internal join key.
 CUSTOM_FIELDS = [
     {
         "name": "platformone_id",
@@ -24,19 +25,6 @@ CUSTOM_FIELDS = [
             "Immutable Extreme Platform ONE id: Assets device_id on devices, "
             "ConfigState asset_interface_id on interfaces, InferredCluster UUID "
             "on virtual chassis. Stable correlation key across renames."
-        ),
-        "filter_logic": "exact",
-        "unique": True,
-    },
-    {
-        "name": "platformone_configstate_device_id",
-        "label": "Platform ONE ConfigState Device ID",
-        "type": "text",
-        "object_types": ["dcim.device"],
-        "description": (
-            "Immutable Extreme Platform ONE ConfigState AssetDevice UUID "
-            "(retrieve-asset-device id); joins Assets inventory to ConfigState "
-            "port and location tables."
         ),
         "filter_logic": "exact",
         "unique": True,

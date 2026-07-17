@@ -74,16 +74,12 @@ def test_ensure_schema_patches_unique_onto_existing_fields():
 
 def test_custom_fields_and_tags_speak_platform_one():
     names = {field["name"] for field in bootstrap.CUSTOM_FIELDS}
-    assert names == {
-        "platformone_id",
-        "platformone_configstate_device_id",
-    }
+    assert names == {"platformone_id"}
     assert bootstrap.CUSTOM_FIELDS[0]["object_types"] == [
         "dcim.device",
         "dcim.interface",
         "dcim.virtualchassis",
     ]
-    assert bootstrap.CUSTOM_FIELDS[1]["object_types"] == ["dcim.device"]
     assert all(field["unique"] is True for field in bootstrap.CUSTOM_FIELDS)
     slugs = {tag["slug"] for tag in bootstrap.TAGS}
     assert slugs == {"extreme-networks", "platform-one", "discovered"}

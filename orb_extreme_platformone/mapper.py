@@ -135,15 +135,12 @@ def _device_kwargs(
     site_name: str,
     location: Location | None,
     name_source: str,
-    cs_device_id: str | None = None,
     cs_device: dict | None = None,
     vc_membership: dict | None = None,
 ) -> dict:
     custom_fields: dict = {}
     if asset.get("device_id") is not None:
         custom_fields["platformone_id"] = _cf_text(str(asset["device_id"]))
-    if cs_device_id:
-        custom_fields["platformone_configstate_device_id"] = _cf_text(cs_device_id)
 
     kwargs = {
         "name": device_name(asset, name_source),
@@ -388,7 +385,6 @@ def devices_to_entities(
             site_name=site_name,
             location=location,
             name_source=name_source,
-            cs_device_id=cs_device_id,
             cs_device=cs_device,
             vc_membership=membership,
         )
