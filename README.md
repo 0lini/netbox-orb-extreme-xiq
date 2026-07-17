@@ -55,8 +55,7 @@ the same host, and authenticated with the same bearer token:
   configuration and state tables: port configuration and state
   (`retrieve-asset-port-config`, `retrieve-asset-port-state`), port
   capabilities (`retrieve-asset-port-capabilities`), VLAN membership
-  (`retrieve-asset-interface-vlan-properties`), VLAN definitions
-  (`retrieve-asset-vlan-config`), PoE
+  (`retrieve-asset-interface-vlan-properties`), PoE
   (`retrieve-asset-poe-power-ports-state`,
   `retrieve-asset-poe-power-ports-config`), interface IP addresses
   (`retrieve-asset-interface-ip-address`), LAG configuration and state
@@ -303,16 +302,11 @@ join on `(asset_device_id, port_name)`):
   `access`). Interfaces with neither source assert none of the three —
   on Fabric Engine a port can be mapped directly into an I-SID instead of a
   VLAN. Extreme reserved internal VIDs **4060–4094** (inclusive) are
-  filtered from ingest: they are not emitted as Diode `VLAN` entities and
-  are omitted from Interface `untagged_vlan` / `tagged_vlans`; if a port
-  has only reserved memberships after filtering, `mode` is omitted too.
-  Named VLAN definitions come from `retrieve-asset-vlan-config`
-  (batched by `device_id` with the other port tables): each distinct
-  `vlan_number` becomes a Diode `VLAN` entity (`vid`, provenance tags;
-  `name` when `vlan_name` is non-empty; `site` when the device has a
-  resolved site). Interface `untagged_vlan` / `tagged_vlans` references
-  include that name when available; otherwise they stay bare `vid`. VLAN
-  groups are not asserted.
+  filtered from ingest: they are omitted from Interface `untagged_vlan` /
+  `tagged_vlans`; if a port has only reserved memberships after filtering,
+  `mode` is omitted too. VLANs are referenced by bare `vid` only (names are
+  switch-local while Diode/NetBox VLANs are site-scoped). VLAN groups are
+  not asserted.
 - **Interface IP addresses** from `retrieve-asset-interface-ip-address`
   become Diode `IPAddress` entities assigned to the matching interface, using
   `address` + `mask_length`.
@@ -338,7 +332,7 @@ filtered by lag row id.
   `lag-{lag_number}` when name is absent), admin `enabled` from config, and
   `platformone_id` from `asset_interface_id`. VLAN properties that
   share the LAG's `asset_interface_id` are applied the same way as for
-  physical ports (including named VLAN refs when `vlan_configs` are present).
+  physical ports (bare `vid` refs).
   PoE and interface IP joins also apply on that interface id.
 - **Members** set Diode `Interface.lag` to the parent LAG (by device + name).
   Membership prefers config member ports; state members fill gaps. A member
