@@ -644,7 +644,10 @@ def test_virtual_chassis_ignores_identical_placeholder_peer_names(stub_sdk):
     assert entities[0]._kw["virtual_chassis"]._kw["name"] == "sw-idf1 / sw-idf2"
 
 
-def test_virtual_chassis_disambiguates_duplicate_computed_names(stub_sdk):
+def test_virtual_chassis_warns_on_duplicate_computed_names(stub_sdk, caplog):
+    """Colliding names are emitted as-is (no invented suffix): the unique
+    platformone_cluster_id custom field rejects the merge at ingest, and the
+    worker warns so the upstream data problem is visible in the logs."""
     twin = {
         "device_id": 44,
         "host_name": "sw-idf1",
@@ -676,8 +679,10 @@ def test_virtual_chassis_disambiguates_duplicate_computed_names(stub_sdk):
     entities, memberships = mapper.virtual_chassis_to_entities(clusters, records_by_cs_id=records_by_cs_id)
 
     names = [e._kw["virtual_chassis"]._kw["name"] for e in entities]
-    assert names == ["peer-a / peer-b", "peer-a / peer-b (aaaaaaaa)"]
-    assert memberships["cs-uuid-44"]["name"] == "peer-a / peer-b (aaaaaaaa)"
+    assert names == ["peer-a / peer-b", "peer-a / peer-b"]
+    assert memberships["cs-uuid-44"]["name"] == "peer-a / peer-b"
+    assert "Duplicate VirtualChassis name" in caplog.text
+    assert "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" in caplog.text
 
 
 def test_devices_to_entities_attaches_virtual_chassis_membership(stub_sdk):
