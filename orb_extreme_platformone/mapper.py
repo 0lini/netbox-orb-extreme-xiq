@@ -848,9 +848,7 @@ def _physical_port_entities(
         emitted_port_names.add(name)
         emitted_keys[key] = name
         entities.extend(
-            _ip_entities_for_interface(
-                device=device, interface_name=name, rows=interface_ips.get(key, [])
-            )
+            _ip_entities_for_interface(device=device, interface_name=name, rows=interface_ips.get(key, []))
         )
 
     return entities, emitted_port_names, emitted_keys
@@ -955,9 +953,7 @@ def ports_to_entities(tables: dict[str, list[dict]], *, device: str) -> list[Ent
     emitted_keys.update(port_keys)
 
     entities.extend(
-        _orphan_member_entities(
-            device=device, membership=membership, emitted_port_names=emitted_port_names
-        )
+        _orphan_member_entities(device=device, membership=membership, emitted_port_names=emitted_port_names)
     )
     entities.extend(
         _orphan_ip_entities(device=device, interface_ips=interface_ips, emitted_keys=emitted_keys)

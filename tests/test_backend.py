@@ -319,9 +319,7 @@ def test_run_maps_inferred_cluster_to_virtual_chassis():
     entities = list(Backend().run("platformone_worker", _policy()))
 
     inferred_calls = [c for c in responses.calls if "/retrieve-inferred-device" in c.request.url]
-    assert json.loads(inferred_calls[0].request.body) == {
-        "asset_device_id": ["cs-uuid-42", "cs-uuid-43"]
-    }
+    assert json.loads(inferred_calls[0].request.body) == {"asset_device_id": ["cs-uuid-42", "cs-uuid-43"]}
     cluster_calls = [c for c in responses.calls if "/retrieve-inferred-cluster" in c.request.url]
     assert len(cluster_calls) == 2
     bodies = [json.loads(c.request.body) for c in cluster_calls]

@@ -515,8 +515,7 @@ class Backend(WorkerBackend):
             return
 
         jobs = [
-            (table, {filter_field: interface_ids})
-            for table, filter_field in INTERFACE_ID_TABLES.values()
+            (table, {filter_field: interface_ids}) for table, filter_field in INTERFACE_ID_TABLES.values()
         ]
         for key, (_table, rows) in zip(INTERFACE_ID_TABLES, _retrieve_parallel(client, jobs), strict=True):
             for row in rows:
@@ -551,9 +550,7 @@ class Backend(WorkerBackend):
         tables_by_device: dict[str, dict[str, list[dict]]] = {
             device_id: {key: [] for key in PORT_TABLES} for device_id in device_ids
         }
-        jobs = [
-            (table, {filter_field: device_ids}) for table, filter_field in PORT_TABLES.values()
-        ]
+        jobs = [(table, {filter_field: device_ids}) for table, filter_field in PORT_TABLES.values()]
         for key, (_table, rows) in zip(PORT_TABLES, _retrieve_parallel(client, jobs), strict=True):
             for row in rows:
                 device_id = str(row.get("asset_device_id") or row.get("device_id") or "")

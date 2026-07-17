@@ -245,9 +245,7 @@ def test_ports_to_entities_maps_mgmt_only_from_capabilities(stub_sdk):
             "management_port": True,
         }
     ]
-    entities = mapper.ports_to_entities(
-        _tables(vlan_properties=[], port_capabilities=caps), device="sw-idf1"
-    )
+    entities = mapper.ports_to_entities(_tables(vlan_properties=[], port_capabilities=caps), device="sw-idf1")
 
     assert entities[0]._kw["interface"]._kw["mgmt_only"] is True
 
@@ -263,9 +261,7 @@ def test_ports_to_entities_capabilities_scoped_per_device(stub_sdk, caplog):
         {"asset_device_id": "cs-uuid-OTHER", "port_name": "1/1", "management_port": True},
         {"asset_device_id": "cs-uuid-42", "port_name": "1/1", "management_port": False},
     ]
-    entities = mapper.ports_to_entities(
-        _tables(vlan_properties=[], port_capabilities=caps), device="sw-idf1"
-    )
+    entities = mapper.ports_to_entities(_tables(vlan_properties=[], port_capabilities=caps), device="sw-idf1")
 
     assert entities[0]._kw["interface"]._kw["mgmt_only"] is False
     assert "Multiple port_capabilities rows share port_name" not in caplog.text
@@ -276,9 +272,7 @@ def test_ports_to_entities_warns_on_per_device_capability_duplicates(stub_sdk, c
         {"asset_device_id": "cs-uuid-42", "port_name": "1/1", "management_port": True},
         {"asset_device_id": "cs-uuid-42", "port_name": "1/1", "management_port": False},
     ]
-    entities = mapper.ports_to_entities(
-        _tables(vlan_properties=[], port_capabilities=caps), device="sw-idf1"
-    )
+    entities = mapper.ports_to_entities(_tables(vlan_properties=[], port_capabilities=caps), device="sw-idf1")
 
     assert entities[0]._kw["interface"]._kw["mgmt_only"] is True
     assert "Multiple port_capabilities rows share port_name '1/1' on device 'cs-uuid-42'" in caplog.text
@@ -324,9 +318,7 @@ def test_ports_to_entities_omits_poe_when_not_supported_or_enabled(stub_sdk):
 
 def test_ports_to_entities_falls_back_to_native_vlan_when_no_vlan_properties(stub_sdk):
     config = {**PORT_CONFIG, "native_vlan": 99, "port_mode": True}
-    entities = mapper.ports_to_entities(
-        _tables(port_configs=[config], vlan_properties=[]), device="sw-idf1"
-    )
+    entities = mapper.ports_to_entities(_tables(port_configs=[config], vlan_properties=[]), device="sw-idf1")
 
     port = entities[0]._kw["interface"]._kw
     assert port["untagged_vlan"]._kw == {"vid": 99}
@@ -632,9 +624,7 @@ def test_virtual_chassis_disambiguates_duplicate_computed_names(stub_sdk):
         "cs-uuid-45": _record(asset=twin_peer, cs_device_id="cs-uuid-45"),
     }
 
-    entities, memberships = mapper.virtual_chassis_to_entities(
-        clusters, records_by_cs_id=records_by_cs_id
-    )
+    entities, memberships = mapper.virtual_chassis_to_entities(clusters, records_by_cs_id=records_by_cs_id)
 
     names = [e._kw["virtual_chassis"]._kw["name"] for e in entities]
     assert names == ["peer-a / peer-b", "peer-a / peer-b (aaaaaaaa)"]
