@@ -82,13 +82,7 @@ def slugify(value: str) -> str:
 # holds the OS family for switches, which already lives in Platform; the role
 # collapses those to one "Switch". Functions not listed here (e.g. "Router",
 # "Appliance") pass through as-is.
-ROLE_BY_FUNCTION = {
-    "SWITCH ENGINE": "Switch",
-    "FABRIC ENGINE": "Switch",
-    "EXOS": "Switch",
-    "VOSS": "Switch",
-    "AP": "Wireless AP",
-}
+ROLE_BY_FUNCTION = dict.fromkeys(SWITCH_DEVICE_FUNCTIONS, "Switch") | {"AP": "Wireless AP"}
 
 
 def role_for(function: str | None) -> tuple[str, str] | None:
