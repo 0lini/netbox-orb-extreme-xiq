@@ -73,6 +73,7 @@ def _is_extreme_reserved_vlan(vid: int) -> bool:
     """True for Extreme reserved internal VLAN IDs (4060–4094 inclusive)."""
     return EXTREME_RESERVED_VLAN_VID_MIN <= vid <= EXTREME_RESERVED_VLAN_VID_MAX
 
+
 # Keys `ports_to_entities` reads from its `tables` dict. Kept in sync with
 # backend.PORT_TABLES ∪ backend.INTERFACE_ID_TABLES (see unit test).
 PORT_ENTITY_TABLE_KEYS = frozenset(
@@ -525,11 +526,7 @@ def _vlan_fields_from_port_config(config: dict) -> dict:
     VIDs (4060–4094) are omitted entirely (no VLAN fields, no mode).
     """
     native = config.get("native_vlan")
-    if (
-        not isinstance(native, int)
-        or native <= 0
-        or _is_extreme_reserved_vlan(native)
-    ):
+    if not isinstance(native, int) or native <= 0 or _is_extreme_reserved_vlan(native):
         return {}
     fields: dict = {"untagged_vlan": VLAN(vid=native)}
     port_mode = config.get("port_mode")
@@ -730,7 +727,6 @@ def _lag_kwargs(
     return kwargs
 
 
-
 def _ip_entities_for_interface(
     *,
     device: str,
@@ -805,7 +801,6 @@ def _lag_entities(
         )
 
     return entities, lag_names, lag_interface_ids, membership, emitted_keys
-
 
 
 def _physical_port_entities(
