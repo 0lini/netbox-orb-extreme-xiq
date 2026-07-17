@@ -99,17 +99,6 @@ def _build_client(config) -> PlatformOneClient:
     )
 
 
-def _normalize_mac(value) -> str:
-    """Lowercase hex digits only: Assets and ConfigState format MACs differently."""
-    return "".join(ch for ch in str(value or "").lower() if ch in "0123456789abcdef")
-
-
-def _colon_mac(value) -> str:
-    """Colon-separated lowercase MAC: the format ConfigState filters expect."""
-    digits = _normalize_mac(value)
-    return ":".join(digits[i : i + 2] for i in range(0, len(digits), 2))
-
-
 def _retrieve_parallel(
     client: PlatformOneClient, jobs: list[tuple[str, dict]]
 ) -> list[tuple[str, list[dict] | None, PlatformOneApiError | None]]:
@@ -171,24 +160,14 @@ def _fetch_cs_devices(client: PlatformOneClient, assets: list[dict]) -> list[dic
 
     ConfigState rejects an empty GetRequest body (code 1727: at least one
     filter attribute is required), so the listing is filtered by the Assets
-    serial numbers, plus a colon-format MAC query for serial-less assets.
-    Both queries run concurrently; serial matches win on overlap.
+    serial numbers — the shared primary key between the two APIs.
     """
     serials = sorted({str(a["serial_number"]) for a in assets if a.get("serial_number")})
-    macs = sorted(
-        {_colon_mac(a["mac_address"]) for a in assets if not a.get("serial_number") and a.get("mac_address")}
-    )
-    jobs: list[tuple[str, dict]] = []
-    if serials:
-        jobs.append(("asset-device", {"serial_number": serials}))
-    if macs:
-        jobs.append(("asset-device", {"base_mac_address": macs}))
+    if not serials:
+        return []
     records: dict[str, dict] = {}
-    for _table, rows, exc in _retrieve_parallel(client, jobs):
-        if exc is not None:
-            raise exc
-        for rec in rows or []:
-            records.setdefault(str(rec.get("id")), rec)
+    for rec in client.retrieve("asset-device", {"serial_number": serials}):
+        records.setdefault(str(rec.get("id")), rec)
     return list(records.values())
 
 
@@ -211,36 +190,24 @@ def _index_unique(items: Iterable[dict], key_fn, *, label: str) -> dict:
 
 
 def _correlate(assets: list[dict], cs_devices: list[dict]) -> dict[int, dict]:
-    """Match Assets devices to ConfigState AssetDevice records.
+    """Match Assets devices to ConfigState AssetDevice records by serial number.
 
     Returns {Assets device_id: ConfigState device record}. Serial number is
-    the primary key; base MAC and management IP are fallbacks. Devices with
-    no match have no ConfigState data yet and still sync as Devices, minus
-    ports and building/floor detail.
+    the shared primary key between the two APIs — every physical Extreme
+    device carries one, so there is deliberately no MAC/IP fallback. Devices
+    with no match have no ConfigState data yet and still sync as Devices,
+    minus ports and building/floor detail.
     """
     by_serial = _index_unique(
         cs_devices,
         lambda d: str(d["serial_number"]).casefold() if d.get("serial_number") else None,
         label="AssetDevice serial_number",
     )
-    by_mac = _index_unique(
-        cs_devices,
-        lambda d: _normalize_mac(d["base_mac_address"]) if d.get("base_mac_address") else None,
-        label="AssetDevice base_mac_address",
-    )
-    by_ip = _index_unique(
-        cs_devices,
-        lambda d: str(d["ip_address"]) if d.get("ip_address") else None,
-        label="AssetDevice ip_address",
-    )
 
     matched: dict[int, dict] = {}
     for asset in assets:
-        cs = (
-            by_serial.get(str(asset.get("serial_number") or "").casefold())
-            or by_mac.get(_normalize_mac(asset.get("mac_address")))
-            or by_ip.get(str(asset.get("ip_address") or ""))
-        )
+        serial = str(asset.get("serial_number") or "").casefold()
+        cs = by_serial.get(serial) if serial else None
         if cs is not None and asset.get("device_id") is not None:
             matched[asset["device_id"]] = cs
     return matched

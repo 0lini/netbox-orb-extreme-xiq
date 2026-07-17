@@ -21,12 +21,12 @@ Platform ONE APIs (Assets + ConfigState) ──► orb_extreme_platformone ─�
 
 | Platform ONE source | NetBox objects |
 |---------------------|----------------|
-| Devices (Assets API) | `Device` — name, serial, status, role (from Assets `function` when present; no static default), device type and manufacturer, platform (OS family + version), primary IPv4 or IPv6, provenance tags, `platformone_device_id` and `platformone_configstate_device_id` custom fields |
+| Devices (Assets API) | `Device` — name, serial, status, role (from Assets `function` when present; no static default), device type and manufacturer, platform (OS family + version), primary IPv4 or IPv6, provenance tags, `platformone_id` and `platformone_configstate_device_id` custom fields |
 | Device locations (ConfigState) | `Site` (optional latitude/longitude) plus a nested `Location` chain (building → floor), falling back to the Assets API's flat site name |
-| Switch ports (ConfigState) | `Interface` — name, admin state (`enabled`), link state (`mark_connected`), speed/duplex/type, description, MAC address, `mgmt_only`, `poe_mode`, untagged/tagged VLANs with 802.1Q `mode`, `platformone_interface_id` custom field |
+| Switch ports (ConfigState) | `Interface` — name, admin state (`enabled`), link state (`mark_connected`), speed/duplex/type, description, MAC address, `mgmt_only`, `poe_mode`, untagged/tagged VLANs with 802.1Q `mode`, `platformone_id` custom field |
 | Interface IP addresses (ConfigState) | `IPAddress` — address/prefix assigned to the matching interface |
-| Link aggregation (ConfigState) | `Interface` — LAG parent (`type=lag`, name, admin `enabled`, `platformone_interface_id`); member ports reference the parent via Diode `Interface.lag` |
-| Inferred clusters (ConfigState) | `VirtualChassis` — name from peer names, master = primary member (`device_one`), member `vc_position`, provenance tags, `platformone_cluster_id` custom field |
+| Link aggregation (ConfigState) | `Interface` — LAG parent (`type=lag`, name, admin `enabled`, `platformone_id`); member ports reference the parent via Diode `Interface.lag` |
+| Inferred clusters (ConfigState) | `VirtualChassis` — name from peer names, master = primary member (`device_one`), member `vc_position`, provenance tags, `platformone_id` custom field |
 
 The worker asserts a **fixed field set**: each field is either always
 asserted when Platform ONE reports the underlying data, or never asserted at
@@ -214,8 +214,8 @@ output accordingly:
 
 The Assets API identifies devices by a numeric `device_id`; ConfigState uses
 its own UUID. The worker joins the two on each tick by **serial number**
-(case-insensitive), falling back to base MAC address (normalized to bare
-hex, since the two APIs format MACs differently) and then management IP.
+(case-insensitive) — the shared primary key between the two APIs; there is
+deliberately no MAC or IP fallback.
 Devices known to Assets but not yet to ConfigState still sync as Devices —
 with the flat Assets site and no ports — and pick up full detail on a later
 tick. A ConfigState outage likewise degrades the sync to Assets-only data
@@ -323,7 +323,7 @@ filtered by lag row id.
 
 - **LAG parent** is an `Interface` with `type=lag`, name from `name` (or
   `lag-{lag_number}` when name is absent), admin `enabled` from config, and
-  `platformone_interface_id` from `asset_interface_id`. VLAN properties that
+  `platformone_id` from `asset_interface_id`. VLAN properties that
   share the LAG's `asset_interface_id` are applied the same way as for
   physical ports.
 - **Members** set Diode `Interface.lag` to the parent LAG (by device + name).
@@ -354,9 +354,11 @@ AssetDevice UUIDs, and maps each complete in-scope pair to a NetBox
   `device_two_peer_name`) so a primary/backup flip does not rename the
   chassis; identical placeholders like `"Default"` fall through to distinct
   member device names, then the cluster UUID. Duplicate computed names across
-  clusters are disambiguated with an 8-character cluster-id suffix.
+  clusters are emitted as-is with a warning: the unique `platformone_id`
+  custom field makes NetBox reject the collision at ingest, surfacing the
+  upstream data problem instead of hiding it behind an invented suffix.
 - **Master** is `device_one`; members get `vc_position` 1 and 2.
-- **`platformone_cluster_id`** stores the InferredCluster UUID for stable
+- **`platformone_id`** stores the InferredCluster UUID for stable
   correlation; provenance tags match other synced objects.
 - Clusters where either member is missing from the scoped device set are
   skipped. A failed cluster fetch degrades to no VirtualChassis for that
@@ -378,7 +380,7 @@ documented Platform ONE APIs. Operational differences:
 | Package / `config.package` | `orb_extreme_xiq` | `orb_extreme_platformone` |
 | Credentials | `XIQ_API_TOKEN` or username/password | `PLATFORMONE_API_TOKEN` only |
 | Tags | `extreme-networks`, `xiq`, `discovered` | `extreme-networks`, `platform-one`, `discovered` |
-| Custom fields | `xiq_network_policy`, `xiq_port_id` | `platformone_device_id`, `platformone_interface_id`, `platformone_cluster_id`, `platformone_configstate_device_id` |
+| Custom fields | `xiq_network_policy`, `xiq_port_id` | `platformone_id` (device / interface / virtual chassis), `platformone_configstate_device_id` |
 | Port admin state / VLANs | not available | `enabled`, untagged/tagged VLANs, `mode` |
 | Wireless radios / WLANs | synced | not synced (see [roadmap](#roadmap)) |
 

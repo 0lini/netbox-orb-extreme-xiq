@@ -196,19 +196,19 @@ def test_run_batches_every_switch_into_one_call_per_port_table():
 
 
 @responses.activate
-def test_run_correlates_by_mac_when_configstate_has_no_serial():
-    """Assets sends MACs as bare hex, ConfigState may use separators -- the
-    match must normalize both sides."""
+def test_run_serial_less_configstate_record_stays_uncorrelated():
+    """Serial number is the primary key between the two APIs -- there is
+    deliberately no MAC/IP fallback. A ConfigState record without one never
+    correlates; the device still syncs Assets-only."""
     cs = {"id": "cs-uuid-42", "base_mac_address": "AA:BB:CC:DD:EE:FF"}
     _mock_assets([SWITCH_ASSET])
     _mock_cs("asset-device", "AssetDevice", [cs])
     _mock_cs("asset-location", "AssetLocation", [])
-    _mock_port_tables_empty()
 
-    list(Backend().run("platformone_worker", _policy()))
+    entities = list(Backend().run("platformone_worker", _policy()))
 
-    port_calls = [c for c in responses.calls if "/retrieve-asset-port-config" in c.request.url]
-    assert json.loads(port_calls[0].request.body) == {"asset_device_id": ["cs-uuid-42"]}
+    assert [e.device.name for e in entities if e.HasField("device")] == ["sw-idf1"]
+    assert not [c for c in responses.calls if "/retrieve-asset-port-config" in c.request.url]
 
 
 @responses.activate
@@ -337,7 +337,7 @@ def test_run_maps_inferred_cluster_to_virtual_chassis():
     assert chassis[0].name == "peer-a / peer-b"
     assert chassis[0].master.name == "sw-idf1"
     assert not chassis[0].description
-    assert chassis[0].custom_fields["platformone_cluster_id"].text == "cluster-uuid-1"
+    assert chassis[0].custom_fields["platformone_id"].text == "cluster-uuid-1"
 
     devices = {e.device.name: e.device for e in entities if e.HasField("device")}
     assert devices["sw-idf1"].virtual_chassis.name == "peer-a / peer-b"
@@ -390,7 +390,7 @@ def test_run_maps_lag_interfaces_and_member_lag_refs():
     assert set(interfaces) == {"lag1", "1/1", "1/2"}
     assert interfaces["lag1"].type == "lag"
     assert interfaces["lag1"].enabled is True
-    assert interfaces["lag1"].custom_fields["platformone_interface_id"].text == "lag-if-1"
+    assert interfaces["lag1"].custom_fields["platformone_id"].text == "lag-if-1"
     assert interfaces["1/1"].lag.name == "lag1"
     assert interfaces["1/2"].lag.name == "lag1"
     # Nested members present -> no separate member-port retrieve.

@@ -8,40 +8,22 @@ from __future__ import annotations
 
 import requests
 
+# Both fields are one-to-one Platform ONE correlation keys, so `unique` is
+# enforced (NetBox >= 3.7): two NetBox objects claiming the same Platform ONE
+# id is always a sync defect worth failing loudly on. One shared field carries
+# the primary id on every synced object type; the value spaces are disjoint
+# (Assets device ids are numeric, interface/cluster ids are UUIDs), so shared
+# uniqueness cannot cross-collide.
 CUSTOM_FIELDS = [
     {
-        "name": "platformone_device_id",
-        "label": "Platform ONE Device ID",
+        "name": "platformone_id",
+        "label": "Platform ONE ID",
         "type": "text",
-        "object_types": ["dcim.device"],
+        "object_types": ["dcim.device", "dcim.interface", "dcim.virtualchassis"],
         "description": (
-            "Immutable Extreme Platform ONE device id (Assets API device_id); stable "
-            "correlation key even if the device is renamed."
-        ),
-        "filter_logic": "exact",
-        "unique": True,
-    },
-    {
-        "name": "platformone_interface_id",
-        "label": "Platform ONE Interface ID",
-        "type": "text",
-        "object_types": ["dcim.interface"],
-        "description": (
-            "Immutable Extreme Platform ONE interface UUID (ConfigState asset_interface_id); "
-            "stable correlation key even if the port is renamed."
-        ),
-        "filter_logic": "exact",
-        "unique": True,
-    },
-    {
-        "name": "platformone_cluster_id",
-        "label": "Platform ONE Cluster ID",
-        "type": "text",
-        "object_types": ["dcim.virtualchassis"],
-        "description": (
-            "Immutable Extreme Platform ONE InferredCluster UUID "
-            "(ConfigState retrieve-inferred-cluster id); stable correlation key "
-            "even if peer names change."
+            "Immutable Extreme Platform ONE id: Assets device_id on devices, "
+            "ConfigState asset_interface_id on interfaces, InferredCluster UUID "
+            "on virtual chassis. Stable correlation key across renames."
         ),
         "filter_logic": "exact",
         "unique": True,
