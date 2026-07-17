@@ -619,8 +619,6 @@ def test_ports_to_entities_skips_lag_row_duplicated_in_port_tables(stub_sdk):
     assert ports[0]["type"] == "lag"
 
 
-
-
 SWITCH_ASSET_PEER = {
     "device_id": 43,
     "host_name": "sw-idf2",
