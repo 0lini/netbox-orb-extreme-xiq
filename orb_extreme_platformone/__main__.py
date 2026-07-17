@@ -60,7 +60,7 @@ def _quote_values(value):
         return [_quote_values(item) for item in value]
     if isinstance(value, bool):
         return "true" if value else "false"
-    return value if isinstance(value, str) else str(value)
+    return str(value)
 
 
 def main() -> None:
