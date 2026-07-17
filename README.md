@@ -21,7 +21,7 @@ Platform ONE APIs (Assets + ConfigState) ──► orb_extreme_platformone ─�
 
 | Platform ONE source | NetBox objects |
 |---------------------|----------------|
-| Devices (Assets API) | `Device` — name, serial, status, role (from Assets `function` when present; no static default), device type and manufacturer, platform (OS family + version), primary IPv4 or IPv6, provenance tags, `platformone_id` and `platformone_configstate_device_id` custom fields |
+| Devices (Assets API) | `Device` — name, serial, status, role (from Assets `function` when present; no static default), device type and manufacturer, platform (OS family + version), primary IPv4 or IPv6, provenance tags, `platformone_id` custom field |
 | Device locations (ConfigState) | `Site` (optional latitude/longitude) plus a nested `Location` chain (building → floor), falling back to the Assets API's flat site name |
 | Switch ports (ConfigState) | `Interface` — name, admin state (`enabled`), link state (`mark_connected`), speed/duplex/type, description, MAC address, `mgmt_only`, `poe_mode`, untagged/tagged VLANs with 802.1Q `mode`, `platformone_id` custom field |
 | Interface IP addresses (ConfigState) | `IPAddress` — address/prefix assigned to the matching interface |
@@ -380,7 +380,7 @@ documented Platform ONE APIs. Operational differences:
 | Package / `config.package` | `orb_extreme_xiq` | `orb_extreme_platformone` |
 | Credentials | `XIQ_API_TOKEN` or username/password | `PLATFORMONE_API_TOKEN` only |
 | Tags | `extreme-networks`, `xiq`, `discovered` | `extreme-networks`, `platform-one`, `discovered` |
-| Custom fields | `xiq_network_policy`, `xiq_port_id` | `platformone_id` (device / interface / virtual chassis), `platformone_configstate_device_id` |
+| Custom fields | `xiq_network_policy`, `xiq_port_id` | `platformone_id` (device / interface / virtual chassis) |
 | Port admin state / VLANs | not available | `enabled`, untagged/tagged VLANs, `mode` |
 | Wireless radios / WLANs | synced | not synced (see [roadmap](#roadmap)) |
 
