@@ -37,6 +37,7 @@ def test_client_requires_a_token():
         ("asset-device", "AssetDevice"),
         ("asset-port-state", "AssetPortState"),
         ("asset-interface-vlan-properties", "AssetInterfaceVlanProperties"),
+        ("asset-vlan-config", "AssetVlanConfig"),
         ("inferred-cluster", "InferredCluster"),
         ("inferred-device", "InferredDevice"),
         ("asset-lldp-neighbor-state", "AssetLldpNeighborState"),

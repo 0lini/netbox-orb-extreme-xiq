@@ -137,6 +137,26 @@ def test_run_produces_site_location_device_and_interface_entities():
             }
         ],
     )
+    _mock_cs(
+        "asset-vlan-config",
+        "AssetVlanConfig",
+        [
+            {
+                "device_id": "cs-uuid-42",
+                "asset_interface_id": "if-vlan-10",
+                "vlan_number": 10,
+                "vlan_name": "Users",
+                "vlan_type": 1,
+            },
+            {
+                "device_id": "cs-uuid-42",
+                "asset_interface_id": "if-vlan-20",
+                "vlan_number": 20,
+                "vlan_name": "Servers",
+                "vlan_type": 1,
+            },
+        ],
+    )
     _mock_cs("asset-lag-config", "AssetLagConfig", [])
     _mock_cs("asset-lag-state", "AssetLagState", [])
     _mock_cs("asset-port-capabilities", "AssetPortCapabilities", [])
@@ -146,7 +166,7 @@ def test_run_produces_site_location_device_and_interface_entities():
 
     entities = list(Backend().run("platformone_worker", _policy()))
 
-    assert len(entities) == 5
+    assert len(entities) == 7
     assert entities[0].site.name == "HQ"
     assert entities[1].location.name == "B1"
     assert entities[2].location.name == "F2"
@@ -156,7 +176,12 @@ def test_run_produces_site_location_device_and_interface_entities():
     assert entities[3].device.location.name == "F2"
     assert entities[3].device.role.name == "Switch"
     assert "platformone_configstate_device_id" not in entities[3].device.custom_fields
-    interface = entities[4].interface
+    assert entities[4].vlan.vid == 10
+    assert entities[4].vlan.name == "Users"
+    assert entities[4].vlan.site.name == "HQ"
+    assert entities[5].vlan.vid == 20
+    assert entities[5].vlan.name == "Servers"
+    interface = entities[6].interface
     assert interface.name == "1/1"
     assert interface.device.name == "sw-idf1"
     assert interface.enabled is True
@@ -164,7 +189,9 @@ def test_run_produces_site_location_device_and_interface_entities():
     assert interface.speed == 1_000_000
     assert interface.type == "1000base-t"
     assert interface.untagged_vlan.vid == 10
+    assert interface.untagged_vlan.name == "Users"
     assert [v.vid for v in interface.tagged_vlans] == [20]
+    assert interface.tagged_vlans[0].name == "Servers"
     assert interface.mode == "tagged"
 
 
@@ -187,6 +214,9 @@ def test_run_batches_every_switch_into_one_call_per_port_table():
     assert json.loads(port_calls[0].request.body) == {"asset_device_id": ["cs-uuid-42", "cs-uuid-43"]}
     vlan_calls = [c for c in responses.calls if "/retrieve-asset-interface-vlan-properties" in c.request.url]
     assert json.loads(vlan_calls[0].request.body) == {"device_id": ["cs-uuid-42", "cs-uuid-43"]}
+    vlan_config_calls = [c for c in responses.calls if "/retrieve-asset-vlan-config" in c.request.url]
+    assert len(vlan_config_calls) == 1
+    assert json.loads(vlan_config_calls[0].request.body) == {"device_id": ["cs-uuid-42", "cs-uuid-43"]}
     inferred_calls = [c for c in responses.calls if "/retrieve-inferred-device" in c.request.url]
     assert len(inferred_calls) == 1
     assert json.loads(inferred_calls[0].request.body) == {"asset_device_id": ["cs-uuid-42", "cs-uuid-43"]}
@@ -262,6 +292,7 @@ def test_run_survives_a_failed_port_table_and_keeps_the_rest(caplog):
     )
     _mock_cs("asset-port-state", "AssetPortState", [], status=500)
     _mock_cs("asset-interface-vlan-properties", "AssetInterfaceVlanProperties", [])
+    _mock_cs("asset-vlan-config", "AssetVlanConfig", [])
     _mock_cs("asset-lag-config", "AssetLagConfig", [])
     _mock_cs("asset-lag-state", "AssetLagState", [])
     _mock_cs("asset-port-capabilities", "AssetPortCapabilities", [])
@@ -278,6 +309,7 @@ def test_run_survives_a_failed_port_table_and_keeps_the_rest(caplog):
     # Sibling tables still ran (concurrent degrade-on-failure).
     assert any("/retrieve-asset-port-config" in c.request.url for c in responses.calls)
     assert any("/retrieve-asset-lag-config" in c.request.url for c in responses.calls)
+    assert any("/retrieve-asset-vlan-config" in c.request.url for c in responses.calls)
 
 
 def test_correlate_warns_on_duplicate_serial(caplog):
@@ -360,6 +392,7 @@ def test_run_maps_lag_interfaces_and_member_lag_refs():
     )
     _mock_cs("asset-port-state", "AssetPortState", [])
     _mock_cs("asset-interface-vlan-properties", "AssetInterfaceVlanProperties", [])
+    _mock_cs("asset-vlan-config", "AssetVlanConfig", [])
     _mock_cs(
         "asset-lag-config",
         "AssetLagConfig",
@@ -409,6 +442,7 @@ def test_run_fetches_lag_member_ports_when_nested_empty():
     )
     _mock_cs("asset-port-state", "AssetPortState", [])
     _mock_cs("asset-interface-vlan-properties", "AssetInterfaceVlanProperties", [])
+    _mock_cs("asset-vlan-config", "AssetVlanConfig", [])
     _mock_cs(
         "asset-lag-config",
         "AssetLagConfig",
@@ -503,6 +537,9 @@ def test_collect_interface_ids_includes_vlan_only_interfaces():
                 {"asset_interface_id": "if-port", "interface_name": "1/1"},
                 {"asset_interface_id": "if-svi", "interface_name": "vlan10"},
             ],
+            "vlan_configs": [
+                {"asset_interface_id": "if-vlan-cfg", "vlan_number": 10},
+            ],
             "lag_configs": [],
             "lag_states": [],
             "poe_states": [],
@@ -512,4 +549,8 @@ def test_collect_interface_ids_includes_vlan_only_interfaces():
 
     mapping = Backend._collect_interface_ids(tables_by_device)
 
-    assert mapping == {"if-port": "cs-uuid-42", "if-svi": "cs-uuid-42"}
+    assert mapping == {
+        "if-port": "cs-uuid-42",
+        "if-svi": "cs-uuid-42",
+        "if-vlan-cfg": "cs-uuid-42",
+    }
