@@ -29,7 +29,7 @@ from worker.models import Metadata, Policy
 
 from . import __version__, bootstrap, mapper
 from .client import DEFAULT_BASE_URL, PlatformOneApiError, PlatformOneClient
-from .identity import device_name, is_switch, resolve_location
+from .identity import device_name, is_switch
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +41,12 @@ APP_VERSION = __version__
 DEFAULT_CLASSIFICATION = "ALL"
 
 # {mapper table key: (retrieve-* table, GetRequest device filter field)}.
-# vlan-properties, vlan-config, and poe-state use `device_id`; capabilities
-# use `asset_device_id` like port config/state.
+# vlan-properties and poe-state use `device_id`; capabilities use
+# `asset_device_id` like port config/state.
 PORT_TABLES = {
     "port_configs": ("asset-port-config", "asset_device_id"),
     "port_states": ("asset-port-state", "asset_device_id"),
     "vlan_properties": ("asset-interface-vlan-properties", "device_id"),
-    "vlan_configs": ("asset-vlan-config", "device_id"),
     "lag_configs": ("asset-lag-config", "asset_device_id"),
     "lag_states": ("asset-lag-state", "asset_device_id"),
     "port_capabilities": ("asset-port-capabilities", "asset_device_id"),
@@ -444,7 +443,7 @@ class Backend(WorkerBackend):
     ) -> dict[str, str]:
         """Map each collected asset_interface_id to its device UUID.
 
-        Scans every PORT_TABLES key: vlan_properties and vlan_configs matter so
+        Scans every PORT_TABLES key: vlan_properties rows matter so
         interface-IP / PoE-config retrieves cover VLAN-facing interfaces that
         never appear in port/LAG/PoE-state rows; port_capabilities rows carry
         no asset_interface_id and contribute nothing.
@@ -542,13 +541,11 @@ class Backend(WorkerBackend):
         entities: list[Entity] = []
         for device_id in device_ids:
             record = switches[device_id]
-            site_name, _ = resolve_location(record.get("location"), record["asset"])
             entities.extend(
                 mapper.ports_to_entities(
                     tables_by_device[device_id],
                     device=device_name(record["asset"], name_source),
                     function=record["asset"].get("function"),
-                    site=site_name,
                 )
             )
         logger.info("Policy %s: mapped %d wired port entities", policy_name, len(entities))
