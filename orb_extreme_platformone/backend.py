@@ -255,14 +255,18 @@ class Backend(WorkerBackend):
 
         name_source = _cfg(config, "name_source", "hostname")
         vc_entities, vc_memberships = self._virtual_chassis_entities(client, scoped, name_source, policy_name)
+        # Port/LAG/IP tables are fetched before Device entities so primary_ip
+        # can use ConfigState interface CIDRs (mask_length) instead of inventing
+        # /32 from the bare Assets management address.
+        port_entities, primary_ips_by_cs_id = self._port_entities(client, scoped, name_source, policy_name)
         entities = mapper.devices_to_entities(
             scoped,
             name_source=name_source,
             virtual_chassis_entities=vc_entities,
             vc_memberships=vc_memberships,
+            primary_ips_by_cs_id=primary_ips_by_cs_id,
         )
-
-        entities.extend(self._port_entities(client, scoped, name_source, policy_name))
+        entities.extend(port_entities)
 
         return entities
 
@@ -497,7 +501,7 @@ class Backend(WorkerBackend):
     @staticmethod
     def _port_entities(
         client: PlatformOneClient, records: list[dict], name_source: str, policy_name: str
-    ) -> list[Entity]:
+    ) -> tuple[list[Entity], dict[str, dict[str, str]]]:
         """One batched ConfigState call per port/LAG table, covering every
         in-scope switch that resolved to a ConfigState device.
 
@@ -507,6 +511,9 @@ class Backend(WorkerBackend):
         instead of aborting the sync; ports still map from whichever tables
         survived. Entity order stays deterministic (device_ids sorted, tables
         merged in PORT_TABLES key order).
+
+        Returns ``(port_entities, primary_ips_by_cs_id)`` so Device primary
+        IPs can reuse the same ConfigState interface CIDRs.
         """
         switches = {
             record["cs_device_id"]: record
@@ -514,7 +521,7 @@ class Backend(WorkerBackend):
             if record["cs_device_id"] and is_switch(record["asset"].get("function"))
         }
         if not switches:
-            return []
+            return [], {}
         device_ids = sorted(switches)
 
         failed_tables: list[str] = []
@@ -539,11 +546,16 @@ class Backend(WorkerBackend):
         Backend._attach_interface_id_tables(client, tables_by_device, policy_name, failed_tables)
 
         entities: list[Entity] = []
+        primary_ips_by_cs_id: dict[str, dict[str, str]] = {}
         for device_id in device_ids:
             record = switches[device_id]
+            tables = tables_by_device[device_id]
+            primary = mapper.primary_ips_from_tables(tables, asset_ip=record["asset"].get("ip_address"))
+            if primary:
+                primary_ips_by_cs_id[device_id] = primary
             entities.extend(
                 mapper.ports_to_entities(
-                    tables_by_device[device_id],
+                    tables,
                     device=device_name(record["asset"], name_source),
                     function=record["asset"].get("function"),
                 )
@@ -555,4 +567,4 @@ class Backend(WorkerBackend):
                 policy_name,
                 ", ".join(failed_tables),
             )
-        return entities
+        return entities, primary_ips_by_cs_id

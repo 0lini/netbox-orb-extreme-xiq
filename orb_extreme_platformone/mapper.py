@@ -53,6 +53,7 @@ __all__ = [
     "PORT_ENTITY_TABLE_KEYS",
     "devices_to_entities",
     "ports_to_entities",
+    "primary_ips_from_tables",
     "scope_devices",
     "virtual_chassis_to_entities",
 ]
@@ -91,18 +92,30 @@ PORT_ENTITY_TABLE_KEYS = frozenset(
 )
 
 
-def _status_for(asset: dict) -> str:
-    return "active" if asset.get("is_connected") else "offline"
+def _status_for(asset: dict) -> str | None:
+    """Map Assets `is_connected` to Device status; omit when unknown.
+
+    Only an explicit bool is asserted — a missing/null value must not become
+    ``offline`` the way a falsy check would.
+    """
+    connected = asset.get("is_connected")
+    if connected is True:
+        return "active"
+    if connected is False:
+        return "offline"
+    return None
 
 
-def _primary_ips(asset: dict) -> dict[str, str]:
-    """Split Assets/AssetDevice `ip_address` into primary_ip4 vs primary_ip6.
+def _primary_ips_from_asset(asset: dict) -> dict[str, str]:
+    """Split Assets `ip_address` into primary_ip4 vs primary_ip6.
 
-    Bare addresses get family-appropriate defaults (/32 or /128). Invalid
-    values assert nothing rather than inventing a family.
+    Assets reports a bare host with no mask. Inventing /32 or /128 would
+    create misleading host prefixes in NetBox, so a bare address is skipped.
+    Only values that already include a prefix length are asserted (fallback
+    when ConfigState did not yield a primary). Invalid values assert nothing.
     """
     raw = (asset.get("ip_address") or "").strip()
-    if not raw:
+    if not raw or "/" not in raw:
         return {}
     try:
         iface = ipaddress.ip_interface(raw)
@@ -110,6 +123,93 @@ def _primary_ips(asset: dict) -> dict[str, str]:
         return {}
     key = "primary_ip4" if iface.version == 4 else "primary_ip6"
     return {key: str(iface)}
+
+
+def _mgmt_interface_ids(tables: dict[str, list[dict]]) -> set[str]:
+    """Interface UUIDs flagged management_port via port capabilities + port rows."""
+    mgmt_ports = {
+        (str(cap.get("asset_device_id") or ""), str(cap.get("port_name") or ""))
+        for cap in tables.get("port_capabilities") or []
+        if cap.get("management_port") is True and cap.get("port_name")
+    }
+    if not mgmt_ports:
+        return set()
+    ids: set[str] = set()
+    for row in (*(tables.get("port_configs") or []), *(tables.get("port_states") or [])):
+        key = (str(row.get("asset_device_id") or ""), str(row.get("name") or ""))
+        interface_id = str(row.get("asset_interface_id") or "")
+        if interface_id and key in mgmt_ports:
+            ids.add(interface_id)
+    return ids
+
+
+def _pick_primary_cidr(candidates: list[tuple[int, str]]) -> dict[str, str]:
+    """Keep the first CIDR per address family from ranked candidates."""
+    result: dict[str, str] = {}
+    for version, cidr in candidates:
+        key = "primary_ip4" if version == 4 else "primary_ip6"
+        result.setdefault(key, cidr)
+    return result
+
+
+def primary_ips_from_tables(
+    tables: dict[str, list[dict]],
+    *,
+    asset_ip: str | None = None,
+) -> dict[str, str]:
+    """Derive Device primary_ip4/primary_ip6 from ConfigState interface IPs.
+
+    Prefers rows with ``is_primary`` True, then IPs on ``management_port``
+    interfaces, then an interface IP whose host matches Assets ``ip_address``.
+    Every candidate must have a real prefix (``mask_length`` / CIDR); bare
+    hosts are never padded with /32 or /128.
+    """
+    rows_with_cidr: list[tuple[dict, str, ipaddress.IPv4Interface | ipaddress.IPv6Interface]] = []
+    for row in tables.get("interface_ips") or []:
+        raw = str(row.get("address") or "").strip()
+        mask = row.get("mask_length")
+        # Require an explicit prefix from ConfigState (mask_length or inline /n);
+        # never accept ip_interface's implicit /32 or /128 on a bare host.
+        if not raw or ("/" not in raw and not (isinstance(mask, int) and 0 <= mask <= 128)):
+            continue
+        cidr = _interface_ip_cidr(row)
+        if not cidr:
+            continue
+        try:
+            iface = ipaddress.ip_interface(cidr)
+        except ValueError:
+            continue
+        rows_with_cidr.append((row, cidr, iface))
+
+    if not rows_with_cidr:
+        return {}
+
+    ranked: list[tuple[int, str]] = []
+    for row, cidr, iface in rows_with_cidr:
+        if row.get("is_primary") is True:
+            ranked.append((iface.version, cidr))
+    if ranked:
+        return _pick_primary_cidr(ranked)
+
+    mgmt_ids = _mgmt_interface_ids(tables)
+    if mgmt_ids:
+        for row, cidr, iface in rows_with_cidr:
+            if str(row.get("asset_interface_id") or "") in mgmt_ids:
+                ranked.append((iface.version, cidr))
+        if ranked:
+            return _pick_primary_cidr(ranked)
+
+    asset_host = (asset_ip or "").strip()
+    if asset_host and "/" in asset_host:
+        asset_host = asset_host.split("/", 1)[0]
+    if asset_host:
+        for row, cidr, iface in rows_with_cidr:
+            if str(iface.ip) == asset_host or str(row.get("address") or "").split("/", 1)[0] == asset_host:
+                ranked.append((iface.version, cidr))
+        if ranked:
+            return _pick_primary_cidr(ranked)
+
+    return {}
 
 
 def _cf_text(value: str) -> CustomFieldValue:
@@ -148,6 +248,7 @@ def _device_kwargs(
     name_source: str,
     cs_device: dict | None = None,
     vc_membership: dict | None = None,
+    primary_ips: dict[str, str] | None = None,
 ) -> dict:
     custom_fields: dict = {}
     if asset.get("device_id") is not None:
@@ -156,11 +257,13 @@ def _device_kwargs(
     kwargs = {
         "name": device_name(asset, name_source),
         "serial": asset.get("serial_number") or None,
-        "status": _status_for(asset),
         "site": Site(name=site_name),
         "custom_fields": custom_fields,
         "tags": PROVENANCE_TAGS,
     }
+    status = _status_for(asset)
+    if status is not None:
+        kwargs["status"] = status
     if location is not None:
         kwargs["location"] = location
 
@@ -182,7 +285,8 @@ def _device_kwargs(
     platform = platform_name(asset.get("function"), os_version)
     if platform:
         kwargs["platform"] = Platform(name=platform, manufacturer=MANUFACTURER)
-    kwargs.update(_primary_ips(asset))
+    # ConfigState interface IPs (with mask_length) win; Assets CIDR is fallback.
+    kwargs.update(primary_ips or _primary_ips_from_asset(asset))
     if vc_membership:
         kwargs["virtual_chassis"] = VirtualChassis(name=vc_membership["name"])
         kwargs["vc_position"] = vc_membership["position"]
@@ -331,6 +435,7 @@ def devices_to_entities(
     site_scope: set[str] | None = None,
     virtual_chassis_entities: list[Entity] | None = None,
     vc_memberships: dict[str, dict] | None = None,
+    primary_ips_by_cs_id: dict[str, dict[str, str]] | None = None,
 ) -> list[Entity]:
     """Map device records to Diode entities: one Site per distinct site, one
     nested Location per Building/Floor level in use, VirtualChassis (if any),
@@ -341,6 +446,9 @@ def devices_to_entities(
     directly with an unscoped list, pass `site_scope` here instead.
 
     `vc_memberships` is keyed by ConfigState device UUID (`cs_device_id`).
+    `primary_ips_by_cs_id` supplies Device primary_ip4/primary_ip6 from
+    ConfigState interface IPs (see `primary_ips_from_tables`); when absent,
+    Assets `ip_address` is used only if it already includes a prefix.
     VirtualChassis entities are emitted after locations and before devices so
     Diode can resolve membership references in the same ingest batch.
     """
@@ -378,6 +486,7 @@ def devices_to_entities(
         location = location_cache.get((site_name, tuple(location_path))) if location_path else None
         cs_device_id = record.get("cs_device_id")
         membership = (vc_memberships or {}).get(cs_device_id) if cs_device_id else None
+        primary_ips = (primary_ips_by_cs_id or {}).get(cs_device_id) if cs_device_id else None
         kwargs = _device_kwargs(
             record["asset"],
             site_name=site_name,
@@ -385,6 +494,7 @@ def devices_to_entities(
             name_source=name_source,
             cs_device=record.get("cs_device"),
             vc_membership=membership,
+            primary_ips=primary_ips,
         )
         entities.append(Entity(device=Device(**kwargs)))
 
@@ -554,14 +664,17 @@ def _poe_mode(config: dict, state: dict) -> str | None:
 def _interface_ip_cidr(row: dict) -> str | None:
     """Build address/prefix for AssetInterfaceIpAddress → Diode IPAddress.
 
-    `address` is a bare address and `mask_length` its prefix length; without a
-    usable mask the family default (/32 or /128) applies.
+    `address` is a bare address and `mask_length` its prefix length. Without
+    an explicit prefix (inline ``/n`` or usable ``mask_length``), return
+    None — never invent /32 or /128.
     """
     raw = str(row.get("address") or "").strip()
     if not raw:
         return None
     mask = row.get("mask_length")
-    if "/" not in raw and isinstance(mask, int) and 0 <= mask <= 128:
+    if "/" not in raw:
+        if not (isinstance(mask, int) and 0 <= mask <= 128):
+            return None
         raw = f"{raw}/{mask}"
     try:
         return str(ipaddress.ip_interface(raw))
@@ -917,15 +1030,36 @@ def _orphan_ip_entities(
     emitted_keys: dict[str, str],
 ) -> list[Entity]:
     """IPs on interfaces that got no Interface entity above (e.g. VLAN/SVI
-    interfaces, which appear in vlan_properties but not the port tables)."""
+    interfaces, which appear in vlan_properties but not the port tables).
+
+    Emits a minimal Interface first so the IPAddress has a real assigned
+    object, then the IP entities. Interface ``type`` is left unset (no
+    verified SVI/virtual enum from ConfigState).
+    """
     entities: list[Entity] = []
+    emitted_names: set[str] = set()
     for key, rows in sorted(interface_ips.items()):
         if key in emitted_keys:
             continue
         name = next((row["interface_name"] for row in rows if row.get("interface_name")), None)
         if not name:
             continue
-        entities.extend(_ip_entities_for_interface(device=device, interface_name=str(name), rows=rows))
+        name = str(name)
+        if name not in emitted_names:
+            interface_id = next(
+                (str(row["asset_interface_id"]) for row in rows if row.get("asset_interface_id")),
+                key or None,
+            )
+            iface_kwargs: dict = {
+                "device": device,
+                "name": name,
+                "tags": PROVENANCE_TAGS,
+            }
+            if interface_id:
+                iface_kwargs["custom_fields"] = {"platformone_id": _cf_text(str(interface_id))}
+            entities.append(Entity(interface=Interface(**iface_kwargs)))
+            emitted_names.add(name)
+        entities.extend(_ip_entities_for_interface(device=device, interface_name=name, rows=rows))
     return entities
 
 

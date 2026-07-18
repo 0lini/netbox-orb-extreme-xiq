@@ -59,7 +59,8 @@ def test_devices_to_entities_maps_the_assets_fields(stub_sdk):
     assert device["device_type"]._kw["manufacturer"] == "Extreme Networks"
     assert device["platform"]._kw["name"] == "Fabric Engine 9.2.1.0"
     assert device["platform"]._kw["manufacturer"] == "Extreme Networks"
-    assert device["primary_ip4"] == "10.0.0.2/32"
+    # Assets reports a bare host address; do not invent /32.
+    assert "primary_ip4" not in device
     assert "primary_ip6" not in device
     assert device["role"]._kw == {"name": "Switch", "slug": "switch"}
     assert cf(device["custom_fields"]["platformone_id"]._kw) == "42"
@@ -68,13 +69,106 @@ def test_devices_to_entities_maps_the_assets_fields(stub_sdk):
     assert device["tags"] == ["extreme-networks", "platform-one", "discovered"]
 
 
-def test_devices_to_entities_splits_primary_ip6(stub_sdk):
+def test_devices_to_entities_skips_bare_primary_ip6(stub_sdk):
     asset = {**SWITCH_ASSET, "ip_address": "2001:db8::1"}
     entities = mapper.devices_to_entities([_record(asset=asset)])
 
     device = entities[-1]._kw["device"]._kw
-    assert device["primary_ip6"] == "2001:db8::1/128"
+    assert "primary_ip6" not in device
     assert "primary_ip4" not in device
+
+
+def test_devices_to_entities_keeps_primary_ip_when_prefix_is_present(stub_sdk):
+    asset = {**SWITCH_ASSET, "ip_address": "10.0.0.2/24"}
+    entities = mapper.devices_to_entities([_record(asset=asset)])
+
+    device = entities[-1]._kw["device"]._kw
+    assert device["primary_ip4"] == "10.0.0.2/24"
+    assert "primary_ip6" not in device
+
+
+def test_devices_to_entities_keeps_primary_ip6_when_prefix_is_present(stub_sdk):
+    asset = {**SWITCH_ASSET, "ip_address": "2001:db8::1/64"}
+    entities = mapper.devices_to_entities([_record(asset=asset)])
+
+    device = entities[-1]._kw["device"]._kw
+    assert device["primary_ip6"] == "2001:db8::1/64"
+    assert "primary_ip4" not in device
+
+
+def test_devices_to_entities_uses_configstate_primary_ips_by_cs_id(stub_sdk):
+    entities = mapper.devices_to_entities(
+        [_record()],
+        primary_ips_by_cs_id={"cs-uuid-42": {"primary_ip4": "10.0.0.2/24"}},
+    )
+
+    device = entities[-1]._kw["device"]._kw
+    assert device["primary_ip4"] == "10.0.0.2/24"
+
+
+def test_primary_ips_from_tables_prefers_is_primary():
+    tables = _tables(
+        interface_ips=[
+            {
+                "asset_interface_id": "if-uuid-1",
+                "address": "10.0.0.2",
+                "mask_length": 24,
+                "is_primary": True,
+            },
+            {
+                "asset_interface_id": "if-other",
+                "address": "10.0.0.99",
+                "mask_length": 24,
+                "is_primary": False,
+            },
+        ]
+    )
+    assert mapper.primary_ips_from_tables(tables) == {"primary_ip4": "10.0.0.2/24"}
+
+
+def test_primary_ips_from_tables_falls_back_to_management_port():
+    tables = _tables(
+        port_capabilities=[
+            {"asset_device_id": "cs-uuid-42", "port_name": "1/1", "management_port": True},
+        ],
+        interface_ips=[
+            {
+                "asset_interface_id": "if-uuid-1",
+                "address": "10.0.0.2",
+                "mask_length": 24,
+                "is_primary": False,
+            },
+            {
+                "asset_interface_id": "if-other",
+                "address": "10.0.0.99",
+                "mask_length": 24,
+            },
+        ],
+    )
+    assert mapper.primary_ips_from_tables(tables) == {"primary_ip4": "10.0.0.2/24"}
+
+
+def test_primary_ips_from_tables_matches_assets_host_when_needed():
+    tables = _tables(
+        port_capabilities=[],
+        interface_ips=[
+            {
+                "asset_interface_id": "if-uuid-1",
+                "address": "10.0.0.2",
+                "mask_length": 24,
+            },
+        ],
+    )
+    assert mapper.primary_ips_from_tables(tables, asset_ip="10.0.0.2") == {"primary_ip4": "10.0.0.2/24"}
+
+
+def test_primary_ips_from_tables_skips_bare_addresses_without_mask():
+    tables = _tables(
+        interface_ips=[
+            {"asset_interface_id": "if-uuid-1", "address": "10.0.0.2", "is_primary": True},
+        ]
+    )
+    assert mapper.primary_ips_from_tables(tables) == {}
 
 
 def test_devices_to_entities_uses_configstate_model_and_firmware_fallbacks(stub_sdk):
@@ -120,6 +214,14 @@ def test_devices_to_entities_disconnected_device_is_offline(stub_sdk):
     entities = mapper.devices_to_entities([_record(asset=asset)])
 
     assert entities[-1]._kw["device"]._kw["status"] == "offline"
+
+
+def test_devices_to_entities_omits_status_when_is_connected_unknown(stub_sdk):
+    asset = {**SWITCH_ASSET}
+    del asset["is_connected"]
+    entities = mapper.devices_to_entities([_record(asset=asset)])
+
+    assert "status" not in entities[-1]._kw["device"]._kw
 
 
 def test_devices_to_entities_without_any_site_skips_the_device(stub_sdk, caplog):
@@ -413,7 +515,7 @@ def test_ports_to_entities_emits_interface_ip_addresses(stub_sdk):
 
 def test_ports_to_entities_emits_svi_ips_via_interface_name(stub_sdk):
     """An IP on an interface with no port/LAG row (e.g. a VLAN/SVI interface)
-    is still emitted, assigned by the row's own interface_name."""
+    emits a minimal Interface, then the IPAddress assigned to it."""
     ips = [
         {
             "asset_interface_id": "if-svi",
@@ -424,9 +526,29 @@ def test_ports_to_entities_emits_svi_ips_via_interface_name(stub_sdk):
     ]
     entities = mapper.ports_to_entities(_tables(vlan_properties=[], interface_ips=ips), device="sw-idf1")
 
+    # Physical port 1/1 from default fixtures, then the SVI interface + its IP.
+    iface_entities = [e._kw["interface"]._kw for e in entities if "interface" in e._kw]
+    svi = next(i for i in iface_entities if i["name"] == "vlan10")
+    assert svi["device"] == "sw-idf1"
+    assert "type" not in svi
+    assert cf(svi["custom_fields"]["platformone_id"]._kw) == "if-svi"
+
     ip_entities = [e._kw["ip_address"]._kw for e in entities if "ip_address" in e._kw]
     assert [ip["address"] for ip in ip_entities] == ["10.0.10.1/24"]
     assert ip_entities[0]["assigned_object_interface"]._kw["name"] == "vlan10"
+
+
+def test_ports_to_entities_skips_interface_ips_without_mask_length(stub_sdk):
+    ips = [
+        {
+            "asset_interface_id": "if-uuid-1",
+            "address": "10.0.0.2",
+            "is_primary": True,
+        }
+    ]
+    entities = mapper.ports_to_entities(_tables(vlan_properties=[], interface_ips=ips), device="sw-idf1")
+
+    assert not [e for e in entities if "ip_address" in e._kw]
 
 
 def test_ports_to_entities_untagged_only_is_access_mode(stub_sdk):
