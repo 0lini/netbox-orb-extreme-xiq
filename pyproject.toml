@@ -9,9 +9,6 @@ description = "Extreme Platform ONE discovery worker for the NetBox Labs Orb Age
 requires-python = ">=3.10"
 dependencies = [
     "requests>=2.31",
-    # Floor transitive HTTP stack versions with known fixes (see security notes).
-    "urllib3>=2.7.0",
-    "idna>=3.15",
     # The Orb Agent image ships these; pinned here so the package is
     # testable/runnable standalone too.
     "netboxlabs-diode-sdk>=1.0.0",
