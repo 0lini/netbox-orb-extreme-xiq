@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import requests
 
+from .urls import require_https_url
+
 # One shared one-to-one Platform ONE correlation key with `unique` enforced
 # (NetBox >= 3.7): two NetBox objects claiming the same Platform ONE id is
 # always a sync defect worth failing loudly on. The value spaces are disjoint
@@ -92,6 +94,6 @@ def ensure_schema(netbox_url: str | None, netbox_token: str | None) -> None:
     """Idempotently create the custom-field definitions and provenance tags."""
     if not netbox_url or not netbox_token:
         return
-    base = netbox_url.rstrip("/")
+    base = require_https_url(netbox_url, what="NETBOX_API_URL")
     _ensure_all(f"{base}/api/extras/custom-fields/", netbox_token, CUSTOM_FIELDS)
     _ensure_all(f"{base}/api/extras/tags/", netbox_token, TAGS)

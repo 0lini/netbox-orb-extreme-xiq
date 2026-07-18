@@ -110,13 +110,19 @@ First-run procedure:
 
 1. Set `BOOTSTRAP: true` and provide `NETBOX_API_URL` and `NETBOX_API_TOKEN`
    so the custom-field definitions and tags are created. Run once.
-2. Set `BOOTSTRAP: false` for all scheduled runs afterward.
+2. Set `BOOTSTRAP: false` for all scheduled runs afterward (and drop the
+   NetBox token from the runtime environment once bootstrap has succeeded).
 
 Bootstrap uses the NetBox REST API directly because field definitions are
 schema rather than data; it skips gracefully when no NetBox token is set.
+Use a least-privilege NetBox token that can create/update custom fields and
+tags only — not a full superuser token — and keep it out of the scheduled
+worker once `BOOTSTRAP` is false.
 
 > **Tip:** set `common.diode.dry_run: true` in `agent.yaml` first to inspect
-> the generated JSON before ingesting anything.
+> the generated JSON before ingesting anything. Do **not** commit dry-run
+> output (hostnames, serials, MACs, IPs); `.gitignore` already excludes
+> `.env` and `test.json`.
 
 ## Configuration
 
@@ -136,9 +142,19 @@ same-named environment variable; policy config takes precedence.
 
 - **API token:** create one in Extreme Platform ONE and set
   `PLATFORMONE_API_TOKEN`. All calls use the same `Authorization: Bearer`
-  header; there is no username/password flow.
+  header; there is no username/password flow. Prefer environment variables
+  (or a local `.env`, which is gitignored) over putting secrets in
+  `agent.yaml`.
 - **Base URL:** `https://cloudapi.extremecloudiq.com` by default; override
-  with `PLATFORMONE_API_URL`.
+  with `PLATFORMONE_API_URL`. Both `PLATFORMONE_API_URL` and
+  `NETBOX_API_URL` must be `https://` URLs; plaintext `http://` is rejected.
+
+### Security notes
+
+- Keep `BOOTSTRAP: false` on scheduled runs; the NetBox bootstrap token is
+  write-capable schema access and should not stay mounted afterward.
+- API error logs truncate upstream response bodies so diagnostics stay short.
+- Never commit dry-run JSON or live inventory exports to git.
 
 ## Development
 

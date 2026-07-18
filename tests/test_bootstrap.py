@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 import responses
 
 from orb_extreme_platformone import bootstrap
@@ -18,6 +19,11 @@ def test_ensure_schema_skips_gracefully_without_credentials():
     bootstrap.ensure_schema(None, None)
     bootstrap.ensure_schema(NETBOX, None)
     bootstrap.ensure_schema(None, "token")
+
+
+def test_ensure_schema_rejects_non_https_netbox_url():
+    with pytest.raises(ValueError, match="https://"):
+        bootstrap.ensure_schema("http://netbox.example.com", "token")
 
 
 @responses.activate

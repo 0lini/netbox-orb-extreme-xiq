@@ -21,13 +21,28 @@ from collections.abc import Iterator
 
 import requests
 
+from .urls import require_https_url
+
 DEFAULT_BASE_URL = "https://cloudapi.extremecloudiq.com"
 ASSETS_PAGE_LIMIT = 500  # documented max for the Assets `limit` query param
 CONFIGSTATE_PAGE_SIZE = 500
+# Keep API error text short so logs/exceptions do not retain full upstream
+# bodies (which can include sensitive diagnostics).
+_ERROR_BODY_LIMIT = 200
 
 
 class PlatformOneApiError(RuntimeError):
     """Raised on a non-2xx response from a Platform ONE API."""
+
+
+def truncate_error_body(text: str, *, limit: int = _ERROR_BODY_LIMIT) -> str:
+    """Collapse whitespace and truncate an HTTP error body for safe logging."""
+    cleaned = " ".join((text or "").split())
+    if len(cleaned) <= limit:
+        return cleaned
+    if limit <= 3:
+        return cleaned[:limit]
+    return cleaned[: limit - 3] + "..."
 
 
 def configstate_response_key(table: str) -> str:
@@ -56,7 +71,7 @@ class PlatformOneClient:
     ) -> None:
         if not api_token:
             raise ValueError("PlatformOneClient requires api_token")
-        self._base_url = base_url.rstrip("/")
+        self._base_url = require_https_url(base_url, what="PLATFORMONE_API_URL")
         self._timeout = timeout
         self._local = threading.local()
         self._headers = {
@@ -78,7 +93,8 @@ class PlatformOneClient:
             url, headers=self._headers, params=params, json=body, timeout=self._timeout
         )
         if resp.status_code >= 400:
-            raise PlatformOneApiError(f"Platform ONE API error {resp.status_code} for {path}: {resp.text}")
+            detail = truncate_error_body(resp.text)
+            raise PlatformOneApiError(f"Platform ONE API error {resp.status_code} for {path}: {detail}")
         return resp.json()
 
     def get_devices(self, *, classification: str = "ALL", limit: int = ASSETS_PAGE_LIMIT) -> Iterator[dict]:
