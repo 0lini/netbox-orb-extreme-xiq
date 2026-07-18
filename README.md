@@ -291,7 +291,10 @@ used with the same mapping.
 ### Primary IP
 
 Assets `ip_address` (IPv4 or IPv6) becomes Device `primary_ip4` or
-`primary_ip6` by address family. Bare addresses get `/32` or `/128`.
+`primary_ip6` by address family when the value already includes a prefix
+length. Bare host addresses are skipped — the worker does not invent
+`/32` or `/128`, which would create misleading host prefixes in NetBox.
+Interface IPs from ConfigState still carry their own `mask_length`.
 
 ### Switch ports
 

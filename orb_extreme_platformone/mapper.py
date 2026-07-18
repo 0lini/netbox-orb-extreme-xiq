@@ -98,11 +98,13 @@ def _status_for(asset: dict) -> str:
 def _primary_ips(asset: dict) -> dict[str, str]:
     """Split Assets/AssetDevice `ip_address` into primary_ip4 vs primary_ip6.
 
-    Bare addresses get family-appropriate defaults (/32 or /128). Invalid
-    values assert nothing rather than inventing a family.
+    Platform ONE reports a host address with no mask. Inventing /32 or /128
+    would create host prefixes in NetBox that do not reflect the real
+    management subnet, so a bare address is skipped. Only values that already
+    include a prefix length are asserted. Invalid values assert nothing.
     """
     raw = (asset.get("ip_address") or "").strip()
-    if not raw:
+    if not raw or "/" not in raw:
         return {}
     try:
         iface = ipaddress.ip_interface(raw)

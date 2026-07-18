@@ -59,7 +59,8 @@ def test_devices_to_entities_maps_the_assets_fields(stub_sdk):
     assert device["device_type"]._kw["manufacturer"] == "Extreme Networks"
     assert device["platform"]._kw["name"] == "Fabric Engine 9.2.1.0"
     assert device["platform"]._kw["manufacturer"] == "Extreme Networks"
-    assert device["primary_ip4"] == "10.0.0.2/32"
+    # Assets reports a bare host address; do not invent /32.
+    assert "primary_ip4" not in device
     assert "primary_ip6" not in device
     assert device["role"]._kw == {"name": "Switch", "slug": "switch"}
     assert cf(device["custom_fields"]["platformone_id"]._kw) == "42"
@@ -68,12 +69,30 @@ def test_devices_to_entities_maps_the_assets_fields(stub_sdk):
     assert device["tags"] == ["extreme-networks", "platform-one", "discovered"]
 
 
-def test_devices_to_entities_splits_primary_ip6(stub_sdk):
+def test_devices_to_entities_skips_bare_primary_ip6(stub_sdk):
     asset = {**SWITCH_ASSET, "ip_address": "2001:db8::1"}
     entities = mapper.devices_to_entities([_record(asset=asset)])
 
     device = entities[-1]._kw["device"]._kw
-    assert device["primary_ip6"] == "2001:db8::1/128"
+    assert "primary_ip6" not in device
+    assert "primary_ip4" not in device
+
+
+def test_devices_to_entities_keeps_primary_ip_when_prefix_is_present(stub_sdk):
+    asset = {**SWITCH_ASSET, "ip_address": "10.0.0.2/24"}
+    entities = mapper.devices_to_entities([_record(asset=asset)])
+
+    device = entities[-1]._kw["device"]._kw
+    assert device["primary_ip4"] == "10.0.0.2/24"
+    assert "primary_ip6" not in device
+
+
+def test_devices_to_entities_keeps_primary_ip6_when_prefix_is_present(stub_sdk):
+    asset = {**SWITCH_ASSET, "ip_address": "2001:db8::1/64"}
+    entities = mapper.devices_to_entities([_record(asset=asset)])
+
+    device = entities[-1]._kw["device"]._kw
+    assert device["primary_ip6"] == "2001:db8::1/64"
     assert "primary_ip4" not in device
 
 
