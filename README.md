@@ -290,11 +290,16 @@ used with the same mapping.
 
 ### Primary IP
 
-Assets `ip_address` (IPv4 or IPv6) becomes Device `primary_ip4` or
-`primary_ip6` by address family when the value already includes a prefix
-length. Bare host addresses are skipped — the worker does not invent
-`/32` or `/128`, which would create misleading host prefixes in NetBox.
-Interface IPs from ConfigState still carry their own `mask_length`.
+Device `primary_ip4` / `primary_ip6` prefer ConfigState
+`retrieve-asset-interface-ip-address` rows that already carry a real prefix
+(`address` + `mask_length`):
+
+1. rows with `is_primary: true`
+2. else IPs on interfaces flagged `management_port` in port capabilities
+3. else an interface IP whose host matches the Assets management address
+
+Assets `ip_address` is only used when it already includes a prefix length.
+Bare Assets hosts are never padded with `/32` or `/128`.
 
 ### Switch ports
 

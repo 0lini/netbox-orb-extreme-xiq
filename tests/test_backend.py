@@ -171,6 +171,52 @@ def test_run_produces_site_location_device_and_interface_entities():
 
 
 @responses.activate
+def test_run_sets_device_primary_ip_from_configstate_interface_cidr():
+    """Bare Assets management IP must not become /32; use ConfigState mask."""
+    _mock_assets([SWITCH_ASSET])
+    _mock_cs("asset-device", "AssetDevice", [CS_SWITCH])
+    _mock_cs("asset-location", "AssetLocation", [])
+    _mock_cs(
+        "asset-port-config",
+        "AssetPortConfig",
+        [
+            {
+                "asset_device_id": "cs-uuid-42",
+                "asset_interface_id": "if-1",
+                "name": "1/1",
+                "enabled": True,
+            }
+        ],
+    )
+    _mock_cs("asset-port-state", "AssetPortState", [])
+    _mock_cs("asset-interface-vlan-properties", "AssetInterfaceVlanProperties", [])
+    _mock_cs("asset-lag-config", "AssetLagConfig", [])
+    _mock_cs("asset-lag-state", "AssetLagState", [])
+    _mock_cs("asset-port-capabilities", "AssetPortCapabilities", [])
+    _mock_cs("asset-poe-power-ports-state", "AssetPoePowerPortsState", [])
+    _mock_cs("asset-poe-power-ports-config", "AssetPoePowerPortsConfig", [])
+    _mock_cs(
+        "asset-interface-ip-address",
+        "AssetInterfaceIpAddress",
+        [
+            {
+                "asset_interface_id": "if-1",
+                "address": "10.0.0.2",
+                "mask_length": 24,
+                "is_primary": True,
+            }
+        ],
+    )
+    _mock_empty_clusters()
+
+    entities = list(Backend().run("platformone_worker", _policy()))
+
+    devices = [e.device for e in entities if e.HasField("device")]
+    assert len(devices) == 1
+    assert devices[0].primary_ip4.address == "10.0.0.2/24"
+
+
+@responses.activate
 def test_run_batches_every_switch_into_one_call_per_port_table():
     switch2 = {**SWITCH_ASSET, "device_id": 43, "host_name": "sw-idf2", "serial_number": "SN43"}
     cs2 = {"id": "cs-uuid-43", "serial_number": "SN43"}

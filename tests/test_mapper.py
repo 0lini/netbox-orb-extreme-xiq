@@ -96,6 +96,81 @@ def test_devices_to_entities_keeps_primary_ip6_when_prefix_is_present(stub_sdk):
     assert "primary_ip4" not in device
 
 
+def test_devices_to_entities_uses_configstate_primary_ips_by_cs_id(stub_sdk):
+    entities = mapper.devices_to_entities(
+        [_record()],
+        primary_ips_by_cs_id={"cs-uuid-42": {"primary_ip4": "10.0.0.2/24"}},
+    )
+
+    device = entities[-1]._kw["device"]._kw
+    assert device["primary_ip4"] == "10.0.0.2/24"
+
+
+def test_primary_ips_from_tables_prefers_is_primary():
+    tables = _tables(
+        interface_ips=[
+            {
+                "asset_interface_id": "if-uuid-1",
+                "address": "10.0.0.2",
+                "mask_length": 24,
+                "is_primary": True,
+            },
+            {
+                "asset_interface_id": "if-other",
+                "address": "10.0.0.99",
+                "mask_length": 24,
+                "is_primary": False,
+            },
+        ]
+    )
+    assert mapper.primary_ips_from_tables(tables) == {"primary_ip4": "10.0.0.2/24"}
+
+
+def test_primary_ips_from_tables_falls_back_to_management_port():
+    tables = _tables(
+        port_capabilities=[
+            {"asset_device_id": "cs-uuid-42", "port_name": "1/1", "management_port": True},
+        ],
+        interface_ips=[
+            {
+                "asset_interface_id": "if-uuid-1",
+                "address": "10.0.0.2",
+                "mask_length": 24,
+                "is_primary": False,
+            },
+            {
+                "asset_interface_id": "if-other",
+                "address": "10.0.0.99",
+                "mask_length": 24,
+            },
+        ],
+    )
+    assert mapper.primary_ips_from_tables(tables) == {"primary_ip4": "10.0.0.2/24"}
+
+
+def test_primary_ips_from_tables_matches_assets_host_when_needed():
+    tables = _tables(
+        port_capabilities=[],
+        interface_ips=[
+            {
+                "asset_interface_id": "if-uuid-1",
+                "address": "10.0.0.2",
+                "mask_length": 24,
+            },
+        ],
+    )
+    assert mapper.primary_ips_from_tables(tables, asset_ip="10.0.0.2") == {"primary_ip4": "10.0.0.2/24"}
+
+
+def test_primary_ips_from_tables_skips_bare_addresses_without_mask():
+    tables = _tables(
+        interface_ips=[
+            {"asset_interface_id": "if-uuid-1", "address": "10.0.0.2", "is_primary": True},
+        ]
+    )
+    assert mapper.primary_ips_from_tables(tables) == {}
+
+
 def test_devices_to_entities_uses_configstate_model_and_firmware_fallbacks(stub_sdk):
     asset = {**SWITCH_ASSET, "product_type": None, "os_version": None}
     cs = {"id": "cs-uuid-42", "model_name": "FabricEngine_5520_24T", "firmware_version": "8.10.1.0"}
