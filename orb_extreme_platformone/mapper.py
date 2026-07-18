@@ -92,8 +92,18 @@ PORT_ENTITY_TABLE_KEYS = frozenset(
 )
 
 
-def _status_for(asset: dict) -> str:
-    return "active" if asset.get("is_connected") else "offline"
+def _status_for(asset: dict) -> str | None:
+    """Map Assets `is_connected` to Device status; omit when unknown.
+
+    Only an explicit bool is asserted — a missing/null value must not become
+    ``offline`` the way a falsy check would.
+    """
+    connected = asset.get("is_connected")
+    if connected is True:
+        return "active"
+    if connected is False:
+        return "offline"
+    return None
 
 
 def _primary_ips_from_asset(asset: dict) -> dict[str, str]:
@@ -247,11 +257,13 @@ def _device_kwargs(
     kwargs = {
         "name": device_name(asset, name_source),
         "serial": asset.get("serial_number") or None,
-        "status": _status_for(asset),
         "site": Site(name=site_name),
         "custom_fields": custom_fields,
         "tags": PROVENANCE_TAGS,
     }
+    status = _status_for(asset)
+    if status is not None:
+        kwargs["status"] = status
     if location is not None:
         kwargs["location"] = location
 
@@ -652,14 +664,17 @@ def _poe_mode(config: dict, state: dict) -> str | None:
 def _interface_ip_cidr(row: dict) -> str | None:
     """Build address/prefix for AssetInterfaceIpAddress → Diode IPAddress.
 
-    `address` is a bare address and `mask_length` its prefix length; without a
-    usable mask the family default (/32 or /128) applies.
+    `address` is a bare address and `mask_length` its prefix length. Without
+    an explicit prefix (inline ``/n`` or usable ``mask_length``), return
+    None — never invent /32 or /128.
     """
     raw = str(row.get("address") or "").strip()
     if not raw:
         return None
     mask = row.get("mask_length")
-    if "/" not in raw and isinstance(mask, int) and 0 <= mask <= 128:
+    if "/" not in raw:
+        if not (isinstance(mask, int) and 0 <= mask <= 128):
+            return None
         raw = f"{raw}/{mask}"
     try:
         return str(ipaddress.ip_interface(raw))
@@ -1015,15 +1030,36 @@ def _orphan_ip_entities(
     emitted_keys: dict[str, str],
 ) -> list[Entity]:
     """IPs on interfaces that got no Interface entity above (e.g. VLAN/SVI
-    interfaces, which appear in vlan_properties but not the port tables)."""
+    interfaces, which appear in vlan_properties but not the port tables).
+
+    Emits a minimal Interface first so the IPAddress has a real assigned
+    object, then the IP entities. Interface ``type`` is left unset (no
+    verified SVI/virtual enum from ConfigState).
+    """
     entities: list[Entity] = []
+    emitted_names: set[str] = set()
     for key, rows in sorted(interface_ips.items()):
         if key in emitted_keys:
             continue
         name = next((row["interface_name"] for row in rows if row.get("interface_name")), None)
         if not name:
             continue
-        entities.extend(_ip_entities_for_interface(device=device, interface_name=str(name), rows=rows))
+        name = str(name)
+        if name not in emitted_names:
+            interface_id = next(
+                (str(row["asset_interface_id"]) for row in rows if row.get("asset_interface_id")),
+                key or None,
+            )
+            iface_kwargs: dict = {
+                "device": device,
+                "name": name,
+                "tags": PROVENANCE_TAGS,
+            }
+            if interface_id:
+                iface_kwargs["custom_fields"] = {"platformone_id": _cf_text(str(interface_id))}
+            entities.append(Entity(interface=Interface(**iface_kwargs)))
+            emitted_names.add(name)
+        entities.extend(_ip_entities_for_interface(device=device, interface_name=name, rows=rows))
     return entities
 
 

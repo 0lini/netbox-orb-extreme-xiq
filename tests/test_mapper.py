@@ -216,6 +216,14 @@ def test_devices_to_entities_disconnected_device_is_offline(stub_sdk):
     assert entities[-1]._kw["device"]._kw["status"] == "offline"
 
 
+def test_devices_to_entities_omits_status_when_is_connected_unknown(stub_sdk):
+    asset = {**SWITCH_ASSET}
+    del asset["is_connected"]
+    entities = mapper.devices_to_entities([_record(asset=asset)])
+
+    assert "status" not in entities[-1]._kw["device"]._kw
+
+
 def test_devices_to_entities_without_any_site_skips_the_device(stub_sdk, caplog):
     """Platform ONE assigns every device a site itself, so a device without
     one is unexpected: it is skipped instead of getting an invented site."""
@@ -507,7 +515,7 @@ def test_ports_to_entities_emits_interface_ip_addresses(stub_sdk):
 
 def test_ports_to_entities_emits_svi_ips_via_interface_name(stub_sdk):
     """An IP on an interface with no port/LAG row (e.g. a VLAN/SVI interface)
-    is still emitted, assigned by the row's own interface_name."""
+    emits a minimal Interface, then the IPAddress assigned to it."""
     ips = [
         {
             "asset_interface_id": "if-svi",
@@ -518,9 +526,29 @@ def test_ports_to_entities_emits_svi_ips_via_interface_name(stub_sdk):
     ]
     entities = mapper.ports_to_entities(_tables(vlan_properties=[], interface_ips=ips), device="sw-idf1")
 
+    # Physical port 1/1 from default fixtures, then the SVI interface + its IP.
+    iface_entities = [e._kw["interface"]._kw for e in entities if "interface" in e._kw]
+    svi = next(i for i in iface_entities if i["name"] == "vlan10")
+    assert svi["device"] == "sw-idf1"
+    assert "type" not in svi
+    assert cf(svi["custom_fields"]["platformone_id"]._kw) == "if-svi"
+
     ip_entities = [e._kw["ip_address"]._kw for e in entities if "ip_address" in e._kw]
     assert [ip["address"] for ip in ip_entities] == ["10.0.10.1/24"]
     assert ip_entities[0]["assigned_object_interface"]._kw["name"] == "vlan10"
+
+
+def test_ports_to_entities_skips_interface_ips_without_mask_length(stub_sdk):
+    ips = [
+        {
+            "asset_interface_id": "if-uuid-1",
+            "address": "10.0.0.2",
+            "is_primary": True,
+        }
+    ]
+    entities = mapper.ports_to_entities(_tables(vlan_properties=[], interface_ips=ips), device="sw-idf1")
+
+    assert not [e for e in entities if "ip_address" in e._kw]
 
 
 def test_ports_to_entities_untagged_only_is_access_mode(stub_sdk):
