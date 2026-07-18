@@ -17,6 +17,7 @@ from orb_extreme_platformone.client import (
     PlatformOneApiError,
     PlatformOneClient,
     configstate_response_key,
+    truncate_error_body,
 )
 
 ASSETS_URL = f"{DEFAULT_BASE_URL}/assets/v1/devices"
@@ -29,6 +30,19 @@ def _client() -> PlatformOneClient:
 def test_client_requires_a_token():
     with pytest.raises(ValueError):
         PlatformOneClient(api_token=None)
+
+
+def test_client_requires_https_base_url():
+    with pytest.raises(ValueError, match="https://"):
+        PlatformOneClient(base_url="http://cloudapi.extremecloudiq.com", api_token="tok")
+
+
+def test_truncate_error_body_collapses_and_limits_length():
+    assert truncate_error_body("  a \n b  ") == "a b"
+    long = "x" * 500
+    truncated = truncate_error_body(long, limit=20)
+    assert truncated == ("x" * 17) + "..."
+    assert len(truncated) == 20
 
 
 @pytest.mark.parametrize(
@@ -132,5 +146,18 @@ def test_retrieve_tolerates_a_null_records_key():
 def test_non_2xx_raises_platform_one_api_error():
     responses.add(responses.POST, ASSETS_URL, json={"error": "nope"}, status=403)
 
-    with pytest.raises(PlatformOneApiError, match="403"):
+    with pytest.raises(PlatformOneApiError, match="403") as excinfo:
         list(_client().get_devices())
+    assert "nope" in str(excinfo.value)
+
+
+@responses.activate
+def test_non_2xx_truncates_long_error_bodies():
+    responses.add(responses.POST, ASSETS_URL, body="e" * 1000, status=500)
+
+    with pytest.raises(PlatformOneApiError) as excinfo:
+        list(_client().get_devices())
+    message = str(excinfo.value)
+    assert "500" in message
+    assert "e" * 1000 not in message
+    assert message.endswith("...")

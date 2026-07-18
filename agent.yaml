@@ -10,9 +10,11 @@
 #
 # First-run flow (mirrors Meraki/ACI):
 #   1. Set BOOTSTRAP: true and provide NETBOX_API_URL/NETBOX_API_TOKEN so the
-#      custom fields + provenance tags get created. Run once.
-#   2. Set BOOTSTRAP: false for all subsequent scheduled runs.
+#      custom fields + provenance tags get created. Run once (least-privilege
+#      NetBox token that can manage custom fields + tags is enough).
+#   2. Set BOOTSTRAP: false and drop NETBOX_API_* for all scheduled runs.
 # Tip: set common.diode.dry_run: true first to inspect JSON before ingesting.
+# Do not commit dry-run output (inventory data).
 
 orb:
   config_manager:
