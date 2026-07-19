@@ -42,4 +42,4 @@ def extract_inferred_clusters(client: PlatformOneClient, asset_device_ids: list[
                 "device_two_id": inferred_to_asset.get(two, two),
             }
             by_id[str(remapped.get("id"))] = remapped
-    return list(by_id.values())
+    return [by_id[key] for key in sorted(by_id)]

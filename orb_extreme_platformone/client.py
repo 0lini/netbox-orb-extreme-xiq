@@ -144,11 +144,21 @@ class PlatformOneClient:
             return dict(self._headers)
 
     def _post(self, path: str, params: dict, body: dict) -> dict:
-        """POST `path`, re-logging in once on a 401 when using username/password."""
+        """POST `path`, re-logging in once on a 401 when using username/password.
+
+        Transport failures and invalid JSON are raised as ``PlatformOneApiError``
+        so ConfigState fan-out can degrade a single table instead of aborting
+        the tick on a timeout/connection blip.
+        """
         url = f"{self._base_url}{path}"
         for attempt in (1, 2):
             headers = self._auth_headers()
-            resp = self._session().post(url, headers=headers, params=params, json=body, timeout=self._timeout)
+            try:
+                resp = self._session().post(
+                    url, headers=headers, params=params, json=body, timeout=self._timeout
+                )
+            except requests.RequestException as exc:
+                raise PlatformOneApiError(f"Platform ONE API request failed for {path}: {exc}") from exc
             if resp.status_code == 401 and attempt == 1 and self._username and self._password:
                 with self._lock:
                     self._token_expiry = 0.0
@@ -157,7 +167,12 @@ class PlatformOneClient:
             if resp.status_code >= 400:
                 detail = truncate_error_body(resp.text)
                 raise PlatformOneApiError(f"Platform ONE API error {resp.status_code} for {path}: {detail}")
-            return resp.json()
+            try:
+                return resp.json()
+            except ValueError as exc:
+                raise PlatformOneApiError(
+                    f"Platform ONE API returned invalid JSON for {path}: {exc}"
+                ) from exc
         raise AssertionError("unreachable")  # pragma: no cover
 
     def get_devices(self, *, classification: str = "ALL", limit: int = ASSETS_PAGE_LIMIT) -> Iterator[dict]:

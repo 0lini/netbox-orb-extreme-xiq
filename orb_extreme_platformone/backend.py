@@ -79,12 +79,25 @@ def _cfg_or_env(config, key: str, *, default=None):
 
 
 def _scope_sites(scope) -> list[str] | None:
+    """Return an explicit site allow-list, or None for all sites.
+
+    Accepts ``sites: ["*"]``, missing/empty ``sites``, or a non-dict scope as
+    "no filter". A bare string is rejected (``list("HQ")`` would otherwise
+    become ``["H", "Q"]``).
+    """
     if not isinstance(scope, dict):
         return None
     sites = scope.get("sites")
-    if not sites or sites == ["*"]:
+    if sites is None or sites == [] or sites == ["*"] or sites == "*":
         return None
-    return list(sites)
+    if isinstance(sites, str):
+        logger.warning("Ignoring invalid policy scope.sites string %r; syncing all sites", sites)
+        return None
+    if not isinstance(sites, (list, tuple, set)):
+        logger.warning("Ignoring invalid policy scope.sites %r; syncing all sites", sites)
+        return None
+    cleaned = [str(site) for site in sites if str(site).strip()]
+    return cleaned or None
 
 
 def _records_by_cs_id(records: list[dict], *, predicate) -> dict[str, dict]:
@@ -214,9 +227,7 @@ class Backend(WorkerBackend):
         A failed fetch degrades to no VC entities for this tick rather than
         aborting the sync.
         """
-        records_by_cs_id = {
-            record["cs_device_id"]: record for record in records if record.get("cs_device_id")
-        }
+        records_by_cs_id = _records_by_cs_id(records, predicate=lambda _record: True)
         device_ids = sorted(records_by_cs_id)
         if not device_ids:
             return [], {}

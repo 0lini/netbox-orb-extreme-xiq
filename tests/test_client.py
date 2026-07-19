@@ -245,3 +245,23 @@ def test_static_api_token_does_not_call_login():
 
     assert list(_client().get_devices()) == []
     assert all("/login" not in call.request.url for call in responses.calls)
+
+
+@responses.activate
+def test_transport_failure_raises_platform_one_api_error():
+    responses.add(
+        responses.POST,
+        ASSETS_URL,
+        body=responses.ConnectionError("boom"),
+    )
+
+    with pytest.raises(PlatformOneApiError, match="request failed"):
+        list(_client().get_devices())
+
+
+@responses.activate
+def test_invalid_json_raises_platform_one_api_error():
+    responses.add(responses.POST, ASSETS_URL, body="not-json", status=200)
+
+    with pytest.raises(PlatformOneApiError, match="invalid JSON"):
+        list(_client().get_devices())
