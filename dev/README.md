@@ -31,7 +31,9 @@ docker compose -f dev/docker-compose.yml up -d --build
 | NetBox UI | http://localhost:8000 (`admin` / `admin`) |
 | Diode gRPC | `grpc://localhost:8080/diode` |
 
-Generated secrets and agent env land in `dev/.env.local` (gitignored).
+Generated secrets and agent env land in gitignored files (`dev/.env.local`,
+`dev/diode/.env`, `dev/netbox/env/*.env`). Templates live next to them as
+`*.env.example`.
 
 After NetBox is up, mint a REST API token for bootstrap:
 
@@ -74,7 +76,8 @@ container, NetBox is `http://netbox:8080` and Diode is
 | `dev/docker-compose.yml` | NetBox services + includes Diode compose + workspace |
 | `dev/diode/` | Upstream Diode server compose + nginx |
 | `dev/netbox/` | NetBox image with `netboxlabs-diode-netbox-plugin` |
-| `dev/setup.sh` | Generates OAuth secrets and `agent.local.yaml` |
+| `dev/setup.sh` | Generates OAuth + NetBox env secrets and `agent.local.yaml` |
+| `dev/netbox/env/*.env.example` | Templates; real `*.env` files are generated and gitignored |
 | `.devcontainer/` | VS Code / Cursor Dev Container definition |
 
 ## Tear down
