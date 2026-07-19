@@ -260,6 +260,7 @@ class Backend(WorkerBackend):
                     tables,
                     device=name,
                     function=record["asset"].get("function"),
+                    serial=record["asset"].get("serial_number") or None,
                 )
             )
         logger.info("Policy %s: mapped %d wired port entities", policy_name, len(entities))
@@ -287,6 +288,11 @@ class Backend(WorkerBackend):
         device_names = {
             device_id: name for device_id in device_ids if (name := device_name(aps[device_id]["asset"]))
         }
+        device_serials = {
+            device_id: str(serial)
+            for device_id in device_names
+            if (serial := aps[device_id]["asset"].get("serial_number"))
+        }
         skipped = sorted(set(device_ids) - set(device_names))
         for device_id in skipped:
             logger.warning(
@@ -294,7 +300,9 @@ class Backend(WorkerBackend):
                 policy_name,
                 _asset_label(aps[device_id]["asset"]),
             )
-        entities = transform.radios_to_entities(tables_by_device, device_names=device_names)
+        entities = transform.radios_to_entities(
+            tables_by_device, device_names=device_names, device_serials=device_serials
+        )
         logger.info("Policy %s: mapped %d wireless radio/WLAN entities", policy_name, len(entities))
         if failed_tables:
             logger.warning(

@@ -9,7 +9,7 @@ from netboxlabs.diode.sdk.ingester import VLAN, Entity, Interface, IPAddress
 
 from orb_extreme_platformone.identity import SLASH_PORT_FUNCTIONS, native_port_name
 
-from .common import PROVENANCE_TAGS, _cf_text, logger
+from .common import PROVENANCE_TAGS, _interface_custom_fields, logger
 
 # Extreme Networks reserves VIDs 4060–4094 for internal use (e.g. Fabric
 # Engine). These are filtered from Interface untagged/tagged memberships.
@@ -129,14 +129,13 @@ def primary_ips_from_tables(
 # ConfigState reports oper_speed / oper_duplex / connector_type as integer
 # codes with no value table in its OpenAPI spec. Only codes verified against
 # production hardware (or fixtures derived from that gear) are mapped;
-# unknown codes assert nothing. oper_state is the exception: its schema
-# description matches IF-MIB ifOperStatus.
+# unknown codes assert nothing. Admin `enabled` is mapped; link/oper state is
+# not (Meraki/ACI/Catalyst do not assert mark_connected).
 #
 # Verified in-repo today: oper_speed 4, oper_duplex 2, connector_type 1/2.
 # Config-side speed/duplex integers remain unverified and are not used.
 VERIFIED_OPER_SPEED_KBPS = {4: 1_000_000}
 VERIFIED_DUPLEX = {2: "full"}
-OPER_STATE_UP = 1
 
 # (oper_speed, connector_type) -> NetBox interface type. connector_type:
 # 1 = copper, 2 = fiber. Unlisted combinations leave `type` unset.
@@ -325,16 +324,19 @@ def _iface_base_kwargs(
     name: str,
     interface_id: str | None,
     config: dict,
+    serial: str | None = None,
     poe_config: dict | None = None,
     poe_state: dict | None = None,
 ) -> dict:
     """Shared identity / admin / PoE fields for physical ports and LAG parents."""
+    custom_fields = _interface_custom_fields(interface_id=interface_id, serial=serial)
     kwargs: dict = {
         "device": device,
         "name": name,
-        "custom_fields": {"platformone_interface_id": _cf_text(interface_id)} if interface_id else {},
         "tags": PROVENANCE_TAGS,
     }
+    if custom_fields:
+        kwargs["custom_fields"] = custom_fields
     enabled = config.get("enabled")
     if isinstance(enabled, bool):
         kwargs["enabled"] = enabled
@@ -352,6 +354,7 @@ def _port_kwargs(
     config: dict,
     state: dict,
     vlan_records: list[dict],
+    serial: str | None = None,
     capability: dict | None = None,
     poe_config: dict | None = None,
     poe_state: dict | None = None,
@@ -361,16 +364,13 @@ def _port_kwargs(
         name=name,
         interface_id=interface_id,
         config=config,
+        serial=serial,
         poe_config=poe_config,
         poe_state=poe_state,
     )
 
-    # Link state maps to mark_connected, never to `enabled` -- admin state is
-    # asserted separately above.
-    oper_state = state.get("oper_state")
-    if oper_state is not None:
-        kwargs["mark_connected"] = oper_state == OPER_STATE_UP
-
+    # Link/oper state is not mapped: Meraki/ACI/Catalyst assert admin `enabled`
+    # only (no mark_connected). Keep speed/duplex/type from verified codes.
     speed = VERIFIED_OPER_SPEED_KBPS.get(state.get("oper_speed"))
     if speed is not None:
         kwargs["speed"] = speed
@@ -384,7 +384,7 @@ def _port_kwargs(
     if config.get("description"):
         kwargs["description"] = config["description"]
     if state.get("mac_address"):
-        kwargs["primary_mac_address"] = state["mac_address"]
+        kwargs["primary_mac_address"] = str(state["mac_address"]).upper()
 
     if capability is not None and isinstance(capability.get("management_port"), bool):
         kwargs["mgmt_only"] = capability["management_port"]
@@ -450,6 +450,7 @@ def _lag_kwargs(
     interface_id: str | None,
     config: dict,
     vlan_records: list[dict],
+    serial: str | None = None,
     poe_config: dict | None = None,
     poe_state: dict | None = None,
     port_config: dict | None = None,
@@ -461,9 +462,8 @@ def _lag_kwargs(
     `enabled`, `platformone_interface_id` (`asset_interface_id`). Shared joins
     on that interface id fill VLAN trunk/access, PoE, and (separately)
     IPAddress entities. When port config/state also lists the same id, pull
-    fields lag tables lack (`description`, `mark_connected`, MAC, port-config
-    VLAN fallback) — never speed/duplex/connector `type`, which would
-    overwrite `type=lag`.
+    fields lag tables lack (`description`, MAC, port-config VLAN fallback) —
+    never speed/duplex/connector `type`, which would overwrite `type=lag`.
 
     AssetLagConfig also carries LACP `mode` / `lacp_key` / `load_balance_algo`
     / `dynamic`, but Diode's Interface has no matching fields and the mode /
@@ -476,6 +476,7 @@ def _lag_kwargs(
         name=name,
         interface_id=interface_id,
         config=config,
+        serial=serial,
         poe_config=poe_config,
         poe_state=poe_state,
     )
@@ -488,12 +489,8 @@ def _lag_kwargs(
 
     if port_config and port_config.get("description"):
         kwargs["description"] = port_config["description"]
-    if port_state:
-        oper_state = port_state.get("oper_state")
-        if oper_state is not None:
-            kwargs["mark_connected"] = oper_state == OPER_STATE_UP
-        if port_state.get("mac_address"):
-            kwargs["primary_mac_address"] = port_state["mac_address"]
+    if port_state and port_state.get("mac_address"):
+        kwargs["primary_mac_address"] = str(port_state["mac_address"]).upper()
     return kwargs
 
 
@@ -514,6 +511,7 @@ def _ip_entities_for_interface(
             Entity(
                 ip_address=IPAddress(
                     address=cidr,
+                    status="active",
                     assigned_object_interface=Interface(device=device, name=interface_name),
                     tags=PROVENANCE_TAGS,
                 )
@@ -531,6 +529,7 @@ def _lag_entities(
     poe_configs: dict[str, list[dict]],
     poe_states: dict[str, list[dict]],
     interface_ips: dict[str, list[dict]],
+    serial: str | None = None,
     port_configs: dict[str, list[dict]] | None = None,
     port_states: dict[str, list[dict]] | None = None,
 ) -> tuple[list[Entity], set[str], set[str], dict[str, str], dict[str, str]]:
@@ -565,6 +564,7 @@ def _lag_entities(
             interface_id=str(interface_id) if interface_id else None,
             config=config,
             vlan_records=vlans.get(key, []),
+            serial=serial,
             poe_config=_optional_first_row(poe_configs, key, table="poe_configs"),
             poe_state=_optional_first_row(poe_states, key, table="poe_states"),
             port_config=_optional_first_row(port_configs, key, table="port_configs"),
@@ -592,6 +592,7 @@ def _physical_port_entities(
     lag_names: set[str],
     lag_interface_ids: set[str],
     membership: dict[str, str],
+    serial: str | None = None,
 ) -> tuple[list[Entity], set[str], dict[str, str]]:
     """Emit physical (non-LAG) port interfaces joined on asset_interface_id."""
     entities: list[Entity] = []
@@ -618,6 +619,7 @@ def _physical_port_entities(
             config=config,
             state=state,
             vlan_records=vlans.get(key, []),
+            serial=serial,
             capability=capabilities.get((port_device_id, name)),
             poe_config=_optional_first_row(poe_configs, key, table="poe_configs"),
             poe_state=_optional_first_row(poe_states, key, table="poe_states"),
@@ -665,6 +667,7 @@ def _orphan_ip_entities(
     device: str,
     interface_ips: dict[str, list[dict]],
     emitted_keys: dict[str, str],
+    serial: str | None = None,
 ) -> list[Entity]:
     """IPs on interfaces that got no Interface entity above (e.g. VLAN/SVI
     interfaces, which appear in vlan_properties but not the port tables).
@@ -692,8 +695,12 @@ def _orphan_ip_entities(
                 "name": name,
                 "tags": PROVENANCE_TAGS,
             }
-            if interface_id:
-                iface_kwargs["custom_fields"] = {"platformone_interface_id": _cf_text(str(interface_id))}
+            custom_fields = _interface_custom_fields(
+                interface_id=str(interface_id) if interface_id else None,
+                serial=serial,
+            )
+            if custom_fields:
+                iface_kwargs["custom_fields"] = custom_fields
             entities.append(Entity(interface=Interface(**iface_kwargs)))
             emitted_names.add(name)
         entities.extend(_ip_entities_for_interface(device=device, interface_name=name, rows=rows))
@@ -733,6 +740,7 @@ def ports_to_entities(
     *,
     device: str,
     function: str | None = None,
+    serial: str | None = None,
 ) -> list[Entity]:
     """Map one switch's ConfigState port + LAG + VLAN tables to Diode entities.
 
@@ -770,6 +778,7 @@ def ports_to_entities(
         poe_configs=poe_configs,
         poe_states=poe_states,
         interface_ips=interface_ips,
+        serial=serial,
         port_configs=configs,
         port_states=states,
     )
@@ -787,6 +796,7 @@ def ports_to_entities(
         lag_names=lag_names,
         lag_interface_ids=lag_interface_ids,
         membership=membership,
+        serial=serial,
     )
     entities.extend(port_entities)
     emitted_keys.update(port_keys)
@@ -795,6 +805,8 @@ def ports_to_entities(
         _orphan_member_entities(device=device, membership=membership, emitted_port_names=emitted_port_names)
     )
     entities.extend(
-        _orphan_ip_entities(device=device, interface_ips=interface_ips, emitted_keys=emitted_keys)
+        _orphan_ip_entities(
+            device=device, interface_ips=interface_ips, emitted_keys=emitted_keys, serial=serial
+        )
     )
     return entities

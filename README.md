@@ -36,15 +36,15 @@ Platform ONE (Assets + ConfigState)
 
 | Platform ONE source | NetBox objects |
 |---------------------|----------------|
-| Devices (Assets API) | `Device` — name, serial, status (`active`/`offline` only when Assets reports a boolean `is_connected`; omitted when unknown), role (from Assets `function` when present; no static default), device type and manufacturer, platform (OS family + version), primary IPv4 or IPv6, provenance tags, `platformone_device_id` custom field |
+| Devices (Assets API) | `Device` — name (Assets `host_name` when present), serial, status (`active`/`offline`; unknown → `active`, Meraki-style), role (from Assets `function` when present; no static default), device type and manufacturer, platform (OS family + version), primary IPv4 or IPv6, provenance tags, `platformone_device_id` + `platformone_serial` custom fields |
 | Device locations (ConfigState) | `Site` (optional latitude/longitude) plus a nested `Location` chain (building → floor), falling back to the Assets API's flat site name |
-| Switch ports (ConfigState) | `Interface` — name, admin state (`enabled`), link state (`mark_connected`), speed/duplex/type, description, MAC address, `mgmt_only`, `poe_mode`, untagged/tagged VLANs with 802.1Q `mode`, `platformone_interface_id` custom field |
+| Switch ports (ConfigState) | `Interface` — name, admin state (`enabled`), speed/duplex/type (verified codes), description, MAC (uppercase), `mgmt_only`, `poe_mode`, untagged/tagged VLANs with 802.1Q `mode`, `platformone_interface_id` + `platformone_serial` custom fields |
 | VLAN membership (ConfigState) | Interface `untagged_vlan` / `tagged_vlans` by bare `vid` only (switch-local VLAN names are not site-scoped; named VLAN sync via `retrieve-asset-vlan-config` is not used) |
-| Interface IP addresses (ConfigState) | `IPAddress` — address + `mask_length` assigned to the matching interface (bare addresses without a prefix are skipped; SVI/orphan IPs also emit a minimal Interface) |
-| Link aggregation (ConfigState) | `Interface` — LAG parent (`type=lag`, name, admin `enabled`, VLAN trunk/access, `poe_mode` when joined, optional description/link/MAC from duplicate port rows, `platformone_interface_id`); member ports use the same physical-port fields plus Diode `Interface.lag` |
+| Interface IP addresses (ConfigState) | `IPAddress` — address + `mask_length`, `status` `active`, assigned to the matching interface (bare addresses without a prefix are skipped; SVI/orphan IPs also emit a minimal Interface) |
+| Link aggregation (ConfigState) | `Interface` — LAG parent (`type=lag`, name, admin `enabled`, VLAN trunk/access, `poe_mode` when joined, optional description/MAC from duplicate port rows, interface CFs); member ports use the same physical-port fields plus Diode `Interface.lag` |
 | Inferred clusters (ConfigState) | `VirtualChassis` — name from peer names, master = primary member (`device_one`), member `vc_position`, provenance tags, `platformone_cluster_id` custom field |
-| AP radios (ConfigState) | `Interface` — radio name, admin `enabled`, `type` (IEEE 802.11 from `radio_mode` when known), `rf_role=ap`, `tx_power`, `primary_mac_address` (BSSID), `rf_channel_frequency` / `rf_channel_width`, linked `wireless_lans`, `platformone_interface_id` |
-| SSIDs / WLANs (ConfigState) | `WirelessLAN` — `ssid`, `status` (`active`/`disabled` when SSID enabled is known; omitted when unknown), `auth_type` when `encryption` maps cleanly; deduped by SSID across APs (not site-scoped) |
+| AP radios (ConfigState) | `Interface` — radio name, admin `enabled`, `type` (IEEE 802.11 when known, else `other` like Meraki radios), `rf_role=ap`, `tx_power`, `primary_mac_address` (BSSID, uppercase), `rf_channel_frequency` / `rf_channel_width`, linked `wireless_lans`, interface CFs |
+| SSIDs / WLANs (ConfigState) | `WirelessLAN` — `ssid`, `status` (`active`/`disabled`; unknown → `active`), `auth_type` / `auth_cipher` (unknown → `open` / `auto`, Meraki-style); deduped by SSID across APs (not site-scoped) |
 
 The worker asserts a **fixed field set**: each field is either always
 asserted when Platform ONE reports the underlying data, or never asserted at
@@ -267,6 +267,40 @@ re-verify them when changing SDK versions:
 
 ## Design notes
 
+### Device status
+
+Aligned with Cisco Meraki device-status mapping:
+
+| Assets `is_connected` | NetBox Device status |
+|-----------------------|----------------------|
+| `true` | `active` |
+| `false` | `offline` |
+| missing / unknown | `active` |
+
+### Wireless LAN status and auth
+
+Aligned with Cisco Meraki SSID mapping:
+
+| Assets / ConfigState | NetBox WirelessLAN |
+|----------------------|--------------------|
+| SSID `enabled` true / unknown | `status` `active` |
+| SSID `enabled` false | `status` `disabled` |
+| `encryption` open / unknown | `auth_type` `open`, `auth_cipher` `auto` |
+| `encryption` PSK / WPA-personal family | `auth_type` `wpa-personal`, cipher `aes` when WPA2+ |
+| `encryption` 802.1X / enterprise family | `auth_type` `wpa-enterprise` |
+| `encryption` WEP | `auth_type` `wep`, `auth_cipher` `wep` |
+
+### Custom fields
+
+Same `{product}_{attribute}` pattern as Meraki (`meraki_*`) and ACI (`aci_*`) / Catalyst (`catalyst_*`):
+
+| Custom field | Object types | Purpose |
+|--------------|--------------|---------|
+| `platformone_device_id` | Device | Assets `device_id` (unique) |
+| `platformone_interface_id` | Interface | ConfigState `asset_interface_id` (unique) |
+| `platformone_cluster_id` | VirtualChassis | InferredCluster UUID (unique) |
+| `platformone_serial` | Device, Interface | Assets `serial_number` (like Meraki `meraki_serial`; also on native `Device.serial`) |
+
 ### Assurance-ready output
 
 NetBox Assurance is a consumer-side feature: any source that ingests via
@@ -364,10 +398,9 @@ Every in-scope device whose Assets `function` is a switch OS has its ports
 transformed from ConfigState tables joined on `asset_interface_id`
 (capabilities join on `(asset_device_id, port_name)`):
 
-- **Admin state and link state are independent fields.** `enabled` reflects
-  real administrative state (`AssetPortConfig.enabled`); link state is
-  asserted separately as `mark_connected` (`AssetPortState.oper_state`), so
-  an admin-down port and a link-down port are distinguishable in NetBox.
+- **Admin state** comes from `AssetPortConfig.enabled` → Interface `enabled`
+  (Meraki/ACI/Catalyst map admin state the same way; link/oper state is not
+  asserted as `mark_connected`).
 - **Management-only** comes from `AssetPortCapabilities.management_port`
   (`retrieve-asset-port-capabilities`).
 - **PoE mode** is `pse` when `AssetPoePowerPortsState.supported` is true or
@@ -388,11 +421,11 @@ transformed from ConfigState tables joined on `asset_interface_id`
   switch-local while Diode/NetBox VLANs are site-scoped). VLAN groups are
   not asserted.
 - **Interface IP addresses** from `retrieve-asset-interface-ip-address`
-  become Diode `IPAddress` entities assigned to the matching interface, using
-  `address` + `mask_length`. Bare addresses without a prefix are skipped
-  (no invented `/32` or `/128`). IPs on interfaces with no port/LAG row
-  (e.g. SVIs) also emit a minimal `Interface` first so the address has a
-  real assigned object; `type` is left unset.
+  become Diode `IPAddress` entities with `status` `active` (Meraki/Catalyst),
+  assigned to the matching interface, using `address` + `mask_length`. Bare
+  addresses without a prefix are skipped (no invented `/32` or `/128`). IPs on
+  interfaces with no port/LAG row (e.g. SVIs) also emit a minimal `Interface`
+  first so the address has a real assigned object; `type` is left unset.
 - **Speed, duplex, and connector use verified codes only.** ConfigState
   reports `oper_speed`, `oper_duplex`, and `connector_type` as integer codes
   with no value table in its OpenAPI spec. Only codes confirmed against
@@ -400,8 +433,7 @@ transformed from ConfigState tables joined on `asset_interface_id`
   = full, `connector_type 1/2` = copper/fiber, yielding `1000base-t` /
   `1000base-x-sfp`); unknown codes assert nothing. Config-side `speed` /
   `duplex` integers are likewise unverified and are not used as fallbacks.
-  `oper_state` is the exception: its schema description matches IF-MIB
-  `ifOperStatus`, so standard IF-MIB numbering (1 = up, 2 = down) applies.
+  MACs are uppercased (Meraki posture).
 
 ### LAG interfaces and membership
 
@@ -416,11 +448,10 @@ Membership is taken from the nested `member_ports` list on those rows.
   joins on that interface id apply vlan-properties (untagged / tagged VLANs by
   bare `vid` and 802.1Q `mode`), PoE (`poe_mode`), and interface IP addresses the
   same way as for physical ports. When AssetPortConfig/State also returns the
-  LAG's `asset_interface_id`, description, `mark_connected`, and
-  `primary_mac_address` are taken from those rows (and port-config
-  `native_vlan` is a VLAN fallback); speed/duplex/connector type are not,
-  so `type=lag` is never overwritten. Port-table duplicates are not emitted
-  as a second Interface.
+  LAG's `asset_interface_id`, description and `primary_mac_address` are taken
+  from those rows (and port-config `native_vlan` is a VLAN fallback);
+  speed/duplex/connector type are not, so `type=lag` is never overwritten.
+  Port-table duplicates are not emitted as a second Interface.
 - **Members** set Diode `Interface.lag` to the parent LAG (by device + name)
   and otherwise use the full physical-port field set when port
   config/state/capability/PoE/VLAN data exists. Membership prefers config
@@ -458,25 +489,19 @@ switch-only). Tables used:
 
 Each radio becomes a NetBox `Interface` with native RF fields: `rf_role`
 always `"ap"`, `enabled` from wireless-interface config, `type` from
-`radio_mode` when it maps to a known IEEE 802.11 NetBox type (Wi-Fi 7 /
-`11be` left unset), `tx_power` from `power`, `primary_mac_address` from
-`bssid`, `rf_channel_frequency` from IEEE channel formulas on `band` +
-`channel` (including string labels such as `BAND_5_GHZ`), and
-`rf_channel_width` when `channel_width` is already a standard MHz value
-(20/40/80/160/320). NetBox's `rf_channel` string is not asserted.
+`radio_mode` when it maps to a known IEEE 802.11 NetBox type (otherwise
+`other`, matching Meraki AP radios), `tx_power` from `power`,
+`primary_mac_address` from `bssid` (uppercase), `rf_channel_frequency` from
+IEEE channel formulas on `band` + `channel` (including string labels such as
+`BAND_5_GHZ`), and `rf_channel_width` when `channel_width` is already a
+standard MHz value (20/40/80/160/320). NetBox's `rf_channel` string is not
+asserted.
 
-SSIDs become `WirelessLAN` entities (`ssid`, `status` from SSID `enabled`
-when known — omitted when unknown, `auth_type` from `encryption` when it
-maps cleanly to open / wep / wpa-personal / wpa-enterprise). They are
-deduped by SSID name across every AP and are **not** site-scoped (same SSID
-can broadcast in many sites). Radios link to WLANs via NetBox's native
-`wireless_lans` field using `AssetSsid*.if_names` and any `ssid_name` on
-wireless interface state. `auth_cipher` is not set (ConfigState has no
-cipher detail here).
-
-Unknown `radio_mode` / `band` / `channel_width` / `encryption` values assert
-nothing rather than inventing NetBox enums — same verified-code rule as
-wired `oper_speed` / `connector_type`.
+SSIDs become `WirelessLAN` entities (`ssid`, `status`, `auth_type`,
+`auth_cipher` — see status/auth tables above). They are deduped by SSID name
+across every AP and are **not** site-scoped (same SSID can broadcast in many
+sites). Radios link to WLANs via NetBox's native `wireless_lans` field using
+`AssetSsid*.if_names` and any `ssid_name` on wireless interface state.
 
 ### VirtualChassis from inferred clusters
 
@@ -519,7 +544,7 @@ documented Platform ONE APIs. Operational differences:
 | Package / `config.package` | `orb_extreme_xiq` | `orb_extreme_platformone` |
 | Credentials | `XIQ_API_TOKEN` or username/password | `PLATFORMONE_USERNAME` / `PLATFORMONE_PASSWORD`, or `PLATFORMONE_API_TOKEN` |
 | Tags | `extreme-networks`, `xiq`, `discovered` | `extreme-networks`, `platform-one`, `discovered` |
-| Custom fields | `xiq_network_policy`, `xiq_port_id` | `platformone_device_id`, `platformone_interface_id`, `platformone_cluster_id` |
+| Custom fields | `xiq_network_policy`, `xiq_port_id` | `platformone_device_id`, `platformone_interface_id`, `platformone_cluster_id`, `platformone_serial` |
 | Port admin state / VLANs | not available | `enabled`, untagged/tagged VLANs by bare `vid`, 802.1Q `mode` |
 | Wireless radios / WLANs | synced (XIQ-era fields) | synced (ConfigState wireless + SSID → native Interface RF fields + WirelessLAN) |
 | Internal layout | monolithic modules | ETL packages: `client` → `extract` → `transform` |
@@ -546,5 +571,5 @@ same objects instead of duplicating them.
   once OpenAPI publishes integer enums or Diode/NetBox gains matching fields.
 - MLAG peer correlation (`retrieve-asset-mlag-*`), if NetBox modeling for
   multi-chassis LAGs is needed beyond single-device LAG membership.
-- NetBox `rf_channel` string on radios, and WirelessLAN `auth_cipher` /
-  `scope_site`, once live Platform ONE values and NetBox formats are confirmed.
+- NetBox `rf_channel` string on radios, and WirelessLAN `scope_site`, once
+  live Platform ONE values and NetBox formats are confirmed.

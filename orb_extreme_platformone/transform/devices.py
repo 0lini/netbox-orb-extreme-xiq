@@ -27,18 +27,17 @@ from orb_extreme_platformone.identity import (
 from .common import MANUFACTURER, PROVENANCE_TAGS, _cf_text, logger
 
 
-def _status_for(asset: dict) -> str | None:
-    """Map Assets `is_connected` to Device status; omit when unknown.
+def _status_for(asset: dict) -> str:
+    """Map Assets `is_connected` to Device status (Meraki-style defaults).
 
-    Only an explicit bool is asserted — a missing/null value must not become
-    ``offline`` the way a falsy check would.
+    ``true`` → ``active``, ``false`` → ``offline``. Missing/unknown defaults
+    to ``active`` — same posture as Cisco Meraki (any other / no status →
+    active) and open Orb device-discovery (always active).
     """
     connected = asset.get("is_connected")
-    if connected is True:
-        return "active"
     if connected is False:
         return "offline"
-    return None
+    return "active"
 
 
 def _primary_ips_from_asset(asset: dict) -> dict[str, str]:
@@ -96,9 +95,14 @@ def _device_kwargs(
     custom_fields: dict = {}
     if asset.get("device_id") is not None:
         custom_fields["platformone_device_id"] = _cf_text(str(asset["device_id"]))
+    serial = asset.get("serial_number") or None
+    if serial:
+        # Mirrors Meraki `meraki_serial` / Catalyst `catalyst_serial_number`:
+        # native Device.serial plus a product-prefixed CF for correlation.
+        custom_fields["platformone_serial"] = _cf_text(str(serial))
 
     kwargs = {
-        "serial": asset.get("serial_number") or None,
+        "serial": serial,
         "site": Site(name=site_name),
         "custom_fields": custom_fields,
         "tags": PROVENANCE_TAGS,
@@ -106,9 +110,7 @@ def _device_kwargs(
     name = device_name(asset)
     if name is not None:
         kwargs["name"] = name
-    status = _status_for(asset)
-    if status is not None:
-        kwargs["status"] = status
+    kwargs["status"] = _status_for(asset)
     if location is not None:
         kwargs["location"] = location
 
