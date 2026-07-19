@@ -224,7 +224,7 @@ def devices_to_entities(
     site_coords: dict[str, tuple[float | None, float | None]] = {}
 
     # One pass: filter (if site_scope set) + resolve. Does not call
-    # scope_devices separately (avoids a second filter pass inside the mapper).
+    # scope_devices separately (avoids a second filter pass inside transform).
     for record, site_name, location_path in _iter_scoped_devices(records, site_scope=site_scope):
         resolved.append((record, site_name, location_path))
         site_names.add(site_name)

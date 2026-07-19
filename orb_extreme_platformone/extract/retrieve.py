@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from orb_extreme_platformone.client import PlatformOneApiError, PlatformOneClient
 
-logger = logging.getLogger("orb_extreme_platformone.fetch")
+logger = logging.getLogger("orb_extreme_platformone.extract")
 
 
 def retrieve_parallel(

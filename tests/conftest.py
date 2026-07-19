@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from orb_extreme_platformone import mapper
+from orb_extreme_platformone import transform
 
 # ---------------------------------------------------------------------------
 # Shared Platform ONE payload shapes (Assets Device + ConfigState port rows)
@@ -121,7 +121,7 @@ class CustomFieldValue(Rec):
     pass
 
 
-# One stub per Diode SDK class mapper.py imports.
+# One stub per Diode SDK class transform imports.
 STUB_CLASSES = {
     "Device": Device,
     "DeviceType": DeviceType,
@@ -141,19 +141,26 @@ STUB_CLASSES = {
 
 @pytest.fixture
 def stub_sdk(monkeypatch):
-    """Swap the real Diode SDK classes mapper submodules imported for stubs.
+    """Swap the real Diode SDK classes transform submodules imported for stubs.
 
     The real classes build protobuf messages, which are awkward to assert on
     directly; these stand-ins record constructor kwargs on `._kw` instead, so
-    tests can assert on the *shape* of what the mapper builds.
+    tests can assert on the *shape* of what transform builds.
     """
-    import orb_extreme_platformone.mapper.common as mapper_common
-    import orb_extreme_platformone.mapper.devices as mapper_devices
-    import orb_extreme_platformone.mapper.ports as mapper_ports
-    import orb_extreme_platformone.mapper.virtual_chassis as mapper_vc
-    import orb_extreme_platformone.mapper.wireless as mapper_wireless
+    import orb_extreme_platformone.transform.common as transform_common
+    import orb_extreme_platformone.transform.devices as transform_devices
+    import orb_extreme_platformone.transform.ports as transform_ports
+    import orb_extreme_platformone.transform.virtual_chassis as transform_vc
+    import orb_extreme_platformone.transform.wireless as transform_wireless
 
-    modules = (mapper, mapper_common, mapper_devices, mapper_ports, mapper_vc, mapper_wireless)
+    modules = (
+        transform,
+        transform_common,
+        transform_devices,
+        transform_ports,
+        transform_vc,
+        transform_wireless,
+    )
     for name, cls in STUB_CLASSES.items():
         for mod in modules:
             # Only patch names the module actually binds (imports or defines).

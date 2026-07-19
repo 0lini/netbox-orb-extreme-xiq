@@ -1,4 +1,4 @@
-"""Shared mapper constants and small helpers."""
+"""Shared transform constants and small helpers."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from netboxlabs.diode.sdk.ingester import CustomFieldValue
 
 from orb_extreme_platformone import bootstrap
 
-logger = logging.getLogger("orb_extreme_platformone.mapper")
+logger = logging.getLogger("orb_extreme_platformone.transform")
 
 MANUFACTURER = "Extreme Networks"
 

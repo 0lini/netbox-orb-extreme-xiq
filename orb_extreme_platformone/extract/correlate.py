@@ -7,10 +7,10 @@ from collections.abc import Iterable
 
 from orb_extreme_platformone.client import PlatformOneApiError, PlatformOneClient
 
-logger = logging.getLogger("orb_extreme_platformone.fetch")
+logger = logging.getLogger("orb_extreme_platformone.extract")
 
 
-def fetch_cs_devices(client: PlatformOneClient, assets: list[dict]) -> list[dict]:
+def extract_cs_devices(client: PlatformOneClient, assets: list[dict]) -> list[dict]:
     """Fetch the ConfigState AssetDevice records for the given Assets devices.
 
     ConfigState rejects an empty GetRequest body (code 1727: at least one
@@ -73,7 +73,7 @@ def correlated_records(client: PlatformOneClient, assets: list[dict], policy_nam
     so a tick without building/floor/port detail is harmless.
     """
     try:
-        cs_devices = fetch_cs_devices(client, assets)
+        cs_devices = extract_cs_devices(client, assets)
     except PlatformOneApiError as exc:
         logger.warning(
             "Policy %s: ConfigState device listing failed, syncing without location/port detail: %s",

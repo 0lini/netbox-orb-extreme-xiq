@@ -1,4 +1,4 @@
-"""Standalone dry run: fetch from Platform ONE, map, print the entities (no Diode push).
+"""Standalone dry run: extract from Platform ONE, transform, print entities (no Diode push).
 
 Run as `python -m orb_extreme_platformone`. Configuration comes from the
 environment (plus a local `.env` file) instead of an Orb policy; nothing is

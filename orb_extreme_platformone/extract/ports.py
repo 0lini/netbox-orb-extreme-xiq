@@ -108,7 +108,7 @@ def attach_interface_id_tables(
                 tables_by_device[device_id][key].append(row)
 
 
-def fetch_port_tables(
+def extract_port_tables(
     client: PlatformOneClient,
     device_ids: list[str],
     policy_name: str,
