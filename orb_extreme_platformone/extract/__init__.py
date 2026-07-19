@@ -1,4 +1,4 @@
-"""Platform ONE ConfigState / Assets fetch helpers for the discovery worker."""
+"""Platform ONE ConfigState / Assets extract helpers for the discovery worker."""
 
 from __future__ import annotations
 

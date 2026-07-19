@@ -1,4 +1,4 @@
-"""Map Extreme Platform ONE records to Diode entities.
+"""Transform Extreme Platform ONE records into Diode entities.
 
 Fields are asserted unconditionally whenever Platform ONE reports the
 underlying data; fields with no Platform ONE equivalent are never asserted.

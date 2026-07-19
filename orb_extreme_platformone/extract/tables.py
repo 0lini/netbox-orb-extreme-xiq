@@ -1,13 +1,13 @@
 """ConfigState table catalogs used by the discovery worker.
 
-Each entry is ``mapper_key -> (retrieve-* table, GetRequest filter field)``.
-Mapper entity table-key frozensets must stay aligned with these catalogs
+Each entry is ``transform_key -> (retrieve-* table, GetRequest filter field)``.
+Transform entity table-key frozensets must stay aligned with these catalogs
 (see tests).
 """
 
 from __future__ import annotations
 
-# {mapper table key: (retrieve-* table, GetRequest device filter field)}.
+# {transform table key: (retrieve-* table, GetRequest device filter field)}.
 # vlan-properties and poe-state use `device_id`; capabilities use
 # `asset_device_id` like port config/state.
 PORT_TABLES = {

@@ -86,11 +86,11 @@ No undocumented endpoints are used.
 | Path | Purpose |
 |------|---------|
 | `orb_extreme_platformone/client.py` | Platform ONE HTTP client: paginated Assets device listing and a generic batched ConfigState `retrieve()`. |
-| `orb_extreme_platformone/mapper/` | Platform ONE → Diode entity mapping, split by domain (`devices`, `ports`, `wireless`, `virtual_chassis`, shared `common`). |
-| `orb_extreme_platformone/fetch/` | ConfigState table catalogs, concurrent retrieves, Assets↔ConfigState correlation, port/wireless/cluster fetch phases. |
+| `orb_extreme_platformone/extract/` | ConfigState table catalogs, concurrent retrieves, Assets↔ConfigState correlation, port/wireless/cluster extract phases. |
+| `orb_extreme_platformone/transform/` | Platform ONE → Diode entity transform, split by domain (`devices`, `ports`, `wireless`, `virtual_chassis`, shared `common`). |
 | `orb_extreme_platformone/identity.py` | Device naming, switch/AP detection, site/building/floor resolution, device-type model mapping. |
 | `orb_extreme_platformone/bootstrap.py` | Idempotent NetBox schema setup (custom fields and tags). |
-| `orb_extreme_platformone/backend.py` | Orb Agent worker entrypoint: policy tick orchestration (bootstrap, scope, map). |
+| `orb_extreme_platformone/backend.py` | Orb Agent worker entrypoint: policy tick orchestration (bootstrap, scope, extract, transform). |
 | `orb_extreme_platformone/__main__.py` | Standalone dry-run runner (`python -m orb_extreme_platformone`). |
 | `agent.yaml` | Example Orb Agent policy. |
 | `tests/` | Offline pytest suite, plus opt-in contract checks against downloaded Platform ONE OpenAPI specs. |
@@ -169,7 +169,7 @@ same-named environment variable; policy config takes precedence.
 pip install -e ".[dev]"
 export PLATFORMONE_USERNAME=...             # or PLATFORMONE_API_TOKEN=...
 export PLATFORMONE_PASSWORD=...             # or put both in .env (gitignored)
-python -m orb_extreme_platformone           # dry run: fetch, map, print entities
+python -m orb_extreme_platformone           # dry run: extract, transform, print entities
 pytest                                      # offline test suite
 ruff check . && ruff format --check .       # lint + format
 ```
@@ -184,7 +184,7 @@ development-mode "push to Diode" path — run inside the `orb-agent` container
 
 The default `pytest` run is fully offline: `test_client.py` and
 `test_backend.py` mock the Platform ONE HTTP endpoints with `responses`,
-`test_mapper.py` and `test_identity.py` use plain fixtures, and
+`test_transform.py` and `test_identity.py` use plain fixtures, and
 `test_bootstrap.py` mocks the NetBox REST API.
 
 The contract checks in `tests/test_openapi_contract.py` verify the endpoints,
@@ -215,7 +215,7 @@ re-verify them when changing SDK versions:
 - **Diode custom-field values** (verified against `netboxlabs-diode-sdk`
   generated from NetBox v4.6.0): `custom_fields` values must be wrapped in
   `CustomFieldValue(text=...)`; a plain string raises `ValueError`.
-  `mapper._cf_text()` funnels this through one place.
+  `transform.common._cf_text()` funnels this through one place.
 
 ## Design notes
 

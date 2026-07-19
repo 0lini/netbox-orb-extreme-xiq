@@ -8,7 +8,7 @@ from .retrieve import retrieve_ok
 from .tables import WIRELESS_TABLES
 
 
-def fetch_wireless_tables(
+def extract_wireless_tables(
     client: PlatformOneClient,
     device_ids: list[str],
     policy_name: str,

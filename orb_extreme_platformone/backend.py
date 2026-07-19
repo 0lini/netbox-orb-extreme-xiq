@@ -5,8 +5,8 @@ Implements the `worker.backend.Backend` contract from `netboxlabs-orb-worker`:
 policy tick. The PolicyRunner owns scheduling and the Diode client; this
 module only produces entities.
 
-ConfigState table catalogs and batched retrieves live in `fetch/`; entity
-mapping lives in `mapper/`.
+ConfigState table catalogs and batched retrieves live in `extract/`; entity
+transform lives in `transform/`.
 """
 
 from __future__ import annotations
@@ -19,9 +19,9 @@ from netboxlabs.diode.sdk.ingester import Entity
 from worker.backend import Backend as WorkerBackend
 from worker.models import Metadata, Policy
 
-from . import __version__, bootstrap, mapper
+from . import __version__, bootstrap, transform
 from .client import DEFAULT_BASE_URL, PlatformOneApiError, PlatformOneClient
-from .fetch import (
+from .extract import (
     CLUSTER_MEMBER_FILTERS,
     INTERFACE_ID_TABLES,
     LAG_MEMBER_TABLES,
@@ -29,9 +29,9 @@ from .fetch import (
     WIRELESS_TABLES,
     correlated_records,
 )
-from .fetch.clusters import fetch_inferred_clusters
-from .fetch.ports import collect_interface_ids, fetch_port_tables
-from .fetch.wireless import fetch_wireless_tables
+from .extract.clusters import extract_inferred_clusters
+from .extract.ports import collect_interface_ids, extract_port_tables
+from .extract.wireless import extract_wireless_tables
 from .identity import device_name, is_ap, is_switch
 
 logger = logging.getLogger(__name__)
@@ -142,9 +142,9 @@ class Backend(WorkerBackend):
 
         scope_sites = _scope_sites(getattr(policy, "scope", None))
         # Backend owns scoping: port fan-out and devices_to_entities must see
-        # the same filtered list. Pass site_scope=None into the mapper so it
-        # does not re-filter (see mapper.scope_devices / devices_to_entities).
-        scoped = mapper.scope_devices(
+        # the same filtered list. Pass site_scope=None into transform so it
+        # does not re-filter (see transform.scope_devices / devices_to_entities).
+        scoped = transform.scope_devices(
             records,
             site_scope=set(scope_sites) if scope_sites else None,
         )
@@ -162,7 +162,7 @@ class Backend(WorkerBackend):
         # /32 from the bare Assets management address.
         port_entities, primary_ips_by_cs_id = self._port_entities(client, scoped, name_source, policy_name)
         radio_entities = self._radio_entities(client, scoped, name_source, policy_name)
-        entities = mapper.devices_to_entities(
+        entities = transform.devices_to_entities(
             scoped,
             name_source=name_source,
             virtual_chassis_entities=vc_entities,
@@ -191,7 +191,7 @@ class Backend(WorkerBackend):
             return [], {}
 
         try:
-            clusters = fetch_inferred_clusters(client, device_ids)
+            clusters = extract_inferred_clusters(client, device_ids)
         except PlatformOneApiError as exc:
             logger.warning(
                 "Policy %s: ConfigState inferred-cluster fetch failed, syncing without VirtualChassis: %s",
@@ -200,7 +200,7 @@ class Backend(WorkerBackend):
             )
             return [], {}
 
-        entities, memberships = mapper.virtual_chassis_to_entities(
+        entities, memberships = transform.virtual_chassis_to_entities(
             clusters,
             records_by_cs_id=records_by_cs_id,
             name_source=name_source,
@@ -237,18 +237,18 @@ class Backend(WorkerBackend):
             return [], {}
         device_ids = sorted(switches)
 
-        tables_by_device, failed_tables = fetch_port_tables(client, device_ids, policy_name)
+        tables_by_device, failed_tables = extract_port_tables(client, device_ids, policy_name)
 
         entities: list[Entity] = []
         primary_ips_by_cs_id: dict[str, dict[str, str]] = {}
         for device_id in device_ids:
             record = switches[device_id]
             tables = tables_by_device[device_id]
-            primary = mapper.primary_ips_from_tables(tables, asset_ip=record["asset"].get("ip_address"))
+            primary = transform.primary_ips_from_tables(tables, asset_ip=record["asset"].get("ip_address"))
             if primary:
                 primary_ips_by_cs_id[device_id] = primary
             entities.extend(
-                mapper.ports_to_entities(
+                transform.ports_to_entities(
                     tables,
                     device=device_name(record["asset"], name_source),
                     function=record["asset"].get("function"),
@@ -276,12 +276,12 @@ class Backend(WorkerBackend):
             return []
         device_ids = sorted(aps)
 
-        tables_by_device, failed_tables = fetch_wireless_tables(client, device_ids, policy_name)
+        tables_by_device, failed_tables = extract_wireless_tables(client, device_ids, policy_name)
 
         device_names = {
             device_id: device_name(aps[device_id]["asset"], name_source) for device_id in device_ids
         }
-        entities = mapper.radios_to_entities(tables_by_device, device_names=device_names)
+        entities = transform.radios_to_entities(tables_by_device, device_names=device_names)
         logger.info("Policy %s: mapped %d wireless radio/WLAN entities", policy_name, len(entities))
         if failed_tables:
             logger.warning(

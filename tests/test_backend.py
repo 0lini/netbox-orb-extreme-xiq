@@ -1,6 +1,6 @@
 """End-to-end Backend.run() test against the real worker/diode-sdk contracts.
 
-Unlike test_mapper.py, this deliberately does NOT stub the Diode SDK -- it
+Unlike test_transform.py, this deliberately does NOT stub the Diode SDK -- it
 exercises the real protobuf Entity/Device/Site classes plus the real
 worker.models.Policy/Config, to catch drift against the installed
 netboxlabs-diode-sdk / netboxlabs-orb-worker versions early.
@@ -336,7 +336,7 @@ def test_run_survives_a_failed_port_table_and_keeps_the_rest(caplog):
 
 
 def test_correlate_warns_on_duplicate_serial(caplog):
-    from orb_extreme_platformone.fetch import correlate
+    from orb_extreme_platformone.extract import correlate
 
     assets = [{"device_id": 1, "serial_number": "SN1"}]
     cs_devices = [
