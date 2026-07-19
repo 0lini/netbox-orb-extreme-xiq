@@ -62,12 +62,13 @@ def _channel_frequency_mhz(band: str | None, channel: int | None) -> float | Non
         return None
     if not band:
         return None
-    normalized = str(band).casefold().replace(" ", "")
-    if "6g" in normalized or normalized in {"6", "band_6", "band6"}:
+    # Collapse separators so BAND_5_GHZ / "5 GHz" / "5g" all normalize alike.
+    normalized = str(band).casefold().replace(" ", "").replace("_", "").replace("-", "")
+    if "6g" in normalized or normalized in {"6", "band6"}:
         offset = 5950.0
-    elif "2.4" in normalized or "2,4" in normalized or normalized in {"24g", "2g", "band_2_4"}:
+    elif "2.4" in normalized or "2,4" in normalized or normalized in {"24g", "2g", "band24", "band2.4"}:
         offset = 2407.0
-    elif "5g" in normalized or normalized in {"5", "band_5", "band5"}:
+    elif "5g" in normalized or normalized in {"5", "band5"}:
         offset = 5000.0
     else:
         return None
@@ -185,11 +186,7 @@ def _wlan_kwargs(ssid: str, *, enabled, encryption: str | None) -> dict:
     status = _wlan_status(enabled)
     if status is not None:
         kwargs["status"] = status
-    elif enabled is None:
-        # Seen on a live radio / SSID table without an enabled flag — treat as
-        # currently present, matching the Meraki/XIQ "broadcasting → active"
-        # convention when only presence is known.
-        kwargs["status"] = "active"
+    # When enabled is unknown, leave status unset rather than inventing "active".
     auth_type = _auth_type_from_encryption(encryption)
     if auth_type is not None:
         kwargs["auth_type"] = auth_type

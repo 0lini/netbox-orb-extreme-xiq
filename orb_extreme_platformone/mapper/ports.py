@@ -81,10 +81,10 @@ def primary_ips_from_tables(
     rows_with_cidr: list[tuple[dict, str, ipaddress.IPv4Interface | ipaddress.IPv6Interface]] = []
     for row in tables.get("interface_ips") or []:
         raw = str(row.get("address") or "").strip()
-        mask = row.get("mask_length")
+        mask = _coerce_int(row.get("mask_length"))
         # Require an explicit prefix from ConfigState (mask_length or inline /n);
         # never accept ip_interface's implicit /32 or /128 on a bare host.
-        if not raw or ("/" not in raw and not (isinstance(mask, int) and 0 <= mask <= 128)):
+        if not raw or ("/" not in raw and not (mask is not None and 0 <= mask <= 128)):
             continue
         cidr = _interface_ip_cidr(row)
         if not cidr:
@@ -227,12 +227,12 @@ def _vlan_fields(vlan_records: list[dict]) -> dict:
     untagged: int | None = None
     mapped: set[int] = set()
     for record in vlan_records:
-        port_vlan = record.get("port_vlan")
-        if untagged is None and isinstance(port_vlan, int) and port_vlan > 0:
+        port_vlan = _coerce_int(record.get("port_vlan"))
+        if untagged is None and port_vlan is not None and port_vlan > 0:
             untagged = port_vlan
         for vlan_map in record.get("vlans") or []:
-            number = vlan_map.get("vlan_number") if isinstance(vlan_map, dict) else None
-            if isinstance(number, int) and number > 0:
+            number = _coerce_int(vlan_map.get("vlan_number")) if isinstance(vlan_map, dict) else None
+            if number is not None and number > 0:
                 mapped.add(number)
     if untagged is not None and _is_extreme_reserved_vlan(untagged):
         untagged = None
@@ -260,14 +260,15 @@ def _vlan_fields_from_port_config(config: dict) -> dict:
     tagging (Fabric Engine). Applied only as a fallback. Extreme reserved
     VIDs (4060–4094) are omitted entirely (no VLAN fields, no mode).
     """
-    native = config.get("native_vlan")
-    if not isinstance(native, int) or native <= 0 or _is_extreme_reserved_vlan(native):
+    native = _coerce_int(config.get("native_vlan"))
+    if native is None or native <= 0 or _is_extreme_reserved_vlan(native):
         return {}
     fields: dict = {"untagged_vlan": VLAN(vid=native)}
     port_mode = config.get("port_mode")
-    if port_mode is True:
-        fields["mode"] = "tagged"
-    elif port_mode is False:
+    # port_mode True means trunk on Fabric Engine, but without a tagged member
+    # list we must not assert mode=tagged (empty tagged_vlans). Leave mode
+    # unset in that case; False is a real access port.
+    if port_mode is False:
         fields["mode"] = "access"
     return fields
 
@@ -286,6 +287,17 @@ def _poe_mode(config: dict, state: dict) -> str | None:
     return None
 
 
+def _coerce_int(value) -> int | None:
+    """Accept JSON ints or digit-only strings; reject floats/bools/garbage."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
 def _interface_ip_cidr(row: dict) -> str | None:
     """Build address/prefix for AssetInterfaceIpAddress → Diode IPAddress.
 
@@ -296,9 +308,9 @@ def _interface_ip_cidr(row: dict) -> str | None:
     raw = str(row.get("address") or "").strip()
     if not raw:
         return None
-    mask = row.get("mask_length")
+    mask = _coerce_int(row.get("mask_length"))
     if "/" not in raw:
-        if not (isinstance(mask, int) and 0 <= mask <= 128):
+        if mask is None or not 0 <= mask <= 128:
             return None
         raw = f"{raw}/{mask}"
     try:

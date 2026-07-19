@@ -76,6 +76,30 @@ def _scope_sites(scope) -> list[str] | None:
     return list(sites)
 
 
+def _records_by_cs_id(records: list[dict], *, predicate) -> dict[str, dict]:
+    """Index records by cs_device_id, keeping the first and warning on collisions.
+
+    Port/radio/VC fan-out is keyed by ConfigState UUID; two Assets rows that
+    correlate to the same UUID would otherwise silently overwrite each other.
+    """
+    by_id: dict[str, dict] = {}
+    for record in records:
+        cs_id = record.get("cs_device_id")
+        if not cs_id or not predicate(record):
+            continue
+        if cs_id in by_id:
+            logger.warning(
+                "Duplicate ConfigState device id %s across Assets rows "
+                "(%r and %r); keeping the first for table fan-out",
+                cs_id,
+                device_name(by_id[cs_id]["asset"]),
+                device_name(record["asset"]),
+            )
+            continue
+        by_id[cs_id] = record
+    return by_id
+
+
 def _build_client(config) -> PlatformOneClient:
     return PlatformOneClient(
         base_url=_cfg_or_env(config, "PLATFORMONE_API_URL", default=DEFAULT_BASE_URL),
@@ -203,11 +227,10 @@ class Backend(WorkerBackend):
         Returns ``(port_entities, primary_ips_by_cs_id)`` so Device primary
         IPs can reuse the same ConfigState interface CIDRs.
         """
-        switches = {
-            record["cs_device_id"]: record
-            for record in records
-            if record["cs_device_id"] and is_switch(record["asset"].get("function"))
-        }
+        switches = _records_by_cs_id(
+            records,
+            predicate=lambda record: is_switch(record["asset"].get("function")),
+        )
         if not switches:
             return [], {}
         device_ids = sorted(switches)
@@ -243,11 +266,10 @@ class Backend(WorkerBackend):
         client: PlatformOneClient, records: list[dict], name_source: str, policy_name: str
     ) -> list[Entity]:
         """Fetch wireless/SSID tables for in-scope APs and map to Diode entities."""
-        aps = {
-            record["cs_device_id"]: record
-            for record in records
-            if record["cs_device_id"] and is_ap(record["asset"].get("function"))
-        }
+        aps = _records_by_cs_id(
+            records,
+            predicate=lambda record: is_ap(record["asset"].get("function")),
+        )
         if not aps:
             return []
         device_ids = sorted(aps)
