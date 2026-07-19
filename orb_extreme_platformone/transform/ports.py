@@ -9,7 +9,7 @@ from netboxlabs.diode.sdk.ingester import VLAN, Entity, Interface, IPAddress
 
 from orb_extreme_platformone.identity import SLASH_PORT_FUNCTIONS, native_port_name
 
-from .common import PROVENANCE_TAGS, _cf_text, logger
+from .common import PROVENANCE_TAGS, _interface_custom_fields, logger
 
 # Extreme Networks reserves VIDs 4060–4094 for internal use (e.g. Fabric
 # Engine). These are filtered from Interface untagged/tagged memberships.
@@ -129,8 +129,9 @@ def primary_ips_from_tables(
 # ConfigState reports oper_speed / oper_duplex / connector_type as integer
 # codes with no value table in its OpenAPI spec. Only codes verified against
 # production hardware (or fixtures derived from that gear) are mapped;
-# unknown codes assert nothing. oper_state is the exception: its schema
-# description matches IF-MIB ifOperStatus.
+# unknown codes assert nothing. Admin `enabled` and link `mark_connected`
+# (from IF-MIB-style oper_state) are both asserted so admin-down vs link-down
+# stay distinguishable.
 #
 # Verified in-repo today: oper_speed 4, oper_duplex 2, connector_type 1/2.
 # Config-side speed/duplex integers remain unverified and are not used.
@@ -329,12 +330,14 @@ def _iface_base_kwargs(
     poe_state: dict | None = None,
 ) -> dict:
     """Shared identity / admin / PoE fields for physical ports and LAG parents."""
+    custom_fields = _interface_custom_fields(interface_id=interface_id)
     kwargs: dict = {
         "device": device,
         "name": name,
-        "custom_fields": {"platformone_interface_id": _cf_text(interface_id)} if interface_id else {},
         "tags": PROVENANCE_TAGS,
     }
+    if custom_fields:
+        kwargs["custom_fields"] = custom_fields
     enabled = config.get("enabled")
     if isinstance(enabled, bool):
         kwargs["enabled"] = enabled
@@ -384,7 +387,7 @@ def _port_kwargs(
     if config.get("description"):
         kwargs["description"] = config["description"]
     if state.get("mac_address"):
-        kwargs["primary_mac_address"] = state["mac_address"]
+        kwargs["primary_mac_address"] = str(state["mac_address"]).upper()
 
     if capability is not None and isinstance(capability.get("management_port"), bool):
         kwargs["mgmt_only"] = capability["management_port"]
@@ -493,7 +496,7 @@ def _lag_kwargs(
         if oper_state is not None:
             kwargs["mark_connected"] = oper_state == OPER_STATE_UP
         if port_state.get("mac_address"):
-            kwargs["primary_mac_address"] = port_state["mac_address"]
+            kwargs["primary_mac_address"] = str(port_state["mac_address"]).upper()
     return kwargs
 
 
@@ -514,6 +517,7 @@ def _ip_entities_for_interface(
             Entity(
                 ip_address=IPAddress(
                     address=cidr,
+                    status="active",
                     assigned_object_interface=Interface(device=device, name=interface_name),
                     tags=PROVENANCE_TAGS,
                 )
@@ -692,8 +696,11 @@ def _orphan_ip_entities(
                 "name": name,
                 "tags": PROVENANCE_TAGS,
             }
-            if interface_id:
-                iface_kwargs["custom_fields"] = {"platformone_interface_id": _cf_text(str(interface_id))}
+            custom_fields = _interface_custom_fields(
+                interface_id=str(interface_id) if interface_id else None,
+            )
+            if custom_fields:
+                iface_kwargs["custom_fields"] = custom_fields
             entities.append(Entity(interface=Interface(**iface_kwargs)))
             emitted_names.add(name)
         entities.extend(_ip_entities_for_interface(device=device, interface_name=name, rows=rows))

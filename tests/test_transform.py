@@ -229,12 +229,12 @@ def test_devices_to_entities_disconnected_device_is_offline(stub_sdk):
     assert entities[-1]._kw["device"]._kw["status"] == "offline"
 
 
-def test_devices_to_entities_omits_status_when_is_connected_unknown(stub_sdk):
+def test_devices_to_entities_defaults_status_active_when_is_connected_unknown(stub_sdk):
     asset = {**SWITCH_ASSET}
     del asset["is_connected"]
     entities = transform.devices_to_entities([_record(asset=asset)])
 
-    assert "status" not in entities[-1]._kw["device"]._kw
+    assert entities[-1]._kw["device"]._kw["status"] == "active"
 
 
 def test_devices_to_entities_without_any_site_skips_the_device(stub_sdk, caplog):
@@ -295,7 +295,7 @@ def test_ports_to_entities_maps_config_state_and_vlans_onto_one_interface(stub_s
     assert port["duplex"] == "full"
     assert port["type"] == "1000base-t"
     assert port["description"] == "uplink to core"
-    assert port["primary_mac_address"] == "aa:bb:cc:dd:ee:01"
+    assert port["primary_mac_address"] == "AA:BB:CC:DD:EE:01"
     assert port["untagged_vlan"]._kw == {"vid": 10}
     assert [v._kw["vid"] for v in port["tagged_vlans"]] == [20, 30]
     assert port["mode"] == "tagged"
@@ -787,7 +787,7 @@ def test_ports_to_entities_skips_lag_row_duplicated_in_port_tables(stub_sdk):
     assert ports[0]["type"] == "lag"
     assert ports[0]["description"] == "core lag"
     assert ports[0]["mark_connected"] is True
-    assert ports[0]["primary_mac_address"] == "aa:bb:cc:dd:ee:99"
+    assert ports[0]["primary_mac_address"] == "AA:BB:CC:DD:EE:99"
     assert "mode" not in ports[0]  # trunk flag without tagged members
     assert ports[0]["untagged_vlan"]._kw["vid"] == 99
     assert "speed" not in ports[0]
@@ -1125,7 +1125,7 @@ def test_radios_to_entities_maps_native_rf_fields_and_wlans(stub_sdk):
     assert radio["rf_role"] == "ap"
     assert radio["enabled"] is True
     assert radio["tx_power"] == 18
-    assert radio["primary_mac_address"] == "aa:bb:cc:dd:ee:01"
+    assert radio["primary_mac_address"] == "AA:BB:CC:DD:EE:01"
     assert radio["rf_channel_frequency"] == 5180.0
     assert radio["rf_channel_width"] == 80.0
     assert radio["wireless_lans"] == ["Corp", "Guest"]
@@ -1162,7 +1162,7 @@ def test_radios_to_entities_leaves_unverified_rf_codes_unset(stub_sdk):
 
     entities = transform.radios_to_entities(tables, device_names={"cs-ap-1": "ap-lobby"})
     radio = entities[0]._kw["interface"]._kw
-    assert "type" not in radio
+    assert radio["type"] == "other"
     assert "rf_channel_frequency" not in radio
     assert "rf_channel_width" not in radio
     assert radio["tx_power"] == 10
@@ -1214,7 +1214,7 @@ def test_radios_to_entities_accepts_band_enum_style_labels(stub_sdk):
     assert radio["rf_channel_frequency"] == 5180.0
 
 
-def test_radios_to_entities_omits_wlan_status_when_enabled_unknown(stub_sdk):
+def test_radios_to_entities_defaults_wlan_status_active_when_enabled_unknown(stub_sdk):
     tables = {
         "cs-ap-1": {
             "wireless_interfaces": [],
@@ -1228,8 +1228,9 @@ def test_radios_to_entities_omits_wlan_status_when_enabled_unknown(stub_sdk):
         transform.radios_to_entities(tables, device_names={"cs-ap-1": "ap-lobby"})[0]._kw["wireless_lan"]._kw
     )
     assert wlan["ssid"] == "Corp"
-    assert "status" not in wlan
+    assert wlan["status"] == "active"
     assert wlan["auth_type"] == "open"
+    assert wlan["auth_cipher"] == "auto"
 
 
 def test_ports_to_entities_accepts_string_mask_length(stub_sdk):

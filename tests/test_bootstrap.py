@@ -50,10 +50,15 @@ def test_ensure_schema_creates_missing_definitions():
 
 @responses.activate
 def test_ensure_schema_is_idempotent_when_definitions_exist():
-    responses.add(
-        responses.GET, CF_URL, json={"count": 1, "results": [{"id": 1, "unique": True}]}, status=200
-    )
-    responses.add(responses.GET, TAG_URL, json={"count": 1, "results": [{"id": 2}]}, status=200)
+    for field in bootstrap.CUSTOM_FIELDS:
+        responses.add(
+            responses.GET,
+            CF_URL,
+            json={"count": 1, "results": [{"id": 1, "unique": field.get("unique")}]},
+            status=200,
+        )
+    for _ in bootstrap.TAGS:
+        responses.add(responses.GET, TAG_URL, json={"count": 1, "results": [{"id": 2}]}, status=200)
 
     bootstrap.ensure_schema(NETBOX, "token")
 

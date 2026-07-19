@@ -6,7 +6,7 @@ from collections import defaultdict
 
 from netboxlabs.diode.sdk.ingester import Entity, Interface, WirelessLAN
 
-from .common import PROVENANCE_TAGS, _cf_text
+from .common import PROVENANCE_TAGS, _interface_custom_fields
 
 # Keys `radios_to_entities` reads from each device's wireless tables dict.
 WIRELESS_ENTITY_TABLE_KEYS = frozenset(
@@ -83,9 +83,10 @@ def _radio_type(radio_mode: str | None) -> str | None:
     if mapped:
         return mapped
     compact = key.casefold().replace(" ", "").replace("-", "").replace(".", "")
-    # Wi-Fi 7 / 11be has no confirmed NetBox Interface type here — leave unset.
+    # Wi-Fi 7 / 11be has no confirmed NetBox Interface type — Meraki uses
+    # ``other`` for AP radios; match that when radio_mode is unknown/unverified.
     if "11be" in compact:
-        return None
+        return "other"
     for needle, iface_type in (
         ("11ax", "ieee802.11ax"),
         ("11ac", "ieee802.11ac"),
@@ -96,7 +97,7 @@ def _radio_type(radio_mode: str | None) -> str | None:
     ):
         if needle in compact:
             return iface_type
-    return None
+    return "other"
 
 
 def _channel_width_mhz(value) -> float | None:
@@ -118,13 +119,13 @@ def _tx_power(value) -> int | None:
         return None
 
 
-def _auth_type_from_encryption(encryption: str | None) -> str | None:
+def _auth_type_from_encryption(encryption: str | None) -> str:
     """Map AssetSsidState.encryption to NetBox WirelessLAN auth_type.
 
-    Unknown / empty values leave auth_type unset (no invented "open").
+    Unknown / empty values default to ``open`` (Cisco Meraki posture).
     """
     if not encryption or not str(encryption).strip():
-        return None
+        return "open"
     compact = str(encryption).casefold().replace(" ", "").replace("-", "").replace("_", "")
     if compact in {"open", "enhancedopen", "none", "owe"} or compact.startswith("open"):
         return "open"
@@ -134,7 +135,26 @@ def _auth_type_from_encryption(encryption: str | None) -> str | None:
         return "wpa-enterprise"
     if any(token in compact for token in ("psk", "ppsk", "sae", "personal", "wpa2", "wpa3")):
         return "wpa-personal"
-    return None
+    return "open"
+
+
+def _auth_cipher_from_encryption(encryption: str | None) -> str:
+    """Map AssetSsidState.encryption to NetBox WirelessLAN auth_cipher.
+
+    Mirrors Meraki encryptionMode → auth_cipher; unknown defaults to ``auto``.
+    """
+    if not encryption or not str(encryption).strip():
+        return "auto"
+    compact = str(encryption).casefold().replace(" ", "").replace("-", "").replace("_", "")
+    if "wep" in compact:
+        return "wep"
+    if "tkip" in compact or compact in {"wpa", "wpaeap"}:
+        return "tkip"
+    if any(token in compact for token in ("wpa2", "wpa3", "aes", "ccmp", "gcmp", "sae")):
+        return "aes"
+    if compact in {"open", "enhancedopen", "none", "owe"} or compact.startswith("open"):
+        return "auto"
+    return "auto"
 
 
 def _split_if_names(value) -> list[str]:
@@ -170,27 +190,21 @@ def _wireless_radio_key(row: dict) -> str | None:
     return None
 
 
-def _wlan_status(enabled) -> str | None:
-    if enabled is True:
-        return "active"
+def _wlan_status(enabled) -> str:
+    """Map SSID enabled → WirelessLAN status; unknown defaults to active."""
     if enabled is False:
         return "disabled"
-    return None
+    return "active"
 
 
 def _wlan_kwargs(ssid: str, *, enabled, encryption: str | None) -> dict:
-    kwargs: dict = {
+    return {
         "ssid": ssid,
+        "status": _wlan_status(enabled),
+        "auth_type": _auth_type_from_encryption(encryption),
+        "auth_cipher": _auth_cipher_from_encryption(encryption),
         "tags": PROVENANCE_TAGS,
     }
-    status = _wlan_status(enabled)
-    if status is not None:
-        kwargs["status"] = status
-    # When enabled is unknown, leave status unset rather than inventing "active".
-    auth_type = _auth_type_from_encryption(encryption)
-    if auth_type is not None:
-        kwargs["auth_type"] = auth_type
-    return kwargs
 
 
 def _radio_interface_kwargs(
@@ -202,13 +216,15 @@ def _radio_interface_kwargs(
     ssids: list[str],
 ) -> dict:
     interface_id = str(config.get("asset_interface_id") or state.get("asset_interface_id") or "")
+    custom_fields = _interface_custom_fields(interface_id=interface_id or None)
     kwargs: dict = {
         "device": device,
         "name": name,
         "rf_role": "ap",
         "tags": PROVENANCE_TAGS,
-        "custom_fields": {"platformone_interface_id": _cf_text(interface_id)} if interface_id else {},
     }
+    if custom_fields:
+        kwargs["custom_fields"] = custom_fields
     if "enabled" in config and isinstance(config.get("enabled"), bool):
         kwargs["enabled"] = config["enabled"]
     radio_type = _radio_type(state.get("radio_mode") or config.get("radio_mode"))
@@ -219,7 +235,7 @@ def _radio_interface_kwargs(
         kwargs["tx_power"] = tx_power
     bssid = state.get("bssid")
     if bssid:
-        kwargs["primary_mac_address"] = str(bssid)
+        kwargs["primary_mac_address"] = str(bssid).upper()
     frequency = _channel_frequency_mhz(state.get("band"), state.get("channel"))
     if frequency is not None:
         kwargs["rf_channel_frequency"] = frequency
@@ -246,7 +262,7 @@ def radios_to_entities(
     Each radio becomes an Interface with native RF fields (`rf_role`,
     `tx_power`, `rf_channel_frequency`, `rf_channel_width`, `type`,
     `primary_mac_address`, `wireless_lans`). Each distinct SSID becomes a
-    WirelessLAN (`ssid`, `status`, `auth_type` when encryption maps cleanly).
+    WirelessLAN (`ssid`, `status`, `auth_type`, `auth_cipher`).
     WLANs are not site-scoped: the same SSID can broadcast from APs in many
     sites. SSIDs link to radios via `AssetSsid*.if_names` and any
     `ssid_name` on wireless interface state rows.
