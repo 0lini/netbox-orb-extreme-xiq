@@ -71,8 +71,8 @@ TAGS = [
     {
         "name": "platform-one",
         "slug": "platform-one",
-        # Related Extreme purple accent from the brand gradient (#3E0090).
-        "color": "3e0090",
+        # Same Extreme brand purple as extreme-networks (#440099).
+        "color": "440099",
         "description": "Objects synced from Extreme Platform ONE via netbox-orb-extreme-platformone.",
     },
     {

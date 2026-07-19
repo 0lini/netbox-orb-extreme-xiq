@@ -113,5 +113,5 @@ def test_custom_fields_and_tags_speak_platform_one():
     by_slug = {tag["slug"]: tag for tag in bootstrap.TAGS}
     assert set(by_slug) == {"extreme-networks", "platform-one", "discovered"}
     assert by_slug["extreme-networks"]["color"] == "440099"
-    assert by_slug["platform-one"]["color"] == "3e0090"
+    assert by_slug["platform-one"]["color"] == "440099"
     assert by_slug["discovered"]["color"] == "9e9e9e"
