@@ -6,7 +6,7 @@ from netboxlabs.diode.sdk.ingester import Entity, VirtualChassis
 
 from orb_extreme_platformone.identity import device_name
 
-from .common import PROVENANCE_TAGS, _cf_text, logger
+from .common import CF_CLUSTER_ID, PROVENANCE_TAGS, _cf_text, logger
 
 
 def _virtual_chassis_name(cluster: dict, device_one_name: str, device_two_name: str) -> str:
@@ -84,7 +84,7 @@ def virtual_chassis_to_entities(
             "tags": PROVENANCE_TAGS,
         }
         if cluster.get("id"):
-            vc_kwargs["custom_fields"] = {"platformone_cluster_id": _cf_text(str(cluster["id"]))}
+            vc_kwargs["custom_fields"] = {CF_CLUSTER_ID: _cf_text(str(cluster["id"]))}
         entities.append(Entity(virtual_chassis=VirtualChassis(**vc_kwargs)))
 
         memberships[one_id] = {"name": chassis_name, "position": 1}

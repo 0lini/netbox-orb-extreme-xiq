@@ -1,8 +1,7 @@
 """ConfigState table catalogs used by the discovery worker.
 
 Each entry is ``transform_key -> (retrieve-* table, GetRequest filter field)``.
-Transform entity table-key frozensets must stay aligned with these catalogs
-(see tests).
+Transform modules derive their entity table-key frozensets from these catalogs.
 """
 
 from __future__ import annotations

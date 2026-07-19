@@ -16,6 +16,7 @@ from netboxlabs.diode.sdk.ingester import (
 )
 
 from orb_extreme_platformone.identity import (
+    asset_label,
     device_name,
     device_type_model_for,
     expand_location_paths,
@@ -24,7 +25,7 @@ from orb_extreme_platformone.identity import (
     role_for,
 )
 
-from .common import MANUFACTURER, PROVENANCE_TAGS, _cf_text, logger
+from .common import CF_DEVICE_ID, MANUFACTURER, PROVENANCE_TAGS, _cf_text, _explicit_cidr, logger
 
 
 def _status_for(asset: dict) -> str:
@@ -48,11 +49,11 @@ def _primary_ips_from_asset(asset: dict) -> dict[str, str]:
     Only values that already include a prefix length are asserted (fallback
     when ConfigState did not yield a primary). Invalid values assert nothing.
     """
-    raw = (asset.get("ip_address") or "").strip()
-    if not raw or "/" not in raw:
+    cidr = _explicit_cidr(asset.get("ip_address"))
+    if not cidr:
         return {}
     try:
-        iface = ipaddress.ip_interface(raw)
+        iface = ipaddress.ip_interface(cidr)
     except ValueError:
         return {}
     key = "primary_ip4" if iface.version == 4 else "primary_ip6"
@@ -94,7 +95,7 @@ def _device_kwargs(
 ) -> dict:
     custom_fields: dict = {}
     if asset.get("device_id") is not None:
-        custom_fields["platformone_device_id"] = _cf_text(str(asset["device_id"]))
+        custom_fields[CF_DEVICE_ID] = _cf_text(str(asset["device_id"]))
     kwargs = {
         "serial": asset.get("serial_number") or None,
         "site": Site(name=site_name),
@@ -147,7 +148,7 @@ def _iter_scoped_devices(records: list[dict], *, site_scope: set[str] | None):
             asset = record["asset"]
             logger.warning(
                 "Skipping device %s: Platform ONE reports no site for it",
-                asset.get("host_name") or asset.get("serial_number") or asset.get("device_id"),
+                asset_label(asset),
             )
             continue
         if site_scope and site_name not in site_scope:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from orb_extreme_platformone.client import PlatformOneClient
 
-from .retrieve import retrieve_ok
+from .retrieve import extract_device_table_buckets, retrieve_ok
 from .tables import INTERFACE_ID_TABLES, PORT_TABLES
 
 
@@ -75,23 +75,12 @@ def extract_port_tables(
     once ``asset_interface_id`` values are known. LAG membership comes from
     nested ``member_ports`` on lag-config/state rows.
     """
-    failed_tables: list[str] = []
-    tables_by_device: dict[str, dict[str, list[dict]]] = {
-        device_id: {key: [] for key in PORT_TABLES} for device_id in device_ids
-    }
-    jobs = [(table, {filter_field: device_ids}) for table, filter_field in PORT_TABLES.values()]
-    for key, rows in retrieve_ok(
+    tables_by_device, failed_tables = extract_device_table_buckets(
         client,
-        jobs,
-        list(PORT_TABLES),
+        device_ids,
+        PORT_TABLES,
         policy_name=policy_name,
-        failed_tables=failed_tables,
         degradation="ports sync without it",
-    ):
-        for row in rows:
-            device_id = str(row.get("asset_device_id") or row.get("device_id") or "")
-            if device_id in tables_by_device:
-                tables_by_device[device_id][key].append(row)
-
+    )
     attach_interface_id_tables(client, tables_by_device, policy_name, failed_tables)
     return tables_by_device, failed_tables

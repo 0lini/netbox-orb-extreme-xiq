@@ -15,9 +15,13 @@ from .urls import require_https_url
 # Platform ONE id is always a sync defect worth failing loudly on. The
 # ConfigState AssetDevice UUID stays an internal join key (re-correlated by
 # serial every tick) and is not stored on Device.
+CF_DEVICE_ID = "platformone_device_id"
+CF_INTERFACE_ID = "platformone_interface_id"
+CF_CLUSTER_ID = "platformone_cluster_id"
+
 CUSTOM_FIELDS = [
     {
-        "name": "platformone_device_id",
+        "name": CF_DEVICE_ID,
         "label": "Platform ONE Device ID",
         "type": "text",
         "object_types": ["dcim.device"],
@@ -29,7 +33,7 @@ CUSTOM_FIELDS = [
         "unique": True,
     },
     {
-        "name": "platformone_interface_id",
+        "name": CF_INTERFACE_ID,
         "label": "Platform ONE Interface ID",
         "type": "text",
         "object_types": ["dcim.interface"],
@@ -42,7 +46,7 @@ CUSTOM_FIELDS = [
         "unique": True,
     },
     {
-        "name": "platformone_cluster_id",
+        "name": CF_CLUSTER_ID,
         "label": "Platform ONE Cluster ID",
         "type": "text",
         "object_types": ["dcim.virtualchassis"],
