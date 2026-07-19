@@ -276,10 +276,10 @@ output accordingly:
 
 - **Fixed field set** — human-owned fields are never asserted, so they can
   never generate phantom drift.
-- **Stable identity** — deterministic device names (Assets `host_name`, else
-  serial, else `platformone-{device_id}`); `serial` is asserted
-  natively on the NetBox Device, the same approach used by the Cisco Meraki
-  integration and NetBox Labs' generic discovery backends.
+- **Stable identity** — Device `name` is Assets `host_name` when present
+  (omitted when Platform ONE sends none — no inventing from serial or id);
+  `serial` is asserted natively on the NetBox Device, the same approach used
+  by the Cisco Meraki integration and NetBox Labs' generic discovery backends.
 - **Stable producer and tags** — a fixed
   `app_name="netbox-orb-extreme-platformone"` and flat `extreme-networks` /
   `platform-one` / `discovered` tags keep Platform ONE data attributable and

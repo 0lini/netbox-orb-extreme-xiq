@@ -98,12 +98,14 @@ def _device_kwargs(
         custom_fields["platformone_device_id"] = _cf_text(str(asset["device_id"]))
 
     kwargs = {
-        "name": device_name(asset),
         "serial": asset.get("serial_number") or None,
         "site": Site(name=site_name),
         "custom_fields": custom_fields,
         "tags": PROVENANCE_TAGS,
     }
+    name = device_name(asset)
+    if name is not None:
+        kwargs["name"] = name
     status = _status_for(asset)
     if status is not None:
         kwargs["status"] = status

@@ -59,6 +59,12 @@ def virtual_chassis_to_entities(
 
         name_one = device_name(record_one["asset"])
         name_two = device_name(record_two["asset"])
+        if not name_one or not name_two:
+            logger.warning(
+                "Skipping InferredCluster %s: member device(s) have no Assets host_name",
+                cluster.get("id"),
+            )
+            continue
         chassis_name = _virtual_chassis_name(cluster, name_one, name_two)
         # Colliding names are emitted as-is: the unique platformone_cluster_id
         # custom field makes NetBox reject the merge at ingest, surfacing the

@@ -73,6 +73,15 @@ def test_devices_to_entities_maps_the_assets_fields(stub_sdk):
     assert device["tags"] == ["extreme-networks", "platform-one", "discovered"]
 
 
+def test_devices_to_entities_omits_name_when_hostname_missing(stub_sdk):
+    asset = {**SWITCH_ASSET, "host_name": None}
+    entities = transform.devices_to_entities([_record(asset=asset)])
+
+    device = entities[-1]._kw["device"]._kw
+    assert "name" not in device
+    assert device["serial"] == "SN42"
+
+
 def test_devices_to_entities_skips_bare_primary_ip6(stub_sdk):
     asset = {**SWITCH_ASSET, "ip_address": "2001:db8::1"}
     entities = transform.devices_to_entities([_record(asset=asset)])
