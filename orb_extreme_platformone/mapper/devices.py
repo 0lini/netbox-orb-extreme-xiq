@@ -264,13 +264,3 @@ def devices_to_entities(
         entities.append(Entity(device=Device(**kwargs)))
 
     return entities
-
-
-# ConfigState reports oper_speed / oper_duplex / connector_type as integer
-# codes with no value table in its OpenAPI spec. Only codes verified against
-# production hardware (or fixtures derived from that gear) are mapped;
-# unknown codes assert nothing. oper_state is the exception: its schema
-# description matches IF-MIB ifOperStatus.
-#
-# Verified in-repo today: oper_speed 4, oper_duplex 2, connector_type 1/2.
-# Config-side speed/duplex integers remain unverified and are not used.
