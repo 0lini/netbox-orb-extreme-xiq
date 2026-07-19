@@ -206,6 +206,22 @@ same-named environment variable; policy config takes precedence.
 
 ## Development
 
+### Local NetBox + Diode test stack
+
+A compose-based NetBox (with Diode plugin) + Diode server + optional Dev Container
+lives under [`dev/`](dev/README.md):
+
+```bash
+./dev/setup.sh
+docker compose -f dev/docker-compose.yml up -d --build
+./dev/create-netbox-token.sh
+```
+
+Then open the repo in a Dev Container, or run the Orb agent against
+`grpc://localhost:8080/diode` using `dev/agent.local.yaml`.
+
+## Development
+
 ```bash
 pip install -e ".[dev]"
 export PLATFORMONE_USERNAME=...             # or PLATFORMONE_API_TOKEN=...

@@ -1,0 +1,140 @@
+# Local NetBox + Diode + workspace for orb worker development.
+# Usage:
+#   ./dev/setup.sh          # generate secrets once
+#   docker compose -f dev/docker-compose.yml up -d --build
+# Or: reopen this repo in a Dev Container (starts the same compose file).
+
+name: orb-platformone-test
+
+include:
+  - path: diode/docker-compose.yaml
+    env_file: diode/.env
+
+services:
+  netbox: &netbox
+    build:
+      context: ./netbox
+      dockerfile: Dockerfile
+    image: orb-platformone-netbox:local
+    pull_policy: never
+    depends_on:
+      netbox-postgres:
+        condition: service_started
+      netbox-redis:
+        condition: service_started
+      netbox-redis-cache:
+        condition: service_started
+    env_file: ./netbox/env/netbox.env
+    healthcheck:
+      start_period: 180s
+      timeout: 5s
+      interval: 15s
+      retries: 10
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/login/ >/dev/null || exit 1"]
+    volumes:
+      - ./netbox/plugins.py:/etc/netbox/config/plugins.py:z,ro
+      - ./netbox/secrets:/run/secrets:z,ro
+      - netbox-media-files:/opt/netbox/netbox/media:rw
+    ports:
+      - "8000:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  netbox-worker:
+    <<: *netbox
+    depends_on:
+      netbox:
+        condition: service_healthy
+    command:
+      - /opt/netbox/venv/bin/python
+      - /opt/netbox/netbox/manage.py
+      - rqworker
+    healthcheck:
+      test: ["CMD-SHELL", "ps -aux | grep -v grep | grep -q rqworker || exit 1"]
+      start_period: 30s
+      timeout: 3s
+      interval: 15s
+    ports: []
+
+  netbox-postgres:
+    image: docker.io/postgres:16-alpine
+    env_file: ./netbox/env/postgres.env
+    volumes:
+      - netbox-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netbox -d netbox"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  netbox-redis:
+    image: docker.io/redis:7-alpine
+    command:
+      - sh
+      - -c
+      - redis-server --appendonly yes --requirepass $$REDIS_PASSWORD
+    env_file: ./netbox/env/redis.env
+    volumes:
+      - netbox-redis-data:/data
+
+  netbox-redis-cache:
+    image: docker.io/redis:7-alpine
+    command:
+      - sh
+      - -c
+      - redis-server --requirepass $$REDIS_PASSWORD
+    env_file: ./netbox/env/redis-cache.env
+    volumes:
+      - netbox-redis-cache-data:/data
+
+  # Rootless Podman: replace Diode's tmpfs initdb approach with a bind-mounted script.
+  postgres:
+    image: docker.io/postgres:16-alpine
+    env_file: ./diode/.env
+    # Clear upstream command that writes into a tmpfs initdir (broken under rootless Podman).
+    entrypoint: ["docker-entrypoint.sh"]
+    command: ["postgres"]
+    volumes:
+      - diode-postgres-data:/var/lib/postgresql/data
+      - ./diode/initdb.d:/docker-entrypoint-initdb.d:z,ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -t 2 -d $$DIODE_POSTGRES_DB_NAME -U $$DIODE_POSTGRES_USER"]
+      start_period: 20s
+      interval: 2s
+      timeout: 5s
+      retries: 15
+    restart: on-failure
+
+  # Dev Container / interactive workspace on the same network as NetBox + Diode.
+  workspace:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    image: orb-platformone-workspace:local
+    pull_policy: never
+    working_dir: /workspaces/netbox-orb-extreme-platformone
+    volumes:
+      - ..:/workspaces/netbox-orb-extreme-platformone:z
+    environment:
+      NETBOX_API_URL: http://netbox:8080
+      NETBOX_API_TOKEN: 0123456789abcdef0123456789abcdef01234567
+      DIODE_TARGET: grpc://ingress-nginx:80/diode
+      DIODE_CLIENT_ID: diode-ingest
+      # DIODE_CLIENT_SECRET filled by setup.sh into .env.local (sourced by agent runs)
+    env_file:
+      - path: ./.env.local
+        required: false
+    depends_on:
+      netbox:
+        condition: service_healthy
+      ingress-nginx:
+        condition: service_started
+    command: sleep infinity
+    profiles:
+      - devcontainer
+
+volumes:
+  netbox-media-files:
+  netbox-postgres-data:
+  netbox-redis-data:
+  netbox-redis-cache-data:
