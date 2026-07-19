@@ -155,7 +155,7 @@ def test_run_produces_site_location_device_and_interface_entities():
     assert entities[3].device.site.name == "HQ"
     assert entities[3].device.location.name == "F2"
     assert entities[3].device.role.name == "Switch"
-    assert entities[3].device.custom_fields["platformone_configstate_device_id"].text == "cs-uuid-42"
+    assert "platformone_configstate_device_id" not in entities[3].device.custom_fields
     interface = entities[4].interface
     assert interface.name == "1/1"
     assert interface.device.name == "sw-idf1"

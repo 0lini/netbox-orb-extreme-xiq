@@ -12,7 +12,9 @@ from .urls import require_https_url
 
 # Per-object-type Platform ONE correlation keys with `unique` enforced
 # (NetBox >= 3.7): two NetBox objects of the same type claiming the same
-# Platform ONE id is always a sync defect worth failing loudly on.
+# Platform ONE id is always a sync defect worth failing loudly on. The
+# ConfigState AssetDevice UUID stays an internal join key (re-correlated by
+# serial every tick) and is not stored on Device.
 CUSTOM_FIELDS = [
     {
         "name": "platformone_device_id",
@@ -22,19 +24,6 @@ CUSTOM_FIELDS = [
         "description": (
             "Immutable Extreme Platform ONE device id (Assets API device_id); "
             "stable correlation key even if the device is renamed."
-        ),
-        "filter_logic": "exact",
-        "unique": True,
-    },
-    {
-        "name": "platformone_configstate_device_id",
-        "label": "Platform ONE ConfigState Device ID",
-        "type": "text",
-        "object_types": ["dcim.device"],
-        "description": (
-            "Immutable Extreme Platform ONE ConfigState AssetDevice UUID "
-            "(retrieve-asset-device id); joins Assets inventory to ConfigState "
-            "port and location tables."
         ),
         "filter_logic": "exact",
         "unique": True,

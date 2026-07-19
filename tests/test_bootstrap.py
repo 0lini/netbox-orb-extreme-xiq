@@ -82,13 +82,11 @@ def test_custom_fields_and_tags_speak_platform_one():
     names = {field["name"] for field in bootstrap.CUSTOM_FIELDS}
     assert names == {
         "platformone_device_id",
-        "platformone_configstate_device_id",
         "platformone_interface_id",
         "platformone_cluster_id",
     }
     by_name = {f["name"]: f for f in bootstrap.CUSTOM_FIELDS}
     assert by_name["platformone_device_id"]["object_types"] == ["dcim.device"]
-    assert by_name["platformone_configstate_device_id"]["object_types"] == ["dcim.device"]
     assert by_name["platformone_interface_id"]["object_types"] == ["dcim.interface"]
     assert by_name["platformone_cluster_id"]["object_types"] == ["dcim.virtualchassis"]
     assert all(field["unique"] is True for field in bootstrap.CUSTOM_FIELDS)

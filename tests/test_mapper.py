@@ -65,7 +65,7 @@ def test_devices_to_entities_maps_the_assets_fields(stub_sdk):
     assert device["role"]._kw == {"name": "Switch", "slug": "switch"}
     assert cf(device["custom_fields"]["platformone_device_id"]._kw) == "42"
     # The ConfigState UUID stays an internal join key; it is not synced.
-    assert cf(device["custom_fields"]["platformone_configstate_device_id"]._kw) == "cs-uuid-42"
+    assert "platformone_configstate_device_id" not in device["custom_fields"]
     assert device["tags"] == ["extreme-networks", "platform-one", "discovered"]
 
 

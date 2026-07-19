@@ -247,17 +247,12 @@ def _device_kwargs(
     location: Location | None,
     name_source: str,
     cs_device: dict | None = None,
-    cs_device_id: str | None = None,
     vc_membership: dict | None = None,
     primary_ips: dict[str, str] | None = None,
 ) -> dict:
     custom_fields: dict = {}
     if asset.get("device_id") is not None:
         custom_fields["platformone_device_id"] = _cf_text(str(asset["device_id"]))
-    cs = cs_device or {}
-    cs_id = cs.get("id") or cs_device_id
-    if cs_id:
-        custom_fields["platformone_configstate_device_id"] = _cf_text(str(cs_id))
 
     kwargs = {
         "name": device_name(asset, name_source),
@@ -279,6 +274,7 @@ def _device_kwargs(
 
     # Assets product_type / os_version preferred; ConfigState model_name /
     # firmware_version fill gaps when Assets omitted them.
+    cs = cs_device or {}
     product_type = asset.get("product_type") or cs.get("model_name")
     if product_type:
         kwargs["device_type"] = DeviceType(
@@ -497,7 +493,6 @@ def devices_to_entities(
             location=location,
             name_source=name_source,
             cs_device=record.get("cs_device"),
-            cs_device_id=cs_device_id,
             vc_membership=membership,
             primary_ips=primary_ips,
         )
