@@ -16,6 +16,7 @@ from netboxlabs.diode.sdk.ingester import (
 )
 
 from orb_extreme_platformone.identity import (
+    asset_label,
     device_name,
     device_type_model_for,
     expand_location_paths,
@@ -147,7 +148,7 @@ def _iter_scoped_devices(records: list[dict], *, site_scope: set[str] | None):
             asset = record["asset"]
             logger.warning(
                 "Skipping device %s: Platform ONE reports no site for it",
-                asset.get("host_name") or asset.get("serial_number") or asset.get("device_id"),
+                asset_label(asset),
             )
             continue
         if site_scope and site_name not in site_scope:

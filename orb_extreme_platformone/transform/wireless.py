@@ -10,6 +10,7 @@ from orb_extreme_platformone.extract.tables import WIRELESS_TABLES
 
 from .common import (
     PROVENANCE_TAGS,
+    _coerce_int,
     _compact_token,
     _interface_identity_kwargs,
     _normalized_mac,
@@ -101,22 +102,14 @@ def _radio_type(radio_mode: str | None) -> str | None:
 
 
 def _channel_width_mhz(value) -> float | None:
-    try:
-        width = int(value)
-    except (TypeError, ValueError):
-        return None
-    if width in _VERIFIED_CHANNEL_WIDTH_MHZ:
+    width = _coerce_int(value)
+    if width is not None and width in _VERIFIED_CHANNEL_WIDTH_MHZ:
         return float(width)
     return None
 
 
 def _tx_power(value) -> int | None:
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+    return _coerce_int(value)
 
 
 def _auth_from_encryption(encryption: str | None) -> tuple[str, str]:

@@ -29,9 +29,9 @@ from .extract import (
     correlated_records,
 )
 from .extract.clusters import extract_inferred_clusters
-from .extract.ports import collect_interface_ids, extract_port_tables
+from .extract.ports import extract_port_tables
 from .extract.wireless import extract_wireless_tables
-from .identity import device_name, is_ap, is_switch
+from .identity import asset_label, device_name, is_ap, is_switch
 
 logger = logging.getLogger(__name__)
 
@@ -103,17 +103,34 @@ def _records_by_cs_id(records: list[dict], *, predicate) -> dict[str, dict]:
                 "Duplicate ConfigState device id %s across Assets rows "
                 "(%r and %r); keeping the first for table fan-out",
                 cs_id,
-                _asset_label(by_id[cs_id]["asset"]),
-                _asset_label(record["asset"]),
+                asset_label(by_id[cs_id]["asset"]),
+                asset_label(record["asset"]),
             )
             continue
         by_id[cs_id] = record
     return by_id
 
 
-def _asset_label(asset: dict) -> str:
-    """Short label for logs when a NetBox device name may be absent."""
-    return str(asset.get("host_name") or asset.get("serial_number") or asset.get("device_id") or "?")
+def _device_names(
+    records_by_cs_id: dict[str, dict],
+    *,
+    policy_name: str,
+    kind: str,
+) -> dict[str, str]:
+    """Map ConfigState device id → hostname; warn and omit empty host_name rows."""
+    names: dict[str, str] = {}
+    for device_id, record in records_by_cs_id.items():
+        name = device_name(record["asset"])
+        if name:
+            names[device_id] = name
+            continue
+        logger.warning(
+            "Policy %s: skipping %s for %s: Assets host_name is empty",
+            policy_name,
+            kind,
+            asset_label(record["asset"]),
+        )
+    return names
 
 
 def _build_client(config) -> PlatformOneClient:
@@ -227,13 +244,6 @@ class Backend(WorkerBackend):
         return entities, memberships
 
     @staticmethod
-    def _collect_interface_ids(
-        tables_by_device: dict[str, dict[str, list[dict]]],
-    ) -> dict[str, str]:
-        """Map each collected asset_interface_id to its device UUID."""
-        return collect_interface_ids(tables_by_device)
-
-    @staticmethod
     def _port_entities(
         client: PlatformOneClient, records: list[dict], policy_name: str
     ) -> tuple[list[Entity], dict[str, dict[str, str]]]:
@@ -249,6 +259,7 @@ class Backend(WorkerBackend):
         if not switches:
             return [], {}
         device_ids = sorted(switches)
+        device_names = _device_names(switches, policy_name=policy_name, kind="ports")
 
         tables_by_device, failed_tables = extract_port_tables(client, device_ids, policy_name)
 
@@ -260,13 +271,8 @@ class Backend(WorkerBackend):
             primary = transform.primary_ips_from_tables(tables, asset_ip=record["asset"].get("ip_address"))
             if primary:
                 primary_ips_by_cs_id[device_id] = primary
-            name = device_name(record["asset"])
+            name = device_names.get(device_id)
             if not name:
-                logger.warning(
-                    "Policy %s: skipping ports for %s: Assets host_name is empty",
-                    policy_name,
-                    _asset_label(record["asset"]),
-                )
                 continue
             entities.extend(
                 transform.ports_to_entities(
@@ -289,19 +295,9 @@ class Backend(WorkerBackend):
         if not aps:
             return []
         device_ids = sorted(aps)
+        device_names = _device_names(aps, policy_name=policy_name, kind="radios")
 
         tables_by_device, failed_tables = extract_wireless_tables(client, device_ids, policy_name)
-
-        device_names = {
-            device_id: name for device_id in device_ids if (name := device_name(aps[device_id]["asset"]))
-        }
-        skipped = sorted(set(device_ids) - set(device_names))
-        for device_id in skipped:
-            logger.warning(
-                "Policy %s: skipping radios for %s: Assets host_name is empty",
-                policy_name,
-                _asset_label(aps[device_id]["asset"]),
-            )
         entities = transform.radios_to_entities(tables_by_device, device_names=device_names)
         logger.info("Policy %s: mapped %d wireless radio/WLAN entities", policy_name, len(entities))
         _log_failed_tables(policy_name, failed_tables, domain="wireless ")

@@ -18,6 +18,7 @@ from worker.models import Config, Policy
 
 from orb_extreme_platformone.backend import INTERFACE_ID_TABLES, PORT_TABLES, WIRELESS_TABLES, Backend
 from orb_extreme_platformone.client import DEFAULT_BASE_URL, configstate_response_key
+from orb_extreme_platformone.extract.ports import collect_interface_ids
 from tests.conftest import CS_SWITCH, SWITCH_ASSET
 
 ASSETS_URL = f"{DEFAULT_BASE_URL}/assets/v1/devices"
@@ -607,7 +608,7 @@ def test_collect_interface_ids_includes_vlan_only_interfaces():
         }
     }
 
-    mapping = Backend._collect_interface_ids(tables_by_device)
+    mapping = collect_interface_ids(tables_by_device)
 
     assert mapping == {
         "if-port": "cs-uuid-42",

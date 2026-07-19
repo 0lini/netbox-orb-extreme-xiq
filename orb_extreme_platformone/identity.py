@@ -146,6 +146,11 @@ def device_name(device: dict) -> str | None:
     return None
 
 
+def asset_label(asset: dict) -> str:
+    """Short label for logs when a NetBox device name may be absent."""
+    return str(asset.get("host_name") or asset.get("serial_number") or asset.get("device_id") or "?")
+
+
 def resolve_location(asset_location: dict | None, assets_device: dict) -> tuple[str | None, list[str]]:
     """Resolve a device to (site_name, location_path).
 
