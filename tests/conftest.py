@@ -101,6 +101,10 @@ class VirtualChassis(Rec):
     pass
 
 
+class WirelessLAN(Rec):
+    pass
+
+
 class DeviceRole(Rec):
     pass
 
@@ -129,6 +133,7 @@ STUB_CLASSES = {
     "Location": Location,
     "VLAN": VLAN,
     "VirtualChassis": VirtualChassis,
+    "WirelessLAN": WirelessLAN,
     "Entity": Entity,
     "CustomFieldValue": CustomFieldValue,
 }

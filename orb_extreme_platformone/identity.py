@@ -22,6 +22,9 @@ PLATFORM_BY_FUNCTION = {
 # Gates the per-switch ConfigState port sync in backend.py.
 SWITCH_DEVICE_FUNCTIONS = frozenset(PLATFORM_BY_FUNCTION)
 
+# Gates the AP radio / WLAN sync in backend.py.
+AP_DEVICE_FUNCTIONS = frozenset({"AP"})
+
 # OS families whose CLI names ports slot/port (1/52). Platform ONE ConfigState
 # reports slot:port (1:52) for every OS; Switch Engine / EXOS are colon-native
 # and keep that form.
@@ -34,6 +37,11 @@ _COLON_PORT_NAME_RE = re.compile(r"^\d+(?::\d+)+$")
 def is_switch(function: str | None) -> bool:
     """Whether an Assets `function` value is a switch OS (see SWITCH_DEVICE_FUNCTIONS)."""
     return bool(function) and function.upper() in SWITCH_DEVICE_FUNCTIONS
+
+
+def is_ap(function: str | None) -> bool:
+    """Whether an Assets `function` value is an access point (see AP_DEVICE_FUNCTIONS)."""
+    return bool(function) and function.upper() in AP_DEVICE_FUNCTIONS
 
 
 def native_port_name(name: str, function: str | None) -> str:

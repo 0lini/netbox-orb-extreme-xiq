@@ -6,6 +6,7 @@ from orb_extreme_platformone.identity import (
     device_name,
     device_type_model_for,
     expand_location_paths,
+    is_ap,
     is_switch,
     native_port_name,
     platform_name,
@@ -48,6 +49,13 @@ def test_is_switch_recognizes_the_assets_switch_function_enum_values():
     assert not is_switch("AP")
     assert not is_switch("Appliance")
     assert not is_switch(None)
+
+
+def test_is_ap_recognizes_access_points():
+    assert is_ap("AP")
+    assert is_ap("ap")
+    assert not is_ap("Fabric Engine")
+    assert not is_ap(None)
 
 
 def test_platform_name_combines_os_family_and_version_into_one_value():

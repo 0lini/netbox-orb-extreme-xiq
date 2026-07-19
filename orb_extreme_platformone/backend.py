@@ -29,7 +29,7 @@ from worker.models import Metadata, Policy
 
 from . import __version__, bootstrap, mapper
 from .client import DEFAULT_BASE_URL, PlatformOneApiError, PlatformOneClient
-from .identity import device_name, is_switch
+from .identity import device_name, is_ap, is_switch
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,14 @@ LAG_MEMBER_TABLES = {
 INTERFACE_ID_TABLES = {
     "poe_configs": ("asset-poe-power-ports-config", "asset_interface_id"),
     "interface_ips": ("asset-interface-ip-address", "asset_interface_id"),
+}
+
+# AP radio / WLAN ConfigState tables, batched by AssetDevice UUID.
+WIRELESS_TABLES = {
+    "wireless_interfaces": ("asset-wireless-interface", "asset_device_id"),
+    "wireless_states": ("asset-wireless-interface-state", "asset_device_id"),
+    "ssid_configs": ("asset-ssid-config", "asset_device_id"),
+    "ssid_states": ("asset-ssid-state", "asset_device_id"),
 }
 
 # InferredCluster.device_one_id / device_two_id are InferredDevice UUIDs
@@ -221,7 +229,10 @@ class Backend(WorkerBackend):
             name="orb_extreme_platformone",
             app_name=APP_NAME,
             app_version=APP_VERSION,
-            description="Extreme Platform ONE discovery worker: ingests devices + sites into NetBox.",
+            description=(
+                "Extreme Platform ONE discovery worker: ingests devices, sites, "
+                "ports, and AP radios/WLANs into NetBox."
+            ),
         )
 
     def run(self, policy_name: str, policy: Policy, **kwargs) -> Iterable[Entity]:  # noqa: ARG002
@@ -261,6 +272,7 @@ class Backend(WorkerBackend):
         # can use ConfigState interface CIDRs (mask_length) instead of inventing
         # /32 from the bare Assets management address.
         port_entities, primary_ips_by_cs_id = self._port_entities(client, scoped, name_source, policy_name)
+        radio_entities = self._radio_entities(client, scoped, name_source, policy_name)
         entities = mapper.devices_to_entities(
             scoped,
             name_source=name_source,
@@ -269,6 +281,7 @@ class Backend(WorkerBackend):
             primary_ips_by_cs_id=primary_ips_by_cs_id,
         )
         entities.extend(port_entities)
+        entities.extend(radio_entities)
 
         return entities
 
@@ -570,3 +583,52 @@ class Backend(WorkerBackend):
                 ", ".join(failed_tables),
             )
         return entities, primary_ips_by_cs_id
+
+    @staticmethod
+    def _radio_entities(
+        client: PlatformOneClient, records: list[dict], name_source: str, policy_name: str
+    ) -> list[Entity]:
+        """Batched ConfigState wireless + SSID retrieves for every in-scope AP.
+
+        Independent tables fetch concurrently. A failed table degrades that
+        table's fields for this tick instead of aborting the sync.
+        """
+        aps = {
+            record["cs_device_id"]: record
+            for record in records
+            if record["cs_device_id"] and is_ap(record["asset"].get("function"))
+        }
+        if not aps:
+            return []
+        device_ids = sorted(aps)
+
+        failed_tables: list[str] = []
+        tables_by_device: dict[str, dict[str, list[dict]]] = {
+            device_id: {key: [] for key in WIRELESS_TABLES} for device_id in device_ids
+        }
+        jobs = [(table, {filter_field: device_ids}) for table, filter_field in WIRELESS_TABLES.values()]
+        for key, rows in _retrieve_ok(
+            client,
+            jobs,
+            list(WIRELESS_TABLES),
+            policy_name=policy_name,
+            failed_tables=failed_tables,
+            degradation="wireless sync without it",
+        ):
+            for row in rows:
+                device_id = str(row.get("asset_device_id") or "")
+                if device_id in tables_by_device:
+                    tables_by_device[device_id][key].append(row)
+
+        device_names = {
+            device_id: device_name(aps[device_id]["asset"], name_source) for device_id in device_ids
+        }
+        entities = mapper.radios_to_entities(tables_by_device, device_names=device_names)
+        logger.info("Policy %s: mapped %d wireless radio/WLAN entities", policy_name, len(entities))
+        if failed_tables:
+            logger.warning(
+                "Policy %s: ConfigState wireless degradation this tick; failed tables: %s",
+                policy_name,
+                ", ".join(failed_tables),
+            )
+        return entities
