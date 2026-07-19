@@ -247,12 +247,17 @@ def _device_kwargs(
     location: Location | None,
     name_source: str,
     cs_device: dict | None = None,
+    cs_device_id: str | None = None,
     vc_membership: dict | None = None,
     primary_ips: dict[str, str] | None = None,
 ) -> dict:
     custom_fields: dict = {}
     if asset.get("device_id") is not None:
-        custom_fields["platformone_id"] = _cf_text(str(asset["device_id"]))
+        custom_fields["platformone_device_id"] = _cf_text(str(asset["device_id"]))
+    cs = cs_device or {}
+    cs_id = cs.get("id") or cs_device_id
+    if cs_id:
+        custom_fields["platformone_configstate_device_id"] = _cf_text(str(cs_id))
 
     kwargs = {
         "name": device_name(asset, name_source),
@@ -274,7 +279,6 @@ def _device_kwargs(
 
     # Assets product_type / os_version preferred; ConfigState model_name /
     # firmware_version fill gaps when Assets omitted them.
-    cs = cs_device or {}
     product_type = asset.get("product_type") or cs.get("model_name")
     if product_type:
         kwargs["device_type"] = DeviceType(
@@ -345,7 +349,7 @@ def virtual_chassis_to_entities(
         name_one = device_name(record_one["asset"], name_source)
         name_two = device_name(record_two["asset"], name_source)
         chassis_name = _virtual_chassis_name(cluster, name_one, name_two)
-        # Colliding names are emitted as-is: the unique platformone_id
+        # Colliding names are emitted as-is: the unique platformone_cluster_id
         # custom field makes NetBox reject the merge at ingest, surfacing the
         # upstream data problem (e.g. stale Assets hostnames) instead of
         # hiding it behind an invented suffix.
@@ -363,7 +367,7 @@ def virtual_chassis_to_entities(
             "tags": PROVENANCE_TAGS,
         }
         if cluster.get("id"):
-            vc_kwargs["custom_fields"] = {"platformone_id": _cf_text(str(cluster["id"]))}
+            vc_kwargs["custom_fields"] = {"platformone_cluster_id": _cf_text(str(cluster["id"]))}
         entities.append(Entity(virtual_chassis=VirtualChassis(**vc_kwargs)))
 
         memberships[one_id] = {"name": chassis_name, "position": 1}
@@ -493,6 +497,7 @@ def devices_to_entities(
             location=location,
             name_source=name_source,
             cs_device=record.get("cs_device"),
+            cs_device_id=cs_device_id,
             vc_membership=membership,
             primary_ips=primary_ips,
         )
@@ -695,7 +700,7 @@ def _iface_base_kwargs(
     kwargs: dict = {
         "device": device,
         "name": name,
-        "custom_fields": {"platformone_id": _cf_text(interface_id)} if interface_id else {},
+        "custom_fields": {"platformone_interface_id": _cf_text(interface_id)} if interface_id else {},
         "tags": PROVENANCE_TAGS,
     }
     enabled = config.get("enabled")
@@ -821,18 +826,18 @@ def _lag_kwargs(
     """Build Diode kwargs for a LAG parent interface.
 
     Native fields from AssetLagConfig/State: `type=lag`, name, admin
-    `enabled`, `platformone_id` (`asset_interface_id`). Shared joins on that
-    interface id fill VLAN trunk/access, PoE, and (separately) IPAddress
-    entities. When port config/state also lists the same id, pull fields lag
-    tables lack (`description`, `mark_connected`, MAC, port-config VLAN
-    fallback) — never speed/duplex/connector `type`, which would overwrite
-    `type=lag`.
+    `enabled`, `platformone_interface_id` (`asset_interface_id`). Shared joins
+    on that interface id fill VLAN trunk/access, PoE, and (separately)
+    IPAddress entities. When port config/state also lists the same id, pull
+    fields lag tables lack (`description`, `mark_connected`, MAC, port-config
+    VLAN fallback) — never speed/duplex/connector `type`, which would
+    overwrite `type=lag`.
 
     AssetLagConfig also carries LACP `mode` / `lacp_key` / `load_balance_algo`
     / `dynamic`, but Diode's Interface has no matching fields and the mode /
     algo integers have no published value table — leave them unmapped (see
     README). `lag_number` is naming-only (`lag-{n}` fallback); it is not a
-    second custom field (redundant with `platformone_id`).
+    second custom field (redundant with `platformone_interface_id`).
     """
     kwargs = _iface_base_kwargs(
         device=device,
@@ -1056,7 +1061,7 @@ def _orphan_ip_entities(
                 "tags": PROVENANCE_TAGS,
             }
             if interface_id:
-                iface_kwargs["custom_fields"] = {"platformone_id": _cf_text(str(interface_id))}
+                iface_kwargs["custom_fields"] = {"platformone_interface_id": _cf_text(str(interface_id))}
             entities.append(Entity(interface=Interface(**iface_kwargs)))
             emitted_names.add(name)
         entities.extend(_ip_entities_for_interface(device=device, interface_name=name, rows=rows))
