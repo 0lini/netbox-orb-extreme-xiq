@@ -20,13 +20,6 @@ PORT_TABLES = {
     "poe_states": ("asset-poe-power-ports-state", "device_id"),
 }
 
-# Nested `member_ports` on AssetLagConfig/State may be empty on retrieve;
-# fall back to the dedicated member-port tables filtered by lag row id.
-LAG_MEMBER_TABLES = {
-    "lag_configs": ("asset-lag-config-member-port", "asset_lag_config_id"),
-    "lag_states": ("asset-lag-state-member-port", "asset_lag_state_id"),
-}
-
 # Tables that only filter by asset_interface_id (no device filter). Fetched
 # after port/LAG rows are collected so interface UUIDs are known.
 INTERFACE_ID_TABLES = {

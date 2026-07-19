@@ -448,55 +448,8 @@ def test_run_maps_lag_interfaces_and_member_lag_refs():
     assert interfaces["lag1"].custom_fields["platformone_interface_id"].text == "lag-if-1"
     assert interfaces["1/1"].lag.name == "lag1"
     assert interfaces["1/2"].lag.name == "lag1"
-    # Nested members present -> no separate member-port retrieve.
     assert not [c for c in responses.calls if "/retrieve-asset-lag-config-member-port" in c.request.url]
-
-
-@responses.activate
-def test_run_fetches_lag_member_ports_when_nested_empty():
-    _mock_assets([SWITCH_ASSET])
-    _mock_cs("asset-device", "AssetDevice", [CS_SWITCH])
-    _mock_cs("asset-location", "AssetLocation", [])
-    _mock_cs(
-        "asset-port-config",
-        "AssetPortConfig",
-        [{"asset_device_id": "cs-uuid-42", "asset_interface_id": "if-1", "name": "1/1", "enabled": True}],
-    )
-    _mock_cs("asset-port-state", "AssetPortState", [])
-    _mock_cs("asset-interface-vlan-properties", "AssetInterfaceVlanProperties", [])
-    _mock_cs(
-        "asset-lag-config",
-        "AssetLagConfig",
-        [
-            {
-                "id": "lag-cfg-1",
-                "asset_device_id": "cs-uuid-42",
-                "asset_interface_id": "lag-if-1",
-                "lag_number": "1",
-                "name": "lag1",
-                "enabled": True,
-            }
-        ],
-    )
-    _mock_cs("asset-lag-state", "AssetLagState", [])
-    _mock_cs("asset-port-capabilities", "AssetPortCapabilities", [])
-    _mock_cs("asset-poe-power-ports-state", "AssetPoePowerPortsState", [])
-    _mock_cs(
-        "asset-lag-config-member-port",
-        "AssetLagConfigMemberPort",
-        [{"asset_lag_config_id": "lag-cfg-1", "interface_name": "1/1"}],
-    )
-    _mock_interface_id_tables_empty()
-    _mock_empty_clusters()
-
-    entities = list(Backend().run("platformone_worker", _policy()))
-
-    interfaces = {e.interface.name: e.interface for e in entities if e.HasField("interface")}
-    assert interfaces["lag1"].type == "lag"
-    assert interfaces["1/1"].lag.name == "lag1"
-    member_calls = [c for c in responses.calls if "/retrieve-asset-lag-config-member-port" in c.request.url]
-    assert len(member_calls) == 1
-    assert json.loads(member_calls[0].request.body) == {"asset_lag_config_id": ["lag-cfg-1"]}
+    assert not [c for c in responses.calls if "/retrieve-asset-lag-state-member-port" in c.request.url]
 
 
 @responses.activate

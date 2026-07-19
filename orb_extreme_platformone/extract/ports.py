@@ -1,56 +1,11 @@
-"""Batched ConfigState port / LAG / VLAN / PoE / interface-IP fetches."""
+"""Batched ConfigState port / LAG / VLAN / PoE / interface-IP extracts."""
 
 from __future__ import annotations
 
 from orb_extreme_platformone.client import PlatformOneClient
 
 from .retrieve import retrieve_ok
-from .tables import INTERFACE_ID_TABLES, LAG_MEMBER_TABLES, PORT_TABLES
-
-
-def attach_lag_members(
-    client: PlatformOneClient,
-    tables_by_device: dict[str, dict[str, list[dict]]],
-    policy_name: str,
-    failed_tables: list[str],
-) -> None:
-    """Fill empty nested `member_ports` from dedicated member-port retrieves.
-
-    Member-port GetRequests filter by lag row id (not device id), so this
-    runs after lag config/state rows are collected. Mutates rows in place.
-    The two member-port tables are independent of each other and fetch
-    concurrently.
-    """
-    jobs: list[tuple[str, dict]] = []
-    job_meta: list[tuple[str, dict[str, dict]]] = []
-    for table_key, (member_table, id_field) in LAG_MEMBER_TABLES.items():
-        rows_by_id: dict[str, dict] = {}
-        for tables in tables_by_device.values():
-            for row in tables.get(table_key) or []:
-                lag_id = str(row.get("id") or "")
-                if lag_id and not row.get("member_ports"):
-                    rows_by_id[lag_id] = row
-        if not rows_by_id:
-            continue
-        jobs.append((member_table, {id_field: sorted(rows_by_id)}))
-        job_meta.append((id_field, rows_by_id))
-
-    for (id_field, rows_by_id), members in retrieve_ok(
-        client,
-        jobs,
-        job_meta,
-        policy_name=policy_name,
-        failed_tables=failed_tables,
-        degradation="LAG membership may be incomplete",
-    ):
-        by_lag: dict[str, list[dict]] = {}
-        for member in members:
-            parent_id = str(member.get(id_field) or "")
-            if parent_id:
-                by_lag.setdefault(parent_id, []).append(member)
-        for lag_id, row in rows_by_id.items():
-            if lag_id in by_lag:
-                row["member_ports"] = by_lag[lag_id]
+from .tables import INTERFACE_ID_TABLES, PORT_TABLES
 
 
 def collect_interface_ids(
@@ -113,11 +68,12 @@ def extract_port_tables(
     device_ids: list[str],
     policy_name: str,
 ) -> tuple[dict[str, dict[str, list[dict]]], list[str]]:
-    """Batched device-filtered port/LAG tables, then dependent member/IP phases.
+    """Batched device-filtered port/LAG tables, then interface-UUID tables.
 
     Returns ``(tables_by_device, failed_tables)``. Independent device-filtered
-    tables fetch concurrently; LAG member-port and interface-UUID tables run
-    in later phases once their filter IDs are known.
+    tables retrieve concurrently; PoE-config / interface-IP tables run afterward
+    once ``asset_interface_id`` values are known. LAG membership comes from
+    nested ``member_ports`` on lag-config/state rows.
     """
     failed_tables: list[str] = []
     tables_by_device: dict[str, dict[str, list[dict]]] = {
@@ -137,6 +93,5 @@ def extract_port_tables(
             if device_id in tables_by_device:
                 tables_by_device[device_id][key].append(row)
 
-    attach_lag_members(client, tables_by_device, policy_name, failed_tables)
     attach_interface_id_tables(client, tables_by_device, policy_name, failed_tables)
     return tables_by_device, failed_tables

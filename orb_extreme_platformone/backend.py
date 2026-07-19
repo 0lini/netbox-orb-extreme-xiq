@@ -24,7 +24,6 @@ from .client import DEFAULT_BASE_URL, PlatformOneApiError, PlatformOneClient
 from .extract import (
     CLUSTER_MEMBER_FILTERS,
     INTERFACE_ID_TABLES,
-    LAG_MEMBER_TABLES,
     PORT_TABLES,
     WIRELESS_TABLES,
     correlated_records,
@@ -52,7 +51,6 @@ __all__ = [
     "CLUSTER_MEMBER_FILTERS",
     "DEFAULT_CLASSIFICATION",
     "INTERFACE_ID_TABLES",
-    "LAG_MEMBER_TABLES",
     "PORT_TABLES",
     "WIRELESS_TABLES",
 ]

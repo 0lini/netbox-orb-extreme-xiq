@@ -27,7 +27,6 @@ import pytest
 from orb_extreme_platformone.backend import (
     CLUSTER_MEMBER_FILTERS,
     INTERFACE_ID_TABLES,
-    LAG_MEMBER_TABLES,
     PORT_TABLES,
     WIRELESS_TABLES,
 )
@@ -76,7 +75,6 @@ def test_configstate_tables_client_uses_still_exist(configstate_spec):
         "inferred-device",
         "inferred-cluster",
         *(t for t, _ in PORT_TABLES.values()),
-        *(t for t, _ in LAG_MEMBER_TABLES.values()),
         *(t for t, _ in INTERFACE_ID_TABLES.values()),
         *(t for t, _ in WIRELESS_TABLES.values()),
     ]
@@ -94,7 +92,6 @@ def test_configstate_response_keys_and_filter_fields_match(configstate_spec):
         ("inferred-device", "asset_device_id"),
         ("inferred-cluster", None),
         *PORT_TABLES.values(),
-        *LAG_MEMBER_TABLES.values(),
         *INTERFACE_ID_TABLES.values(),
         *WIRELESS_TABLES.values(),
     ]:
