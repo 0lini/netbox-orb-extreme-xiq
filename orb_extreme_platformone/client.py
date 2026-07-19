@@ -66,7 +66,7 @@ class PlatformOneClient:
     """Minimal client for the Platform ONE endpoints this worker consumes.
 
     HTTP sessions are thread-local so independent ConfigState retrieves can
-    run concurrently (see backend parallel table fetches) without sharing a
+    run concurrently (see extract parallel table retrieves) without sharing a
     `requests.Session` across threads. Token state is guarded by a lock so
     password-login refresh is safe across those threads.
     """

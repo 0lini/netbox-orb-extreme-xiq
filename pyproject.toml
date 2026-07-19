@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "netbox-orb-extreme-platformone"
 dynamic = ["version"]
-description = "Extreme Platform ONE discovery worker for the NetBox Labs Orb Agent (ingests into NetBox via Diode)"
+description = "Extreme Platform ONE discovery worker for the NetBox Labs Orb Agent (extract → transform → Diode → NetBox)"
 requires-python = ">=3.10"
 dependencies = [
     "requests>=2.31",
