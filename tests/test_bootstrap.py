@@ -21,9 +21,24 @@ def test_ensure_schema_skips_gracefully_without_credentials():
     bootstrap.ensure_schema(None, "token")
 
 
-def test_ensure_schema_rejects_non_https_netbox_url():
+def test_ensure_schema_rejects_non_https_remote_netbox_url():
     with pytest.raises(ValueError, match="https://"):
         bootstrap.ensure_schema("http://netbox.example.com", "token")
+
+
+def test_ensure_schema_accepts_http_localhost_netbox_url(monkeypatch):
+    """Local stack uses http://localhost:8000; bootstrap must not reject it."""
+    seen: list[str] = []
+
+    def _fake_ensure_all(url, token, definitions):  # noqa: ARG001
+        seen.append(url)
+
+    monkeypatch.setattr(bootstrap, "_ensure_all", _fake_ensure_all)
+    bootstrap.ensure_schema("http://localhost:8000", "token")
+    assert seen == [
+        "http://localhost:8000/api/extras/custom-fields/",
+        "http://localhost:8000/api/extras/tags/",
+    ]
 
 
 @responses.activate
@@ -95,5 +110,8 @@ def test_custom_fields_and_tags_speak_platform_one():
     assert by_name[bootstrap.CF_INTERFACE_ID]["object_types"] == ["dcim.interface"]
     assert by_name[bootstrap.CF_CLUSTER_ID]["object_types"] == ["dcim.virtualchassis"]
     assert all(field["unique"] is True for field in bootstrap.CUSTOM_FIELDS)
-    slugs = {tag["slug"] for tag in bootstrap.TAGS}
-    assert slugs == {"extreme-networks", "platform-one", "discovered"}
+    by_slug = {tag["slug"]: tag for tag in bootstrap.TAGS}
+    assert set(by_slug) == {"extreme-networks", "platform-one", "discovered"}
+    assert by_slug["extreme-networks"]["color"] == "440099"
+    assert by_slug["platform-one"]["color"] == "3e0090"
+    assert by_slug["discovered"]["color"] == "9e9e9e"

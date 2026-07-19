@@ -170,9 +170,9 @@ def test_run_produces_site_location_device_and_interface_entities():
     assert interface.speed == 1_000_000
     assert interface.type == "1000base-t"
     assert interface.untagged_vlan.vid == 10
-    assert not interface.untagged_vlan.name
+    assert interface.untagged_vlan.name == "10"
     assert [v.vid for v in interface.tagged_vlans] == [20]
-    assert not interface.tagged_vlans[0].name
+    assert interface.tagged_vlans[0].name == "20"
     assert interface.mode == "tagged"
 
 
@@ -392,13 +392,26 @@ def test_run_maps_inferred_cluster_to_virtual_chassis():
     assert len(chassis) == 1
     assert chassis[0].name == "peer-a / peer-b"
     assert chassis[0].master.name == "sw-idf1"
+    assert chassis[0].master.site.name == "Assets-Site"
+    assert chassis[0].master.role.name == "Switch"
+    assert chassis[0].master.device_type.model == "5320-48P-8XE-FabricEngine"
     assert not chassis[0].description
     assert chassis[0].custom_fields["platformone_cluster_id"].text == "cluster-uuid-1"
 
     devices = {e.device.name: e.device for e in entities if e.HasField("device")}
     assert devices["sw-idf1"].virtual_chassis.name == "peer-a / peer-b"
+    assert devices["sw-idf1"].virtual_chassis.custom_fields["platformone_cluster_id"].text == "cluster-uuid-1"
     assert devices["sw-idf1"].vc_position == 1
     assert devices["sw-idf2"].vc_position == 2
+
+    # Membership Devices precede VirtualChassis.master (fresh-create race).
+    kinds = []
+    for e in entities:
+        if e.HasField("device"):
+            kinds.append("device")
+        elif e.HasField("virtual_chassis"):
+            kinds.append("virtual_chassis")
+    assert kinds.index("device") < kinds.index("virtual_chassis")
 
 
 @responses.activate

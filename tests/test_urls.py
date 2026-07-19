@@ -23,8 +23,26 @@ def test_require_https_url_accepts_https_hosts(url):
 @pytest.mark.parametrize(
     "url",
     [
+        "http://localhost",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://[::1]:8000",
+        "http://netbox.local",
+        " http://localhost:8000/ ",
+    ],
+)
+def test_require_https_url_accepts_http_for_local_dev_hosts(url):
+    cleaned = require_https_url(url, what="TEST_URL")
+    assert cleaned.startswith("http://")
+    assert not cleaned.endswith("/")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
         "",
         "http://netbox.example.com",
+        "http://evil.example.com",
         "ftp://netbox.example.com",
         "https://",
         "not-a-url",

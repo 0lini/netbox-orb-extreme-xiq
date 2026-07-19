@@ -287,7 +287,7 @@ def test_ports_to_entities_maps_config_state_and_vlans_onto_one_interface(stub_s
 
     assert len(entities) == 1
     port = entities[0]._kw["interface"]._kw
-    assert port["device"] == "sw-idf1"
+    assert port["device"]._kw["name"] == "sw-idf1"
     assert port["name"] == "1/1"
     assert port["enabled"] is True
     assert port["mark_connected"] is True
@@ -296,8 +296,11 @@ def test_ports_to_entities_maps_config_state_and_vlans_onto_one_interface(stub_s
     assert port["type"] == "1000base-t"
     assert port["description"] == "uplink to core"
     assert port["primary_mac_address"] == "AA:BB:CC:DD:EE:01"
-    assert port["untagged_vlan"]._kw == {"vid": 10}
-    assert [v._kw["vid"] for v in port["tagged_vlans"]] == [20, 30]
+    assert port["untagged_vlan"]._kw == {"vid": 10, "name": "10"}
+    assert [v._kw for v in port["tagged_vlans"]] == [
+        {"vid": 20, "name": "20"},
+        {"vid": 30, "name": "30"},
+    ]
     assert port["mode"] == "tagged"
     assert cf(port["custom_fields"]["platformone_interface_id"]._kw) == "if-uuid-1"
 
@@ -334,16 +337,17 @@ def test_ports_to_entities_admin_down_and_link_down_are_independent(stub_sdk):
     assert port["mark_connected"] is False
 
 
-def test_ports_to_entities_unverified_enum_codes_assert_nothing(stub_sdk):
+def test_ports_to_entities_unverified_enum_codes_default_type_other(stub_sdk):
     """ConfigState's integer enums have no published value table; codes not
-    verified against a real device must not map to speed/duplex/type."""
+    verified against a real device must not map to speed/duplex, but NetBox
+    requires Interface.type so unknown ports fall back to ``other``."""
     state = {**PORT_STATE, "oper_speed": 7, "oper_duplex": 9, "connector_type": 3}
     entities = transform.ports_to_entities(_tables(port_states=[state], vlan_properties=[]), device="sw-idf1")
 
     port = entities[0]._kw["interface"]._kw
     assert "speed" not in port
     assert "duplex" not in port
-    assert "type" not in port
+    assert port["type"] == "other"
 
 
 def test_ports_to_entities_fiber_gig_port_maps_to_sfp_type(stub_sdk):
@@ -445,7 +449,7 @@ def test_ports_to_entities_falls_back_to_native_vlan_when_no_vlan_properties(stu
     )
 
     port = entities[0]._kw["interface"]._kw
-    assert port["untagged_vlan"]._kw == {"vid": 99}
+    assert port["untagged_vlan"]._kw == {"vid": 99, "name": "99"}
     # Trunk flag without a tagged member list must not invent mode=tagged.
     assert "mode" not in port
 
@@ -457,7 +461,7 @@ def test_ports_to_entities_native_vlan_access_fallback_when_port_mode_false(stub
     )
 
     port = entities[0]._kw["interface"]._kw
-    assert port["untagged_vlan"]._kw == {"vid": 99}
+    assert port["untagged_vlan"]._kw == {"vid": 99, "name": "99"}
     assert port["mode"] == "access"
 
 
@@ -466,7 +470,7 @@ def test_ports_to_entities_vlan_properties_win_over_native_vlan_fallback(stub_sd
     entities = transform.ports_to_entities(_tables(port_configs=[config]), device="sw-idf1")
 
     port = entities[0]._kw["interface"]._kw
-    assert port["untagged_vlan"]._kw == {"vid": 10}
+    assert port["untagged_vlan"]._kw == {"vid": 10, "name": "10"}
     assert port["mode"] == "tagged"
 
 
@@ -543,7 +547,7 @@ def test_ports_to_entities_emits_interface_ip_addresses(stub_sdk):
     addresses = {ip["address"] for ip in ip_entities}
     assert addresses == {"10.0.0.2/24", "2001:db8::2/64"}
     assert all(ip["assigned_object_interface"]._kw["name"] == "1/1" for ip in ip_entities)
-    assert all(ip["assigned_object_interface"]._kw["device"] == "sw-idf1" for ip in ip_entities)
+    assert all(ip["assigned_object_interface"]._kw["device"]._kw["name"] == "sw-idf1" for ip in ip_entities)
 
 
 def test_ports_to_entities_emits_svi_ips_via_interface_name(stub_sdk):
@@ -562,8 +566,8 @@ def test_ports_to_entities_emits_svi_ips_via_interface_name(stub_sdk):
     # Physical port 1/1 from default fixtures, then the SVI interface + its IP.
     iface_entities = [e._kw["interface"]._kw for e in entities if "interface" in e._kw]
     svi = next(i for i in iface_entities if i["name"] == "vlan10")
-    assert svi["device"] == "sw-idf1"
-    assert "type" not in svi
+    assert svi["device"]._kw["name"] == "sw-idf1"
+    assert svi["type"] == "virtual"
     assert cf(svi["custom_fields"]["platformone_interface_id"]._kw) == "if-svi"
 
     ip_entities = [e._kw["ip_address"]._kw for e in entities if "ip_address" in e._kw]
@@ -590,7 +594,7 @@ def test_ports_to_entities_untagged_only_is_access_mode(stub_sdk):
 
     port = entities[0]._kw["interface"]._kw
     assert port["mode"] == "access"
-    assert port["untagged_vlan"]._kw == {"vid": 10}
+    assert port["untagged_vlan"]._kw == {"vid": 10, "name": "10"}
     assert "tagged_vlans" not in port
 
 
@@ -629,7 +633,7 @@ def test_ports_to_entities_strips_reserved_tagged_vids(stub_sdk):
     }
     entities = transform.ports_to_entities(_tables(vlan_properties=[vlan]), device="sw-idf1")
     port = entities[0]._kw["interface"]._kw
-    assert port["untagged_vlan"]._kw == {"vid": 10}
+    assert port["untagged_vlan"]._kw == {"vid": 10, "name": "10"}
     assert [v._kw["vid"] for v in port["tagged_vlans"]] == [20]
     assert port["mode"] == "tagged"
 
@@ -715,8 +719,26 @@ def test_ports_to_entities_maps_lag_parent_and_member_refs(stub_sdk):
     assert ports["lag1"]["type"] == "lag"
     assert ports["lag1"]["enabled"] is True
     assert cf(ports["lag1"]["custom_fields"]["platformone_interface_id"]._kw) == "lag-if-1"
-    assert ports["1/1"]["lag"]._kw == {"device": "sw-idf1", "name": "lag1"}
-    assert ports["1/2"]["lag"]._kw == {"device": "sw-idf1", "name": "lag1"}
+    assert ports["1/1"]["lag"]._kw["name"] == "lag1"
+    assert ports["1/1"]["lag"]._kw["device"]._kw["name"] == "sw-idf1"
+    assert ports["1/2"]["lag"]._kw["name"] == "lag1"
+    assert ports["1/2"]["lag"]._kw["device"]._kw["name"] == "sw-idf1"
+
+
+def test_ports_to_entities_nests_device_site_role_and_type(stub_sdk):
+    """Diode generate-diff requires nested Device site/role/device_type."""
+    entities = transform.ports_to_entities(
+        _tables(vlan_properties=[]),
+        device="sw-idf1",
+        function="Fabric Engine",
+        site_name="Campus",
+        product_type="FabricEngine_5320_48P_8XE",
+    )
+    device = entities[0]._kw["interface"]._kw["device"]._kw
+    assert device["name"] == "sw-idf1"
+    assert device["site"]._kw["name"] == "Campus"
+    assert device["role"]._kw["name"] == "Switch"
+    assert device["device_type"]._kw["model"] == "5320-48P-8XE-FabricEngine"
 
 
 def test_ports_to_entities_lag_without_name_uses_lag_number(stub_sdk):
@@ -746,7 +768,7 @@ def test_ports_to_entities_member_only_from_lag_still_emits_interface(stub_sdk):
     ports = {e._kw["interface"]._kw["name"]: e._kw["interface"]._kw for e in entities}
     assert set(ports) == {"lag1", "1/1", "1/2"}
     assert ports["1/1"]["lag"]._kw["name"] == "lag1"
-    assert ports["1/1"].get("type") is None
+    assert ports["1/1"]["type"] == "other"
 
 
 def test_ports_to_entities_skips_lag_row_duplicated_in_port_tables(stub_sdk):
@@ -817,6 +839,65 @@ def test_ports_to_entities_lag_applies_vlan_trunk_from_vlan_properties(stub_sdk)
     assert lag["mode"] == "tagged"
     assert lag["untagged_vlan"]._kw["vid"] == 10
     assert [v._kw["vid"] for v in lag["tagged_vlans"]] == [20, 30]
+
+
+def test_ports_to_entities_lag_ignores_false_enabled_from_lag_config(stub_sdk):
+    """AssetLagConfig.enabled is false in production for in-service MLTs.
+
+    Diode maps omitted/false onto NetBox disabled; assert admin-up unless a
+    duplicate AssetPortConfig row says otherwise.
+    """
+    lag = {**LAG_CONFIG, "enabled": False, "member_ports": []}
+    entities = transform.ports_to_entities(
+        _tables(port_configs=[], port_states=[], vlan_properties=[], lag_configs=[lag], lag_states=[]),
+        device="sw-idf1",
+    )
+    assert entities[0]._kw["interface"]._kw["enabled"] is True
+
+
+def test_ports_to_entities_lag_enabled_follows_duplicate_port_config(stub_sdk):
+    """When port tables also list the LAG interface id, prefer that admin state."""
+    lag = {**LAG_CONFIG, "enabled": True, "member_ports": []}
+    lag_as_port = {
+        "asset_device_id": "cs-uuid-42",
+        "asset_interface_id": "lag-if-1",
+        "name": "lag1",
+        "enabled": False,
+    }
+    entities = transform.ports_to_entities(
+        _tables(
+            port_configs=[lag_as_port],
+            port_states=[],
+            vlan_properties=[],
+            lag_configs=[lag],
+            lag_states=[],
+        ),
+        device="sw-idf1",
+    )
+    assert entities[0]._kw["interface"]._kw["enabled"] is False
+
+
+def test_ports_to_entities_lag_vlan_falls_back_to_interface_name(stub_sdk):
+    """Vlan-properties keyed only by interface_name still attach to the LAG."""
+    vlan_on_lag = {
+        "interface_name": "lag1",
+        "port_vlan": 10,
+        "vlans": [{"vlan_number": 10}, {"vlan_number": 20}],
+    }
+    entities = transform.ports_to_entities(
+        _tables(
+            port_configs=[],
+            port_states=[],
+            vlan_properties=[vlan_on_lag],
+            lag_configs=[{**LAG_CONFIG, "member_ports": []}],
+            lag_states=[],
+        ),
+        device="sw-idf1",
+    )
+    lag = entities[0]._kw["interface"]._kw
+    assert lag["mode"] == "tagged"
+    assert lag["untagged_vlan"]._kw["vid"] == 10
+    assert [v._kw["vid"] for v in lag["tagged_vlans"]] == [20]
 
 
 def test_ports_to_entities_lag_joins_poe_and_ip_like_physical_ports(stub_sdk):
@@ -915,15 +996,19 @@ def test_virtual_chassis_to_entities_maps_inferred_cluster(stub_sdk):
     vc = entities[0]._kw["virtual_chassis"]._kw
     # Peer names are sorted for a stable name when primary/backup flips.
     assert vc["name"] == "peer-a / peer-b"
-    assert vc["master"] == "sw-idf1"
+    master = vc["master"]._kw
+    assert master["name"] == "sw-idf1"
+    assert master["site"]._kw["name"] == "Assets-Site"
+    assert master["role"]._kw["name"] == "Switch"
+    assert master["device_type"]._kw["model"] == "5320-48P-8XE-FabricEngine"
     assert "description" not in vc
     assert vc["tags"] == ["extreme-networks", "platform-one", "discovered"]
     assert cf(vc["custom_fields"]["platformone_cluster_id"]._kw) == "cluster-uuid-1"
     assert "domain" not in vc
     assert "comments" not in vc
     assert memberships == {
-        "cs-uuid-42": {"name": "peer-a / peer-b", "position": 1},
-        "cs-uuid-43": {"name": "peer-a / peer-b", "position": 2},
+        "cs-uuid-42": {"name": "peer-a / peer-b", "position": 1, "cluster_id": "cluster-uuid-1"},
+        "cs-uuid-43": {"name": "peer-a / peer-b", "position": 2, "cluster_id": "cluster-uuid-1"},
     }
 
 
@@ -977,9 +1062,12 @@ def test_virtual_chassis_ignores_identical_placeholder_peer_names(stub_sdk):
 
 
 def test_virtual_chassis_warns_on_duplicate_computed_names(stub_sdk, caplog):
-    """Colliding names are emitted as-is (no invented suffix): the unique
-    platformone_cluster_id custom field rejects the merge at ingest, and the
-    worker warns so the upstream data problem is visible in the logs."""
+    """Colliding human names are emitted as-is (no invented suffix).
+
+    NetBox does not unique VirtualChassis.name; identity is the unique
+    platformone_cluster_id custom field. The worker warns so upstream
+    hostname collisions stay visible in the logs.
+    """
     twin = {
         "device_id": 44,
         "host_name": "sw-idf1",
@@ -1013,8 +1101,10 @@ def test_virtual_chassis_warns_on_duplicate_computed_names(stub_sdk, caplog):
     names = [e._kw["virtual_chassis"]._kw["name"] for e in entities]
     assert names == ["peer-a / peer-b", "peer-a / peer-b"]
     assert memberships["cs-uuid-44"]["name"] == "peer-a / peer-b"
+    assert memberships["cs-uuid-44"]["cluster_id"] == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     assert "Duplicate VirtualChassis name" in caplog.text
     assert "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" in caplog.text
+    assert "platformone_cluster_id" in caplog.text
 
 
 def test_devices_to_entities_attaches_virtual_chassis_membership(stub_sdk):
@@ -1030,13 +1120,43 @@ def test_devices_to_entities_attaches_virtual_chassis_membership(stub_sdk):
         vc_memberships=memberships,
     )
 
+    # Membership Devices before VirtualChassis.master — NetBox rejects a
+    # master that is not yet assigned to the chassis on fresh create.
     kinds = [next(iter(e._kw)) for e in entities]
-    assert kinds == ["site", "virtual_chassis", "device", "device"]
+    assert kinds == ["site", "device", "device", "virtual_chassis"]
     devices = {e._kw["device"]._kw["name"]: e._kw["device"]._kw for e in entities if "device" in e._kw}
-    assert devices["sw-idf1"]["virtual_chassis"]._kw == {"name": "peer-a / peer-b"}
+    vc_ref = devices["sw-idf1"]["virtual_chassis"]._kw
+    assert vc_ref["name"] == "peer-a / peer-b"
+    assert cf(vc_ref["custom_fields"]["platformone_cluster_id"]._kw) == "cluster-uuid-1"
     assert devices["sw-idf1"]["vc_position"] == 1
     assert devices["sw-idf2"]["vc_position"] == 2
-    assert entities[1]._kw["virtual_chassis"]._kw["master"] == "sw-idf1"
+    master = entities[-1]._kw["virtual_chassis"]._kw["master"]._kw
+    assert master["name"] == "sw-idf1"
+    assert master["site"]._kw["name"] == "Assets-Site"
+    assert master["role"]._kw["name"] == "Switch"
+    assert master["device_type"]._kw["model"] == "5320-48P-8XE-FabricEngine"
+
+
+def test_devices_to_entities_emits_vc_master_after_member_devices(stub_sdk):
+    """Regression: master-before-membership race on first Diode ingest."""
+    peer = _record(asset=SWITCH_ASSET_PEER, cs_device_id="cs-uuid-43")
+    vc_entities, memberships = transform.virtual_chassis_to_entities(
+        [INFERRED_CLUSTER],
+        records_by_cs_id={"cs-uuid-42": _record(), "cs-uuid-43": peer},
+    )
+    entities = transform.devices_to_entities(
+        [_record(), peer],
+        virtual_chassis_entities=vc_entities,
+        vc_memberships=memberships,
+    )
+    kinds = [next(iter(e._kw)) for e in entities]
+    first_device = kinds.index("device")
+    first_vc = kinds.index("virtual_chassis")
+    assert first_device < first_vc
+    assert all(k != "virtual_chassis" for k in kinds[:first_device])
+    member_devices = [e._kw["device"]._kw for e in entities if "device" in e._kw]
+    assert all("virtual_chassis" in d and "vc_position" in d for d in member_devices)
+    assert entities[first_vc]._kw["virtual_chassis"]._kw["master"]._kw["name"] == "sw-idf1"
 
 
 AP_ASSET = {

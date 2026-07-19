@@ -14,12 +14,14 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Iterable
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as pkg_version
 
 from netboxlabs.diode.sdk.ingester import Entity
 from worker.backend import Backend as WorkerBackend
 from worker.models import Metadata, Policy
 
-from . import __version__, bootstrap, transform
+from . import bootstrap, transform
 from .client import DEFAULT_BASE_URL, PlatformOneApiError, PlatformOneClient
 from .extract import (
     CLUSTER_MEMBER_FILTERS,
@@ -31,12 +33,15 @@ from .extract import (
 from .extract.clusters import extract_inferred_clusters
 from .extract.ports import extract_port_tables
 from .extract.wireless import extract_wireless_tables
-from .identity import asset_label, device_name, is_ap, is_switch
+from .identity import asset_label, device_name, is_ap, is_switch, resolve_location
 
 logger = logging.getLogger(__name__)
 
 APP_NAME = "netbox-orb-extreme-platformone"
-APP_VERSION = __version__
+try:
+    APP_VERSION = pkg_version("netbox-orb-extreme-platformone")
+except PackageNotFoundError:
+    APP_VERSION = "0.2.0"
 # Sync every Assets device class by default (switches, APs, routers, ...);
 # narrow with the `classification` policy key. Port sync stays gated on
 # switch-OS devices regardless (see is_switch).
@@ -274,11 +279,16 @@ class Backend(WorkerBackend):
             name = device_names.get(device_id)
             if not name:
                 continue
+            asset = record["asset"]
+            site_name, _ = resolve_location(record.get("location"), asset)
+            product_type = asset.get("product_type") or (record.get("cs_device") or {}).get("model_name")
             entities.extend(
                 transform.ports_to_entities(
                     tables,
                     device=name,
-                    function=record["asset"].get("function"),
+                    function=asset.get("function"),
+                    site_name=site_name,
+                    product_type=product_type,
                 )
             )
         logger.info("Policy %s: mapped %d wired port entities", policy_name, len(entities))
