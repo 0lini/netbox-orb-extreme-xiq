@@ -69,8 +69,7 @@ ingest; this package only produces entities.
    through Diode into NetBox.
 
 Independent ConfigState table retrieves within a phase run concurrently;
-dependent phases stay sequential (device IDs → port tables → LAG members →
-interface-UUID tables).
+later phases wait on IDs from earlier ones (see call phases below).
 
 ## Platform ONE APIs used
 
@@ -86,35 +85,30 @@ username/password login or a static API token):
   role when present (switch OSes → Switch, AP → Wireless AP; never a static
   default).
 - **ConfigState API** (`POST /configstate/v1/retrieve-*`) — per-device
-  configuration and state tables: port configuration and state
-  (`retrieve-asset-port-config`, `retrieve-asset-port-state`), port
-  capabilities (`retrieve-asset-port-capabilities`), VLAN membership
-  (`retrieve-asset-interface-vlan-properties`), PoE
-  (`retrieve-asset-poe-power-ports-state`,
-  `retrieve-asset-poe-power-ports-config`), interface IP addresses
-  (`retrieve-asset-interface-ip-address`), LAG configuration and state
-  (`retrieve-asset-lag-config`, `retrieve-asset-lag-state`, plus member-port
-  tables when nested members are empty), the site/building/floor location
-  record (`retrieve-asset-location`), inferred two-node clusters
-  (`retrieve-inferred-device` then `retrieve-inferred-cluster`) mapped to
-  NetBox VirtualChassis, and AP wireless tables
-  (`retrieve-asset-wireless-interface`, `retrieve-asset-wireless-interface-state`,
-  `retrieve-asset-ssid-config`, `retrieve-asset-ssid-state`).
+  configuration and state tables listed in the call phases below. Every
+  filter field accepts a list, so each retrieve covers the whole in-scope
+  device (or interface) set in one batched call rather than one call per
+  device. No undocumented endpoints are used.
 
-Every ConfigState filter field accepts a list, so the per-tick API call
-budget is flat rather than per-device: one paginated Assets listing, one
-paginated ConfigState device listing (for correlation), one location call,
-one call per device-filtered port/LAG/VLAN/capabilities/PoE-state table covering
-every in-scope switch at once (those independent table retrieves run
-concurrently to cut tick wall-clock), optional LAG member-port calls when
-nested `member_ports` are absent, optional PoE-config and interface-IP calls
-filtered by collected interface UUIDs (also concurrent within that phase),
-one batched call per wireless/SSID table covering every in-scope AP,
-one InferredDevice call (`asset_device_id`), and two InferredCluster calls
-(`device_one_id` / `device_two_id` as InferredDevice UUIDs) covering the same
-device set. Dependent phases stay sequential (device IDs before port tables,
-lag IDs before member-port tables, interface UUIDs before PoE-config / IP).
-No undocumented endpoints are used.
+### Extract call phases
+
+Calls run in order. Within a phase, independent retrieves run concurrently.
+Later phases exist only because their filter IDs come from earlier results —
+they are not separate optional features you turn on or off.
+
+| Phase | Always? | What is called | Why it waits |
+|-------|---------|----------------|--------------|
+| 1. Inventory | Yes | Assets `POST /assets/v1/devices`; ConfigState `retrieve-asset-device`; `retrieve-asset-location` | — |
+| 2. Switch tables | When switches are in scope | Device-filtered port/LAG/VLAN/capabilities/PoE-state tables (`retrieve-asset-port-config`, `-port-state`, `-port-capabilities`, `-interface-vlan-properties`, `-lag-config`, `-lag-state`, `-poe-power-ports-state`) | Needs AssetDevice UUIDs from phase 1 |
+| 3. LAG members | Only when a lag-config/state row has an empty nested `member_ports` list | `retrieve-asset-lag-config-member-port` / `retrieve-asset-lag-state-member-port` | Filters by lag row id from phase 2; skipped when nested members already came back on the parent row |
+| 4. Interface extras | When phase 2 collected any `asset_interface_id`s | `retrieve-asset-poe-power-ports-config` and `retrieve-asset-interface-ip-address` | Those tables filter by interface UUID only (no device filter), so IDs must come from phase 2 |
+| 5. Wireless | When APs are in scope | `retrieve-asset-wireless-interface`, `-wireless-interface-state`, `-ssid-config`, `-ssid-state` | Needs AssetDevice UUIDs from phase 1 |
+| 6. Clusters | Yes (degrades if empty/fail) | `retrieve-inferred-device`, then `retrieve-inferred-cluster` twice (`device_one_id` / `device_two_id`) | Cluster member filters are InferredDevice UUIDs, not AssetDevice UUIDs |
+
+So phase 3 is a **fallback** (Platform ONE sometimes embeds members on the LAG
+row, sometimes only on the dedicated member-port tables). Phase 4 is a
+**second hop** (PoE config and interface IPs cannot be requested by device id).
+Neither is a policy knob.
 
 ## Repository layout
 
@@ -416,9 +410,10 @@ transformed from ConfigState tables joined on `asset_interface_id`
 
 ConfigState `retrieve-asset-lag-config` / `retrieve-asset-lag-state` (batched
 by `asset_device_id`, same pattern as ports) map to NetBox LAG interfaces.
-When nested `member_ports` are empty on retrieve, the worker falls back to
+If a returned LAG row already nests `member_ports`, that list is used as-is.
+If `member_ports` is empty, extract phase 3 falls back to
 `retrieve-asset-lag-config-member-port` / `retrieve-asset-lag-state-member-port`
-filtered by lag row id.
+filtered by lag row id (see [Extract call phases](#extract-call-phases)).
 
 - **LAG parent** is an `Interface` with `type=lag`, name from `name` (or
   `lag-{lag_number}` when name is absent), admin `enabled` from config, and
