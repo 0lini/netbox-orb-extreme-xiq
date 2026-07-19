@@ -85,10 +85,11 @@ No undocumented endpoints are used.
 | Path | Purpose |
 |------|---------|
 | `orb_extreme_platformone/client.py` | Platform ONE HTTP client: paginated Assets device listing and a generic batched ConfigState `retrieve()`. |
+| `orb_extreme_platformone/mapper/` | Platform ONE → Diode entity mapping, split by domain (`devices`, `ports`, `wireless`, `virtual_chassis`, shared `common`). |
+| `orb_extreme_platformone/fetch/` | ConfigState table catalogs, concurrent retrieves, Assets↔ConfigState correlation, port/wireless/cluster fetch phases. |
 | `orb_extreme_platformone/identity.py` | Device naming, switch/AP detection, site/building/floor resolution, device-type model mapping. |
-| `orb_extreme_platformone/mapper.py` | Platform ONE → Diode entity mapping: devices, sites, locations, switch ports, LAGs, VLANs, VirtualChassis, AP radios, WirelessLANs. |
 | `orb_extreme_platformone/bootstrap.py` | Idempotent NetBox schema setup (custom fields and tags). |
-| `orb_extreme_platformone/backend.py` | Orb Agent worker entrypoint: Assets↔ConfigState correlation, batched table fetches. |
+| `orb_extreme_platformone/backend.py` | Orb Agent worker entrypoint: policy tick orchestration (bootstrap, scope, map). |
 | `orb_extreme_platformone/__main__.py` | Standalone dry-run runner (`python -m orb_extreme_platformone`). |
 | `agent.yaml` | Example Orb Agent policy. |
 | `tests/` | Offline pytest suite, plus opt-in contract checks against downloaded Platform ONE OpenAPI specs. |
