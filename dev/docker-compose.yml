@@ -68,7 +68,7 @@ services:
       retries: 10
 
   netbox-redis:
-    image: docker.io/redis:7-alpine
+    image: docker.io/redis:8-alpine
     command:
       - sh
       - -c
@@ -78,7 +78,7 @@ services:
       - netbox-redis-data:/data
 
   netbox-redis-cache:
-    image: docker.io/redis:7-alpine
+    image: docker.io/redis:8-alpine
     command:
       - sh
       - -c
