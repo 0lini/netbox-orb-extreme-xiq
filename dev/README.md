@@ -69,6 +69,14 @@ That uses `.devcontainer/devcontainer.json`, which starts the same
 container, NetBox is `http://netbox:8080` and Diode is
 `grpc://ingress-nginx:80/diode`.
 
+### NetBox MCP (read-only)
+
+After minting a token (`./dev/create-netbox-token.sh`), Cursor can talk to the
+local NetBox via `.cursor/mcp.json` → `dev/netbox-mcp.sh`. The script reads
+`NETBOX_API_TOKEN` from `dev/.env.local` (never committed) and picks
+`http://netbox:8080` inside the compose network or `http://localhost:8000` on
+the host. Requires `uv` / `uvx` (installed in the workspace image).
+
 ## Layout
 
 | Path | Role |
@@ -77,8 +85,10 @@ container, NetBox is `http://netbox:8080` and Diode is
 | `dev/diode/` | Upstream Diode server compose + nginx |
 | `dev/netbox/` | NetBox image with `netboxlabs-diode-netbox-plugin` |
 | `dev/setup.sh` | Generates OAuth + NetBox env secrets and `agent.local.yaml` |
+| `dev/netbox-mcp.sh` | Wrapper for NetBox Labs MCP (token from `.env.local`) |
 | `dev/netbox/env/*.env.example` | Templates; real `*.env` files are generated and gitignored |
 | `.devcontainer/` | VS Code / Cursor Dev Container definition |
+| `.cursor/mcp.json` | Cursor MCP server entry for local NetBox |
 
 ## Tear down
 
