@@ -568,7 +568,7 @@ def test_ports_to_entities_untagged_only_is_access_mode(stub_sdk):
 def test_ports_to_entities_no_vlan_rows_asserts_no_mode():
     """FLEX-UNI/Fabric-Attach ports can be mapped to an I-SID instead of a
     VLAN -- inventing an access mode would misrepresent them."""
-    fields = mapper._vlan_fields([])
+    fields = mapper.ports._vlan_fields([])
     assert fields == {}
 
 
@@ -612,7 +612,7 @@ def test_ports_to_entities_only_reserved_vlan_asserts_no_vlan_or_mode():
         "port_vlan": 4094,
         "vlans": [{"vlan_number": 4094}],
     }
-    assert mapper._vlan_fields([vlan]) == {}
+    assert mapper.ports._vlan_fields([vlan]) == {}
 
 
 def test_ports_to_entities_omits_reserved_native_vlan_fallback(stub_sdk):
