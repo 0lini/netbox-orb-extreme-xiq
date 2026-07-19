@@ -336,14 +336,14 @@ def test_run_survives_a_failed_port_table_and_keeps_the_rest(caplog):
 
 
 def test_correlate_warns_on_duplicate_serial(caplog):
-    from orb_extreme_platformone.backend import _correlate
+    from orb_extreme_platformone.fetch import correlate
 
     assets = [{"device_id": 1, "serial_number": "SN1"}]
     cs_devices = [
         {"id": "a", "serial_number": "SN1"},
         {"id": "b", "serial_number": "sn1"},
     ]
-    matched = _correlate(assets, cs_devices)
+    matched = correlate(assets, cs_devices)
 
     assert matched[1]["id"] == "a"
     assert "Duplicate ConfigState AssetDevice serial_number" in caplog.text
