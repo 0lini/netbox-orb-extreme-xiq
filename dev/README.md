@@ -4,10 +4,13 @@ This stack runs **NetBox** (with the Diode plugin) and the **Diode server** via
 `docker compose`, on one shared network, for exercising this Orb worker against
 a real ingest path.
 
-**Local demo only.** Committed NetBox/Postgres/Redis env files under
-`dev/netbox/env/` use well-known insecure defaults (password `netbox`, UI
-`admin`/`admin`, fixed `SECRET_KEY`). Do not reuse them outside this compose
-stack.
+Committed NetBox/Postgres/Redis env under `dev/netbox/env/` matches
+[netbox-docker](https://github.com/netbox-community/netbox-docker) **release**
+defaults (`env/netbox.env`, `postgres.env`, `redis.env`, `redis-cache.env`).
+Only service hostnames are adjusted (`netbox-postgres` / `netbox-redis` /
+`netbox-redis-cache`) so they do not clash with Diode's own Postgres/Redis on
+the same compose network. Upstream ships `SKIP_SUPERUSER=true` (no
+`SUPERUSER_*` / `SUPERUSER_API_TOKEN`).
 
 ## Prerequisites
 
@@ -33,16 +36,18 @@ docker compose -f dev/docker-compose.yml up -d --build
 
 | Service | URL |
 |---------|-----|
-| NetBox UI | http://localhost:8000 (`admin` / `admin`) |
+| NetBox UI | http://localhost:8000 |
 | Diode gRPC | `grpc://localhost:8080/diode` |
 
 `setup.sh` generates Diode OAuth / server env and `agent.local.yaml` into
 gitignored files (`dev/.env.local`, `dev/diode/.env`, OAuth
 `client-credentials.json`, `dev/netbox/secrets/`). NetBox compose env under
-`dev/netbox/env/*.env` is already committed with local demo defaults, so
+`dev/netbox/env/*.env` is already committed (upstream defaults), so
 `compose up` works without inventing secrets first.
 
-After NetBox is up, mint a REST API token for bootstrap:
+After NetBox is up, create a local admin user and mint a REST API token for
+bootstrap (also enables UI login `admin` / `admin` unless you override
+`NETBOX_ADMIN_PASSWORD`):
 
 ```bash
 ./dev/create-netbox-token.sh
@@ -84,7 +89,7 @@ container, NetBox is `http://netbox:8080` and Diode is
 | `dev/diode/` | Upstream Diode server compose + nginx |
 | `dev/netbox/` | NetBox image with `netboxlabs-diode-netbox-plugin` |
 | `dev/setup.sh` | Generates Diode OAuth + `agent.local.yaml` (not NetBox env) |
-| `dev/netbox/env/*.env` | Committed local demo defaults for NetBox/Postgres/Redis |
+| `dev/netbox/env/*.env` | Upstream netbox-docker defaults (hostnames remapped) |
 | `.devcontainer/` | VS Code / Cursor Dev Container definition |
 
 ## Tear down
