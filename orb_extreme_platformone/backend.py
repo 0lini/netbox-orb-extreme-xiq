@@ -24,7 +24,6 @@ from .client import DEFAULT_BASE_URL, PlatformOneApiError, PlatformOneClient
 from .extract import (
     CLUSTER_MEMBER_FILTERS,
     INTERFACE_ID_TABLES,
-    LAG_MEMBER_TABLES,
     PORT_TABLES,
     WIRELESS_TABLES,
     correlated_records,
@@ -52,7 +51,6 @@ __all__ = [
     "CLUSTER_MEMBER_FILTERS",
     "DEFAULT_CLASSIFICATION",
     "INTERFACE_ID_TABLES",
-    "LAG_MEMBER_TABLES",
     "PORT_TABLES",
     "WIRELESS_TABLES",
 ]
@@ -92,12 +90,17 @@ def _records_by_cs_id(records: list[dict], *, predicate) -> dict[str, dict]:
                 "Duplicate ConfigState device id %s across Assets rows "
                 "(%r and %r); keeping the first for table fan-out",
                 cs_id,
-                device_name(by_id[cs_id]["asset"]),
-                device_name(record["asset"]),
+                _asset_label(by_id[cs_id]["asset"]),
+                _asset_label(record["asset"]),
             )
             continue
         by_id[cs_id] = record
     return by_id
+
+
+def _asset_label(asset: dict) -> str:
+    """Short label for logs when a NetBox device name may be absent."""
+    return str(asset.get("host_name") or asset.get("serial_number") or asset.get("device_id") or "?")
 
 
 def _build_client(config) -> PlatformOneClient:
@@ -155,16 +158,14 @@ class Backend(WorkerBackend):
             len(scoped),
         )
 
-        name_source = _cfg(config, "name_source", "hostname")
-        vc_entities, vc_memberships = self._virtual_chassis_entities(client, scoped, name_source, policy_name)
+        vc_entities, vc_memberships = self._virtual_chassis_entities(client, scoped, policy_name)
         # Port/LAG/IP tables are fetched before Device entities so primary_ip
         # can use ConfigState interface CIDRs (mask_length) instead of inventing
         # /32 from the bare Assets management address.
-        port_entities, primary_ips_by_cs_id = self._port_entities(client, scoped, name_source, policy_name)
-        radio_entities = self._radio_entities(client, scoped, name_source, policy_name)
+        port_entities, primary_ips_by_cs_id = self._port_entities(client, scoped, policy_name)
+        radio_entities = self._radio_entities(client, scoped, policy_name)
         entities = transform.devices_to_entities(
             scoped,
-            name_source=name_source,
             virtual_chassis_entities=vc_entities,
             vc_memberships=vc_memberships,
             primary_ips_by_cs_id=primary_ips_by_cs_id,
@@ -176,7 +177,7 @@ class Backend(WorkerBackend):
 
     @staticmethod
     def _virtual_chassis_entities(
-        client: PlatformOneClient, records: list[dict], name_source: str, policy_name: str
+        client: PlatformOneClient, records: list[dict], policy_name: str
     ) -> tuple[list[Entity], dict[str, dict]]:
         """Fetch InferredCluster and map to VirtualChassis + memberships.
 
@@ -203,7 +204,6 @@ class Backend(WorkerBackend):
         entities, memberships = transform.virtual_chassis_to_entities(
             clusters,
             records_by_cs_id=records_by_cs_id,
-            name_source=name_source,
         )
         logger.info(
             "Policy %s: mapped %d VirtualChassis entities from %d InferredCluster rows",
@@ -222,7 +222,7 @@ class Backend(WorkerBackend):
 
     @staticmethod
     def _port_entities(
-        client: PlatformOneClient, records: list[dict], name_source: str, policy_name: str
+        client: PlatformOneClient, records: list[dict], policy_name: str
     ) -> tuple[list[Entity], dict[str, dict[str, str]]]:
         """Fetch port/LAG tables for in-scope switches and map to Diode entities.
 
@@ -247,10 +247,18 @@ class Backend(WorkerBackend):
             primary = transform.primary_ips_from_tables(tables, asset_ip=record["asset"].get("ip_address"))
             if primary:
                 primary_ips_by_cs_id[device_id] = primary
+            name = device_name(record["asset"])
+            if not name:
+                logger.warning(
+                    "Policy %s: skipping ports for %s: Assets host_name is empty",
+                    policy_name,
+                    _asset_label(record["asset"]),
+                )
+                continue
             entities.extend(
                 transform.ports_to_entities(
                     tables,
-                    device=device_name(record["asset"], name_source),
+                    device=name,
                     function=record["asset"].get("function"),
                 )
             )
@@ -264,9 +272,7 @@ class Backend(WorkerBackend):
         return entities, primary_ips_by_cs_id
 
     @staticmethod
-    def _radio_entities(
-        client: PlatformOneClient, records: list[dict], name_source: str, policy_name: str
-    ) -> list[Entity]:
+    def _radio_entities(client: PlatformOneClient, records: list[dict], policy_name: str) -> list[Entity]:
         """Fetch wireless/SSID tables for in-scope APs and map to Diode entities."""
         aps = _records_by_cs_id(
             records,
@@ -279,8 +285,15 @@ class Backend(WorkerBackend):
         tables_by_device, failed_tables = extract_wireless_tables(client, device_ids, policy_name)
 
         device_names = {
-            device_id: device_name(aps[device_id]["asset"], name_source) for device_id in device_ids
+            device_id: name for device_id in device_ids if (name := device_name(aps[device_id]["asset"]))
         }
+        skipped = sorted(set(device_ids) - set(device_names))
+        for device_id in skipped:
+            logger.warning(
+                "Policy %s: skipping radios for %s: Assets host_name is empty",
+                policy_name,
+                _asset_label(aps[device_id]["asset"]),
+            )
         entities = transform.radios_to_entities(tables_by_device, device_names=device_names)
         logger.info("Policy %s: mapped %d wireless radio/WLAN entities", policy_name, len(entities))
         if failed_tables:

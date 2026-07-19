@@ -6,7 +6,6 @@ from .correlate import correlate, correlated_records
 from .tables import (
     CLUSTER_MEMBER_FILTERS,
     INTERFACE_ID_TABLES,
-    LAG_MEMBER_TABLES,
     PORT_TABLES,
     WIRELESS_TABLES,
 )
@@ -14,7 +13,6 @@ from .tables import (
 __all__ = [
     "CLUSTER_MEMBER_FILTERS",
     "INTERFACE_ID_TABLES",
-    "LAG_MEMBER_TABLES",
     "PORT_TABLES",
     "WIRELESS_TABLES",
     "correlate",

@@ -99,16 +99,13 @@ they are not separate optional features you turn on or off.
 | Phase | Always? | What is called | Why it waits |
 |-------|---------|----------------|--------------|
 | 1. Inventory | Yes | Assets `POST /assets/v1/devices`; ConfigState `retrieve-asset-device`; `retrieve-asset-location` | — |
-| 2. Switch tables | When switches are in scope | Device-filtered port/LAG/VLAN/capabilities/PoE-state tables (`retrieve-asset-port-config`, `-port-state`, `-port-capabilities`, `-interface-vlan-properties`, `-lag-config`, `-lag-state`, `-poe-power-ports-state`) | Needs AssetDevice UUIDs from phase 1 |
-| 3. LAG members | Only when a lag-config/state row has an empty nested `member_ports` list | `retrieve-asset-lag-config-member-port` / `retrieve-asset-lag-state-member-port` | Filters by lag row id from phase 2; skipped when nested members already came back on the parent row |
-| 4. Interface extras | When phase 2 collected any `asset_interface_id`s | `retrieve-asset-poe-power-ports-config` and `retrieve-asset-interface-ip-address` | Those tables filter by interface UUID only (no device filter), so IDs must come from phase 2 |
-| 5. Wireless | When APs are in scope | `retrieve-asset-wireless-interface`, `-wireless-interface-state`, `-ssid-config`, `-ssid-state` | Needs AssetDevice UUIDs from phase 1 |
-| 6. Clusters | Yes (degrades if empty/fail) | `retrieve-inferred-device`, then `retrieve-inferred-cluster` twice (`device_one_id` / `device_two_id`) | Cluster member filters are InferredDevice UUIDs, not AssetDevice UUIDs |
+| 2. Switch tables | When switches are in scope | Device-filtered port/LAG/VLAN/capabilities/PoE-state tables (`retrieve-asset-port-config`, `-port-state`, `-port-capabilities`, `-interface-vlan-properties`, `-lag-config`, `-lag-state`, `-poe-power-ports-state`). LAG membership comes from nested `member_ports` on lag-config/state rows. | Needs AssetDevice UUIDs from phase 1 |
+| 3. Interface extras | When phase 2 collected any `asset_interface_id`s | `retrieve-asset-poe-power-ports-config` and `retrieve-asset-interface-ip-address` | Those tables filter by interface UUID only (no device filter), so IDs must come from phase 2 |
+| 4. Wireless | When APs are in scope | `retrieve-asset-wireless-interface`, `-wireless-interface-state`, `-ssid-config`, `-ssid-state` | Needs AssetDevice UUIDs from phase 1 |
+| 5. Clusters | Yes (degrades if empty/fail) | `retrieve-inferred-device`, then `retrieve-inferred-cluster` twice (`device_one_id` / `device_two_id`) | Cluster member filters are InferredDevice UUIDs, not AssetDevice UUIDs |
 
-So phase 3 is a **fallback** (Platform ONE sometimes embeds members on the LAG
-row, sometimes only on the dedicated member-port tables). Phase 4 is a
-**second hop** (PoE config and interface IPs cannot be requested by device id).
-Neither is a policy knob.
+Phase 3 is a **second hop** (PoE config and interface IPs cannot be requested
+by device id). It is not a policy knob.
 
 ## Repository layout
 
@@ -180,7 +177,6 @@ Policy `config:` keys (see `agent.yaml` for a complete example):
 |-----|-------------|---------|
 | `BOOTSTRAP` | Run schema setup before the sync (first run only). | `false` |
 | `classification` | Assets device filter: `ALL`, `SWITCH`, `WIRELESS`, `ROUTER`, …. Port sync only runs for switch-OS devices regardless. | `ALL` |
-| `name_source` | Device naming source: `hostname` or `serial`. | `hostname` |
 | `scope.sites` | Restrict the sync to specific resolved sites; `["*"]` for all. | `["*"]` |
 
 Every credential key can be provided in the policy `config:` or as a
@@ -280,9 +276,10 @@ output accordingly:
 
 - **Fixed field set** — human-owned fields are never asserted, so they can
   never generate phantom drift.
-- **Stable identity** — deterministic device names; `serial` is asserted
-  natively on the NetBox Device, the same approach used by the Cisco Meraki
-  integration and NetBox Labs' generic discovery backends.
+- **Stable identity** — Device `name` is Assets `host_name` when present
+  (omitted when Platform ONE sends none — no inventing from serial or id);
+  `serial` is asserted natively on the NetBox Device, the same approach used
+  by the Cisco Meraki integration and NetBox Labs' generic discovery backends.
 - **Stable producer and tags** — a fixed
   `app_name="netbox-orb-extreme-platformone"` and flat `extreme-networks` /
   `platform-one` / `discovered` tags keep Platform ONE data attributable and
@@ -410,10 +407,7 @@ transformed from ConfigState tables joined on `asset_interface_id`
 
 ConfigState `retrieve-asset-lag-config` / `retrieve-asset-lag-state` (batched
 by `asset_device_id`, same pattern as ports) map to NetBox LAG interfaces.
-If a returned LAG row already nests `member_ports`, that list is used as-is.
-If `member_ports` is empty, extract phase 3 falls back to
-`retrieve-asset-lag-config-member-port` / `retrieve-asset-lag-state-member-port`
-filtered by lag row id (see [Extract call phases](#extract-call-phases)).
+Membership is taken from the nested `member_ports` list on those rows.
 
 - **LAG parent** is an `Interface` with `type=lag`, name from `name` (or
   `lag-{lag_number}` when name is absent), admin `enabled` from config, and

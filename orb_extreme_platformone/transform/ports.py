@@ -425,7 +425,7 @@ def _lag_membership(configs: list[dict], states: list[dict]) -> dict[str, str]:
     """Map member interface name → LAG interface name.
 
     Config membership is authoritative; state membership fills gaps when
-    config rows omit nested members.
+    config has no members for that LAG.
     """
     membership: dict[str, str] = {}
     for config in configs:

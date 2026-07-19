@@ -32,15 +32,13 @@ def test_native_port_name_keeps_colon_native_oses_and_non_port_names():
     assert native_port_name("mgmt", "Fabric Engine") == "mgmt"
 
 
-def test_device_name_prefers_hostname_then_serial_then_id():
+def test_device_name_uses_hostname_only():
     assert device_name({"host_name": "sw1", "serial_number": "SN1"}) == "sw1"
-    assert device_name({"serial_number": "SN1"}) == "SN1"
-    assert device_name({"device_id": 42}) == "platformone-42"
-
-
-def test_device_name_serial_source_falls_back_to_hostname_without_a_serial():
-    assert device_name({"host_name": "sw1", "serial_number": "SN1"}, "serial") == "SN1"
-    assert device_name({"host_name": "sw1"}, "serial") == "sw1"
+    assert device_name({"host_name": "  sw1  "}) == "sw1"
+    assert device_name({"serial_number": "SN1"}) is None
+    assert device_name({"device_id": 42}) is None
+    assert device_name({"host_name": ""}) is None
+    assert device_name({"host_name": "   "}) is None
 
 
 def test_is_switch_recognizes_the_assets_switch_function_enum_values():

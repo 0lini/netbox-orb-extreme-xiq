@@ -50,7 +50,6 @@ def _standalone_config() -> dict:
         "PLATFORMONE_USERNAME": os.environ.get("PLATFORMONE_USERNAME"),
         "PLATFORMONE_PASSWORD": os.environ.get("PLATFORMONE_PASSWORD"),
         "classification": os.environ.get("PLATFORMONE_CLASSIFICATION", DEFAULT_CLASSIFICATION),
-        "name_source": os.environ.get("PLATFORMONE_NAME_SOURCE", "hostname"),
     }
 
 

@@ -135,17 +135,15 @@ def device_type_model_for(product_type: str | None) -> str | None:
     return product_type
 
 
-def device_name(device: dict, name_source: str = "hostname") -> str:
-    """Deterministic device name; falls back to serial, then Assets device_id."""
-    serial = device.get("serial_number")
-    if name_source == "serial" and serial:
-        return serial
+def device_name(device: dict) -> str | None:
+    """Assets hostname for NetBox Device.name, or None when Platform ONE omits it.
+
+    Serial stays on Device.serial; do not invent a name from serial or device_id.
+    """
     hostname = device.get("host_name")
-    if hostname:
-        return hostname
-    if serial:
-        return serial
-    return f"platformone-{device.get('device_id')}"
+    if hostname and str(hostname).strip():
+        return str(hostname).strip()
+    return None
 
 
 def resolve_location(asset_location: dict | None, assets_device: dict) -> tuple[str | None, list[str]]:
