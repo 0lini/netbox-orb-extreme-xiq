@@ -8,3 +8,10 @@ dist/
 .ruff_cache/
 .env
 test.json
+
+# Local NetBox + Diode test stack secrets / generated files
+dev/.env.local
+dev/diode/.env
+dev/diode/oauth2/client/client-credentials.json
+dev/netbox/secrets/
+dev/agent.local.yaml
