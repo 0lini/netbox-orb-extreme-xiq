@@ -1,7 +1,7 @@
-"""Thin Extreme Platform ONE client (bearer-token auth) on plain `requests`.
+"""Thin Extreme Platform ONE client (token or user/pass auth) on plain `requests`.
 
 Covers the two API families this worker consumes, both served from the same
-host with the same token:
+host with the same bearer token:
 
   - Assets API (POST /assets/v1/devices): `page`/`limit` query params, a
     filter JSON body, and a response with top-level `data` + `total_pages`.
@@ -10,6 +10,10 @@ host with the same token:
     fields all take lists, and a response keyed by the table's schema name
     plus a `Pagination` object.
 
+Auth is either a static API token or username/password via ``POST /login``
+(ExtremeCloud IQ login on the same host). Password login refreshes the
+bearer token before expiry and retries once on 401.
+
 Contracts verified against the Platform ONE OpenAPI specs; see
 tests/test_openapi_contract.py.
 """
@@ -17,6 +21,7 @@ tests/test_openapi_contract.py.
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Iterator
 
 import requests
@@ -29,6 +34,9 @@ CONFIGSTATE_PAGE_SIZE = 500
 # Keep API error text short so logs/exceptions do not retain full upstream
 # bodies (which can include sensitive diagnostics).
 _ERROR_BODY_LIMIT = 200
+# Refresh a minute early so a request never races token expiry.
+_TOKEN_REFRESH_SKEW_SECONDS = 60
+_DEFAULT_TOKEN_TTL_SECONDS = 86400
 
 
 class PlatformOneApiError(RuntimeError):
@@ -59,7 +67,8 @@ class PlatformOneClient:
 
     HTTP sessions are thread-local so independent ConfigState retrieves can
     run concurrently (see backend parallel table fetches) without sharing a
-    `requests.Session` across threads.
+    `requests.Session` across threads. Token state is guarded by a lock so
+    password-login refresh is safe across those threads.
     """
 
     def __init__(
@@ -67,18 +76,30 @@ class PlatformOneClient:
         *,
         base_url: str = DEFAULT_BASE_URL,
         api_token: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
         timeout: float = 60,
     ) -> None:
-        if not api_token:
-            raise ValueError("PlatformOneClient requires api_token")
+        if not api_token and not (username and password):
+            raise ValueError("PlatformOneClient requires api_token or username/password")
         self._base_url = require_https_url(base_url, what="PLATFORMONE_API_URL")
+        self._username = username
+        self._password = password
         self._timeout = timeout
         self._local = threading.local()
+        self._lock = threading.Lock()
         self._headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_token}",
         }
+        if api_token:
+            self._headers["Authorization"] = f"Bearer {api_token}"
+            # None = static API token (never expires from our side) until a
+            # login response sets it; password mode starts expired so the
+            # first request logs in.
+            self._token_expiry: float | None = None
+        else:
+            self._token_expiry = 0.0
 
     def _session(self) -> requests.Session:
         session = getattr(self._local, "session", None)
@@ -87,15 +108,57 @@ class PlatformOneClient:
             self._local.session = session
         return session
 
-    def _post(self, path: str, params: dict, body: dict) -> dict:
-        url = f"{self._base_url}{path}"
-        resp = self._session().post(
-            url, headers=self._headers, params=params, json=body, timeout=self._timeout
-        )
-        if resp.status_code >= 400:
+    def _ensure_token_locked(self) -> None:
+        if self._token_expiry is None:
+            return
+        if time.time() < self._token_expiry:
+            return
+        if self._username and self._password:
+            self._login_locked()
+            return
+        raise PlatformOneApiError("No credentials available to authenticate with Platform ONE")
+
+    def _login_locked(self) -> None:
+        url = f"{self._base_url}/login"
+        payload = {"username": self._username, "password": self._password}
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        resp = self._session().post(url, headers=headers, json=payload, timeout=self._timeout)
+        if resp.status_code != 200:
             detail = truncate_error_body(resp.text)
-            raise PlatformOneApiError(f"Platform ONE API error {resp.status_code} for {path}: {detail}")
-        return resp.json()
+            raise PlatformOneApiError(f"Platform ONE login failed ({resp.status_code}): {detail}")
+        data = resp.json()
+        access_token = data.get("access_token")
+        if not access_token:
+            raise PlatformOneApiError("Platform ONE login response did not contain an access_token")
+        self._headers["Authorization"] = f"Bearer {access_token}"
+        self._token_expiry = (
+            time.time() + data.get("expires_in", _DEFAULT_TOKEN_TTL_SECONDS) - _TOKEN_REFRESH_SKEW_SECONDS
+        )
+
+    def _auth_headers(self) -> dict:
+        with self._lock:
+            self._ensure_token_locked()
+            return dict(self._headers)
+
+    def _post(self, path: str, params: dict, body: dict) -> dict:
+        """POST `path`, re-logging in once on a 401 when using username/password."""
+        url = f"{self._base_url}{path}"
+        for attempt in (1, 2):
+            headers = self._auth_headers()
+            resp = self._session().post(url, headers=headers, params=params, json=body, timeout=self._timeout)
+            if resp.status_code == 401 and attempt == 1 and self._username and self._password:
+                with self._lock:
+                    self._token_expiry = 0.0
+                    self._login_locked()
+                continue
+            if resp.status_code >= 400:
+                detail = truncate_error_body(resp.text)
+                raise PlatformOneApiError(f"Platform ONE API error {resp.status_code} for {path}: {detail}")
+            return resp.json()
+        raise AssertionError("unreachable")  # pragma: no cover
 
     def get_devices(self, *, classification: str = "ALL", limit: int = ASSETS_PAGE_LIMIT) -> Iterator[dict]:
         """Yield every Assets-API device of `classification`, across all pages.

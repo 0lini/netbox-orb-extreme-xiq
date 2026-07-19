@@ -27,9 +27,15 @@ def _client() -> PlatformOneClient:
     return PlatformOneClient(api_token="tok")
 
 
-def test_client_requires_a_token():
-    with pytest.raises(ValueError):
-        PlatformOneClient(api_token=None)
+def test_client_requires_credentials():
+    with pytest.raises(ValueError, match="api_token or username/password"):
+        PlatformOneClient()
+
+
+def test_client_accepts_username_password_without_token():
+    client = PlatformOneClient(username="user", password="pass")
+    assert client._token_expiry == 0.0
+    assert "Authorization" not in client._headers
 
 
 def test_client_requires_https_base_url():
@@ -161,3 +167,81 @@ def test_non_2xx_truncates_long_error_bodies():
     assert "500" in message
     assert "e" * 1000 not in message
     assert message.endswith("...")
+
+
+LOGIN_URL = f"{DEFAULT_BASE_URL}/login"
+
+
+@responses.activate
+def test_username_password_logs_in_before_api_calls():
+    responses.add(
+        responses.POST,
+        LOGIN_URL,
+        match=[responses.matchers.json_params_matcher({"username": "user", "password": "pass"})],
+        json={"access_token": "session-tok", "expires_in": 3600},
+        status=200,
+    )
+    responses.add(
+        responses.POST,
+        ASSETS_URL,
+        match=[responses.matchers.header_matcher({"Authorization": "Bearer session-tok"})],
+        json={"data": [{"device_id": 1}], "page": 1, "total_pages": 1, "total_count": 1},
+        status=200,
+    )
+
+    client = PlatformOneClient(username="user", password="pass")
+    assert [d["device_id"] for d in client.get_devices()] == [1]
+    assert len(responses.calls) == 2
+    assert responses.calls[0].request.url == LOGIN_URL
+
+
+@responses.activate
+def test_username_password_relogs_in_once_on_401():
+    responses.add(
+        responses.POST,
+        LOGIN_URL,
+        json={"access_token": "first-tok", "expires_in": 3600},
+        status=200,
+    )
+    responses.add(responses.POST, ASSETS_URL, json={"error": "expired"}, status=401)
+    responses.add(
+        responses.POST,
+        LOGIN_URL,
+        json={"access_token": "second-tok", "expires_in": 3600},
+        status=200,
+    )
+    responses.add(
+        responses.POST,
+        ASSETS_URL,
+        match=[responses.matchers.header_matcher({"Authorization": "Bearer second-tok"})],
+        json={"data": [{"device_id": 9}], "page": 1, "total_pages": 1, "total_count": 1},
+        status=200,
+    )
+
+    client = PlatformOneClient(username="user", password="pass")
+    assert [d["device_id"] for d in client.get_devices()] == [9]
+    assert len(responses.calls) == 4
+
+
+@responses.activate
+def test_login_failure_raises_platform_one_api_error():
+    responses.add(responses.POST, LOGIN_URL, json={"error": "bad creds"}, status=401)
+
+    client = PlatformOneClient(username="user", password="pass")
+    with pytest.raises(PlatformOneApiError, match="login failed") as excinfo:
+        list(client.get_devices())
+    assert "bad creds" in str(excinfo.value)
+
+
+@responses.activate
+def test_static_api_token_does_not_call_login():
+    responses.add(
+        responses.POST,
+        ASSETS_URL,
+        match=[responses.matchers.header_matcher({"Authorization": "Bearer tok"})],
+        json={"data": [], "page": 1, "total_pages": 1, "total_count": 0},
+        status=200,
+    )
+
+    assert list(_client().get_devices()) == []
+    assert all("/login" not in call.request.url for call in responses.calls)

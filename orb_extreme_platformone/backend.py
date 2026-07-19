@@ -96,6 +96,8 @@ def _build_client(config) -> PlatformOneClient:
     return PlatformOneClient(
         base_url=_cfg_or_env(config, "PLATFORMONE_API_URL", default=DEFAULT_BASE_URL),
         api_token=_cfg_or_env(config, "PLATFORMONE_API_TOKEN"),
+        username=_cfg_or_env(config, "PLATFORMONE_USERNAME"),
+        password=_cfg_or_env(config, "PLATFORMONE_PASSWORD"),
     )
 
 

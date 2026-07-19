@@ -47,6 +47,8 @@ def _standalone_config() -> dict:
         "NETBOX_API_URL": os.environ.get("NETBOX_API_URL"),
         "NETBOX_API_TOKEN": os.environ.get("NETBOX_API_TOKEN"),
         "PLATFORMONE_API_TOKEN": os.environ.get("PLATFORMONE_API_TOKEN"),
+        "PLATFORMONE_USERNAME": os.environ.get("PLATFORMONE_USERNAME"),
+        "PLATFORMONE_PASSWORD": os.environ.get("PLATFORMONE_PASSWORD"),
         "classification": os.environ.get("PLATFORMONE_CLASSIFICATION", DEFAULT_CLASSIFICATION),
         "name_source": os.environ.get("PLATFORMONE_NAME_SOURCE", "hostname"),
     }

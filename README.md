@@ -43,7 +43,8 @@ match the previous XIQ radio mapping. See the [roadmap](#roadmap).
 
 Both APIs are documented on the [Platform ONE Developer
 Portal](https://developer.extremeplatformone.com/api-reference), served from
-the same host, and authenticated with the same bearer token:
+the same host, and authenticated with the same bearer token (from
+username/password login or a static API token):
 
 - **Assets API** (`POST /assets/v1/devices`) — device inventory: hostname,
   serial, MAC, model (`product_type`), OS version, connection state, flat
@@ -101,7 +102,7 @@ docker run --rm \
   -v $PWD:/opt/orb/ \
   -e INSTALL_WORKERS_PATH=/opt/orb/workers.txt \
   -e DIODE_CLIENT_ID -e DIODE_CLIENT_SECRET \
-  -e PLATFORMONE_API_TOKEN \
+  -e PLATFORMONE_USERNAME -e PLATFORMONE_PASSWORD \
   -e NETBOX_API_URL -e NETBOX_API_TOKEN \
   netboxlabs/orb-agent:latest run -c /opt/orb/agent.yaml
 ```
@@ -140,11 +141,15 @@ same-named environment variable; policy config takes precedence.
 
 ### Authentication
 
-- **API token:** create one in Extreme Platform ONE and set
-  `PLATFORMONE_API_TOKEN`. All calls use the same `Authorization: Bearer`
-  header; there is no username/password flow. Prefer environment variables
-  (or a local `.env`, which is gitignored) over putting secrets in
-  `agent.yaml`.
+- **Username/password (recommended):** set `PLATFORMONE_USERNAME` and
+  `PLATFORMONE_PASSWORD`. The client calls `POST /login` on the Platform ONE
+  host, caches the returned bearer token, refreshes it before expiry, and
+  retries once on HTTP 401. Prefer this over API keys, which expire quickly.
+- **API token:** set `PLATFORMONE_API_TOKEN` instead. Useful for short-lived
+  tokens or environments that already mint them; the client does not refresh
+  a static token.
+- Prefer environment variables (or a local `.env`, which is gitignored) over
+  putting secrets in `agent.yaml`.
 - **Base URL:** `https://cloudapi.extremecloudiq.com` by default; override
   with `PLATFORMONE_API_URL`. Both `PLATFORMONE_API_URL` and
   `NETBOX_API_URL` must be `https://` URLs; plaintext `http://` is rejected.
@@ -160,7 +165,8 @@ same-named environment variable; policy config takes precedence.
 
 ```bash
 pip install -e ".[dev]"
-export PLATFORMONE_API_TOKEN=...            # or put it in .env (gitignored)
+export PLATFORMONE_USERNAME=...             # or PLATFORMONE_API_TOKEN=...
+export PLATFORMONE_PASSWORD=...             # or put both in .env (gitignored)
 python -m orb_extreme_platformone           # dry run: fetch, map, print entities
 pytest                                      # offline test suite
 ruff check . && ruff format --check .       # lint + format
@@ -432,7 +438,7 @@ documented Platform ONE APIs. Operational differences:
 | | XIQ worker (old) | Platform ONE worker |
 |---|---|---|
 | Package / `config.package` | `orb_extreme_xiq` | `orb_extreme_platformone` |
-| Credentials | `XIQ_API_TOKEN` or username/password | `PLATFORMONE_API_TOKEN` only |
+| Credentials | `XIQ_API_TOKEN` or username/password | `PLATFORMONE_USERNAME` / `PLATFORMONE_PASSWORD`, or `PLATFORMONE_API_TOKEN` |
 | Tags | `extreme-networks`, `xiq`, `discovered` | `extreme-networks`, `platform-one`, `discovered` |
 | Custom fields | `xiq_network_policy`, `xiq_port_id` | `platformone_device_id`, `platformone_interface_id`, `platformone_cluster_id` |
 | Port admin state / VLANs | not available | `enabled`, untagged/tagged VLANs with names, `mode` |

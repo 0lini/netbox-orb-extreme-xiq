@@ -4,7 +4,8 @@
 #     -v $PWD:/opt/orb/ \
 #     -e INSTALL_WORKERS_PATH=/opt/orb/workers.txt \
 #     -e DIODE_CLIENT_ID -e DIODE_CLIENT_SECRET \
-#     -e PLATFORMONE_API_TOKEN \
+#     -e PLATFORMONE_USERNAME -e PLATFORMONE_PASSWORD \
+#     # or: -e PLATFORMONE_API_TOKEN \
 #     -e NETBOX_API_URL -e NETBOX_API_TOKEN \   # only needed while BOOTSTRAP: true
 #     netboxlabs/orb-agent:latest run -c /opt/orb/agent.yaml
 #
@@ -42,7 +43,9 @@ orb:
           NETBOX_API_URL: ${NETBOX_API_URL}      # bootstrap only
           NETBOX_API_TOKEN: ${NETBOX_API_TOKEN}  # bootstrap only
 
-          PLATFORMONE_API_TOKEN: ${PLATFORMONE_API_TOKEN}
+          PLATFORMONE_USERNAME: ${PLATFORMONE_USERNAME}
+          PLATFORMONE_PASSWORD: ${PLATFORMONE_PASSWORD}
+          # PLATFORMONE_API_TOKEN: ${PLATFORMONE_API_TOKEN}   # optional alternative
           # PLATFORMONE_API_URL: https://cloudapi.extremecloudiq.com   # default
 
           classification: ALL              # Assets device filter: ALL (default),
