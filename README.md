@@ -329,11 +329,10 @@ join on `(asset_device_id, port_name)`):
   `retrieve-asset-interface-vlan-properties`: `port_vlan` becomes the
   untagged VLAN, the nested VLAN map (minus the untagged VLAN) becomes the
   tagged VLANs, and `mode` is set to `tagged` or `access` accordingly.
-  When vlan-properties rows are absent, `AssetPortConfig.native_vlan` plus
-  `port_mode` are used as a fallback (`port_mode` True → `tagged`, False →
-  `access`). Interfaces with neither source assert none of the three —
-  on Fabric Engine a port can be mapped directly into an I-SID instead of a
-  VLAN. Extreme reserved internal VIDs **4060–4094** (inclusive) are
+  When vlan-properties rows are absent, `AssetPortConfig.native_vlan` is used
+  as a fallback untagged VLAN; `port_mode` False → `access`. `port_mode` True
+  alone does **not** assert `tagged` (that would claim a trunk with an empty
+  tagged set). Extreme reserved internal VIDs **4060–4094** (inclusive) are
   filtered from ingest: they are omitted from Interface `untagged_vlan` /
   `tagged_vlans`; if a port has only reserved memberships after filtering,
   `mode` is omitted too. VLANs are referenced by bare `vid` only (names are
@@ -418,13 +417,14 @@ always `"ap"`, `enabled` from wireless-interface config, `type` from
 `channel`, and `rf_channel_width` when `channel_width` is already a standard
 MHz value (20/40/80/160/320). NetBox's `rf_channel` string is not asserted.
 
-SSIDs become `WirelessLAN` entities (`ssid`, `status` from SSID `enabled`,
-`auth_type` from `encryption` when it maps cleanly to open / wep /
-wpa-personal / wpa-enterprise). They are deduped by SSID name across every
-AP and are **not** site-scoped (same SSID can broadcast in many sites).
-Radios link to WLANs via NetBox's native `wireless_lans` field using
-`AssetSsid*.if_names` and any `ssid_name` on wireless interface state.
-`auth_cipher` is not set (ConfigState has no cipher detail here).
+SSIDs become `WirelessLAN` entities (`ssid`, `status` from SSID `enabled`
+when known — omitted when unknown, `auth_type` from `encryption` when it
+maps cleanly to open / wep / wpa-personal / wpa-enterprise). They are
+deduped by SSID name across every AP and are **not** site-scoped (same SSID
+can broadcast in many sites). Radios link to WLANs via NetBox's native
+`wireless_lans` field using `AssetSsid*.if_names` and any `ssid_name` on
+wireless interface state. `auth_cipher` is not set (ConfigState has no
+cipher detail here).
 
 Unknown `radio_mode` / `band` / `channel_width` / `encryption` values assert
 nothing rather than inventing NetBox enums — same verified-code rule as
