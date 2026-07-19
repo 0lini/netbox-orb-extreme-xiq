@@ -14,4 +14,6 @@ dev/.env.local
 dev/diode/.env
 dev/diode/oauth2/client/client-credentials.json
 dev/netbox/secrets/
+dev/netbox/env/*.env
+!dev/netbox/env/*.env.example
 dev/agent.local.yaml
