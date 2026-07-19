@@ -54,8 +54,6 @@ orb:
           classification: ALL              # Assets device filter: ALL (default),
                                            # SWITCH, WIRELESS, ROUTER, ... Port sync
                                            # only ever runs for switch-OS devices.
-          name_source: hostname            # or "serial" for max stability
-
           # A device's ConfigState location record (site / building / floor)
           # becomes its NetBox Site + nested Location chain; devices without
           # one fall back to the Assets API's flat site name. Platform ONE

@@ -135,14 +135,12 @@ def device_type_model_for(product_type: str | None) -> str | None:
     return product_type
 
 
-def device_name(device: dict, name_source: str = "hostname") -> str:
-    """Deterministic device name; falls back to serial, then Assets device_id."""
-    serial = device.get("serial_number")
-    if name_source == "serial" and serial:
-        return serial
+def device_name(device: dict) -> str:
+    """Deterministic device name: hostname, else serial, else Assets device_id."""
     hostname = device.get("host_name")
     if hostname:
         return hostname
+    serial = device.get("serial_number")
     if serial:
         return serial
     return f"platformone-{device.get('device_id')}"

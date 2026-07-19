@@ -177,7 +177,6 @@ Policy `config:` keys (see `agent.yaml` for a complete example):
 |-----|-------------|---------|
 | `BOOTSTRAP` | Run schema setup before the sync (first run only). | `false` |
 | `classification` | Assets device filter: `ALL`, `SWITCH`, `WIRELESS`, `ROUTER`, …. Port sync only runs for switch-OS devices regardless. | `ALL` |
-| `name_source` | Device naming source: `hostname` or `serial`. | `hostname` |
 | `scope.sites` | Restrict the sync to specific resolved sites; `["*"]` for all. | `["*"]` |
 
 Every credential key can be provided in the policy `config:` or as a
@@ -277,7 +276,8 @@ output accordingly:
 
 - **Fixed field set** — human-owned fields are never asserted, so they can
   never generate phantom drift.
-- **Stable identity** — deterministic device names; `serial` is asserted
+- **Stable identity** — deterministic device names (Assets `host_name`, else
+  serial, else `platformone-{device_id}`); `serial` is asserted
   natively on the NetBox Device, the same approach used by the Cisco Meraki
   integration and NetBox Labs' generic discovery backends.
 - **Stable producer and tags** — a fixed

@@ -38,11 +38,6 @@ def test_device_name_prefers_hostname_then_serial_then_id():
     assert device_name({"device_id": 42}) == "platformone-42"
 
 
-def test_device_name_serial_source_falls_back_to_hostname_without_a_serial():
-    assert device_name({"host_name": "sw1", "serial_number": "SN1"}, "serial") == "SN1"
-    assert device_name({"host_name": "sw1"}, "serial") == "sw1"
-
-
 def test_is_switch_recognizes_the_assets_switch_function_enum_values():
     for function in ("Switch Engine", "Fabric Engine", "EXOS", "VOSS"):
         assert is_switch(function)

@@ -89,7 +89,6 @@ def _device_kwargs(
     *,
     site_name: str,
     location: Location | None,
-    name_source: str,
     cs_device: dict | None = None,
     vc_membership: dict | None = None,
     primary_ips: dict[str, str] | None = None,
@@ -99,7 +98,7 @@ def _device_kwargs(
         custom_fields["platformone_device_id"] = _cf_text(str(asset["device_id"]))
 
     kwargs = {
-        "name": device_name(asset, name_source),
+        "name": device_name(asset),
         "serial": asset.get("serial_number") or None,
         "site": Site(name=site_name),
         "custom_fields": custom_fields,
@@ -196,7 +195,6 @@ def _merge_site_coords(
 def devices_to_entities(
     records: list[dict],
     *,
-    name_source: str = "hostname",
     site_scope: set[str] | None = None,
     virtual_chassis_entities: list[Entity] | None = None,
     vc_memberships: dict[str, dict] | None = None,
@@ -256,7 +254,6 @@ def devices_to_entities(
             record["asset"],
             site_name=site_name,
             location=location,
-            name_source=name_source,
             cs_device=record.get("cs_device"),
             vc_membership=membership,
             primary_ips=primary_ips,

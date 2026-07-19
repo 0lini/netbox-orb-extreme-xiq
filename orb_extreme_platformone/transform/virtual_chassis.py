@@ -31,7 +31,6 @@ def virtual_chassis_to_entities(
     clusters: list[dict],
     *,
     records_by_cs_id: dict[str, dict],
-    name_source: str = "hostname",
 ) -> tuple[list[Entity], dict[str, dict]]:
     """Map ConfigState InferredCluster rows to VirtualChassis entities + memberships.
 
@@ -58,8 +57,8 @@ def virtual_chassis_to_entities(
         if record_one is None or record_two is None:
             continue
 
-        name_one = device_name(record_one["asset"], name_source)
-        name_two = device_name(record_two["asset"], name_source)
+        name_one = device_name(record_one["asset"])
+        name_two = device_name(record_two["asset"])
         chassis_name = _virtual_chassis_name(cluster, name_one, name_two)
         # Colliding names are emitted as-is: the unique platformone_cluster_id
         # custom field makes NetBox reject the merge at ingest, surfacing the
