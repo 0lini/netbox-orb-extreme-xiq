@@ -155,7 +155,7 @@ def test_run_produces_site_location_device_and_interface_entities():
     assert entities[3].device.site.name == "HQ"
     assert entities[3].device.location.name == "F2"
     assert entities[3].device.role.name == "Switch"
-    assert "platformone_configstate_device_id" not in entities[3].device.custom_fields
+    assert entities[3].device.custom_fields["platformone_configstate_device_id"].text == "cs-uuid-42"
     interface = entities[4].interface
     assert interface.name == "1/1"
     assert interface.device.name == "sw-idf1"
@@ -387,7 +387,7 @@ def test_run_maps_inferred_cluster_to_virtual_chassis():
     assert chassis[0].name == "peer-a / peer-b"
     assert chassis[0].master.name == "sw-idf1"
     assert not chassis[0].description
-    assert chassis[0].custom_fields["platformone_id"].text == "cluster-uuid-1"
+    assert chassis[0].custom_fields["platformone_cluster_id"].text == "cluster-uuid-1"
 
     devices = {e.device.name: e.device for e in entities if e.HasField("device")}
     assert devices["sw-idf1"].virtual_chassis.name == "peer-a / peer-b"
@@ -440,7 +440,7 @@ def test_run_maps_lag_interfaces_and_member_lag_refs():
     assert set(interfaces) == {"lag1", "1/1", "1/2"}
     assert interfaces["lag1"].type == "lag"
     assert interfaces["lag1"].enabled is True
-    assert interfaces["lag1"].custom_fields["platformone_id"].text == "lag-if-1"
+    assert interfaces["lag1"].custom_fields["platformone_interface_id"].text == "lag-if-1"
     assert interfaces["1/1"].lag.name == "lag1"
     assert interfaces["1/2"].lag.name == "lag1"
     # Nested members present -> no separate member-port retrieve.

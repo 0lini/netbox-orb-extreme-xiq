@@ -10,23 +10,57 @@ import requests
 
 from .urls import require_https_url
 
-# One shared one-to-one Platform ONE correlation key with `unique` enforced
-# (NetBox >= 3.7): two NetBox objects claiming the same Platform ONE id is
-# always a sync defect worth failing loudly on. The value spaces are disjoint
-# (Assets device ids are numeric, interface/cluster ids are UUIDs), so shared
-# uniqueness cannot cross-collide. The ConfigState AssetDevice UUID is
-# deliberately NOT stored in NetBox: the worker re-correlates by serial every
-# tick, so it stays an internal join key.
+# Per-object-type Platform ONE correlation keys with `unique` enforced
+# (NetBox >= 3.7): two NetBox objects of the same type claiming the same
+# Platform ONE id is always a sync defect worth failing loudly on.
 CUSTOM_FIELDS = [
     {
-        "name": "platformone_id",
-        "label": "Platform ONE ID",
+        "name": "platformone_device_id",
+        "label": "Platform ONE Device ID",
         "type": "text",
-        "object_types": ["dcim.device", "dcim.interface", "dcim.virtualchassis"],
+        "object_types": ["dcim.device"],
         "description": (
-            "Immutable Extreme Platform ONE id: Assets device_id on devices, "
-            "ConfigState asset_interface_id on interfaces, InferredCluster UUID "
-            "on virtual chassis. Stable correlation key across renames."
+            "Immutable Extreme Platform ONE device id (Assets API device_id); "
+            "stable correlation key even if the device is renamed."
+        ),
+        "filter_logic": "exact",
+        "unique": True,
+    },
+    {
+        "name": "platformone_configstate_device_id",
+        "label": "Platform ONE ConfigState Device ID",
+        "type": "text",
+        "object_types": ["dcim.device"],
+        "description": (
+            "Immutable Extreme Platform ONE ConfigState AssetDevice UUID "
+            "(retrieve-asset-device id); joins Assets inventory to ConfigState "
+            "port and location tables."
+        ),
+        "filter_logic": "exact",
+        "unique": True,
+    },
+    {
+        "name": "platformone_interface_id",
+        "label": "Platform ONE Interface ID",
+        "type": "text",
+        "object_types": ["dcim.interface"],
+        "description": (
+            "Immutable Extreme Platform ONE interface UUID "
+            "(ConfigState asset_interface_id); stable correlation key even if "
+            "the port is renamed."
+        ),
+        "filter_logic": "exact",
+        "unique": True,
+    },
+    {
+        "name": "platformone_cluster_id",
+        "label": "Platform ONE Cluster ID",
+        "type": "text",
+        "object_types": ["dcim.virtualchassis"],
+        "description": (
+            "Immutable Extreme Platform ONE InferredCluster UUID "
+            "(ConfigState retrieve-inferred-cluster id); stable correlation "
+            "key even if peer names change."
         ),
         "filter_logic": "exact",
         "unique": True,
