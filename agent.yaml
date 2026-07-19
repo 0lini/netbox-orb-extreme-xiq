@@ -1,5 +1,8 @@
 # Orb Agent config for the Extreme Platform ONE worker (stock open-source image).
 #
+# Pipeline per tick: client → extract → transform → Diode (Orb owns ingest).
+# workers.txt installs this repo root (`.`) so Orb can import orb_extreme_platformone.
+#
 #   docker run --rm \
 #     -v $PWD:/opt/orb/ \
 #     -e INSTALL_WORKERS_PATH=/opt/orb/workers.txt \
