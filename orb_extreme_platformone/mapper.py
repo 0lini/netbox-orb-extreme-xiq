@@ -13,7 +13,8 @@ Callers pass "device records" pre-joined by backend.py:
 InferredCluster rows (ConfigState retrieve-inferred-cluster) map to
 VirtualChassis via `virtual_chassis_to_entities`. LAG interfaces and
 membership come from AssetLagConfig / AssetLagState (and nested or
-fetched member ports) via `ports_to_entities`.
+fetched member ports) via `ports_to_entities`. AP radios and WLANs come
+from wireless-interface / SSID tables via `radios_to_entities`.
 """
 
 from __future__ import annotations
