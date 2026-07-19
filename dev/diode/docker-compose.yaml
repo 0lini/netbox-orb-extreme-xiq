@@ -88,7 +88,7 @@ services:
       - diode-redis-data:/data
 
   postgres:
-    image: docker.io/postgres:16-alpine
+    image: docker.io/postgres:18-alpine
     pull_policy: always
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
