@@ -7,9 +7,17 @@ from collections import defaultdict
 
 from netboxlabs.diode.sdk.ingester import VLAN, Entity, Interface, IPAddress
 
+from orb_extreme_platformone.extract.tables import INTERFACE_ID_TABLES, PORT_TABLES
 from orb_extreme_platformone.identity import SLASH_PORT_FUNCTIONS, native_port_name
 
-from .common import PROVENANCE_TAGS, _interface_custom_fields, logger
+from .common import (
+    PROVENANCE_TAGS,
+    _coerce_int,
+    _explicit_cidr,
+    _interface_identity_kwargs,
+    _normalized_mac,
+    logger,
+)
 
 # Extreme Networks reserves VIDs 4060–4094 for internal use (e.g. Fabric
 # Engine). These are filtered from Interface untagged/tagged memberships.
@@ -22,21 +30,9 @@ def _is_extreme_reserved_vlan(vid: int) -> bool:
     return EXTREME_RESERVED_VLAN_VID_MIN <= vid <= EXTREME_RESERVED_VLAN_VID_MAX
 
 
-# Keys `ports_to_entities` reads from its `tables` dict. Kept in sync with
-# backend.PORT_TABLES ∪ backend.INTERFACE_ID_TABLES (see unit test).
-PORT_ENTITY_TABLE_KEYS = frozenset(
-    {
-        "port_configs",
-        "port_states",
-        "vlan_properties",
-        "lag_configs",
-        "lag_states",
-        "port_capabilities",
-        "poe_configs",
-        "poe_states",
-        "interface_ips",
-    }
-)
+# Keys `ports_to_entities` reads from its `tables` dict — derived from extract
+# catalogs so the sets cannot drift.
+PORT_ENTITY_TABLE_KEYS = frozenset(PORT_TABLES) | frozenset(INTERFACE_ID_TABLES)
 
 
 def _mgmt_interface_ids(tables: dict[str, list[dict]]) -> set[str]:
@@ -80,12 +76,8 @@ def primary_ips_from_tables(
     """
     rows_with_cidr: list[tuple[dict, str, ipaddress.IPv4Interface | ipaddress.IPv6Interface]] = []
     for row in tables.get("interface_ips") or []:
-        raw = str(row.get("address") or "").strip()
-        mask = _coerce_int(row.get("mask_length"))
         # Require an explicit prefix from ConfigState (mask_length or inline /n);
         # never accept ip_interface's implicit /32 or /128 on a bare host.
-        if not raw or ("/" not in raw and not (mask is not None and 0 <= mask <= 128)):
-            continue
         cidr = _interface_ip_cidr(row)
         if not cidr:
             continue
@@ -288,17 +280,6 @@ def _poe_mode(config: dict, state: dict) -> str | None:
     return None
 
 
-def _coerce_int(value) -> int | None:
-    """Accept JSON ints or digit-only strings; reject floats/bools/garbage."""
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str) and value.strip().isdigit():
-        return int(value.strip())
-    return None
-
-
 def _interface_ip_cidr(row: dict) -> str | None:
     """Build address/prefix for AssetInterfaceIpAddress → Diode IPAddress.
 
@@ -306,18 +287,7 @@ def _interface_ip_cidr(row: dict) -> str | None:
     an explicit prefix (inline ``/n`` or usable ``mask_length``), return
     None — never invent /32 or /128.
     """
-    raw = str(row.get("address") or "").strip()
-    if not raw:
-        return None
-    mask = _coerce_int(row.get("mask_length"))
-    if "/" not in raw:
-        if mask is None or not 0 <= mask <= 128:
-            return None
-        raw = f"{raw}/{mask}"
-    try:
-        return str(ipaddress.ip_interface(raw))
-    except ValueError:
-        return None
+    return _explicit_cidr(row.get("address"), row.get("mask_length"))
 
 
 def _iface_base_kwargs(
@@ -330,17 +300,12 @@ def _iface_base_kwargs(
     poe_state: dict | None = None,
 ) -> dict:
     """Shared identity / admin / PoE fields for physical ports and LAG parents."""
-    custom_fields = _interface_custom_fields(interface_id=interface_id)
-    kwargs: dict = {
-        "device": device,
-        "name": name,
-        "tags": PROVENANCE_TAGS,
-    }
-    if custom_fields:
-        kwargs["custom_fields"] = custom_fields
-    enabled = config.get("enabled")
-    if isinstance(enabled, bool):
-        kwargs["enabled"] = enabled
+    kwargs = _interface_identity_kwargs(
+        device=device,
+        name=name,
+        interface_id=interface_id,
+        enabled=config.get("enabled"),
+    )
     poe = _poe_mode(poe_config or {}, poe_state or {})
     if poe is not None:
         kwargs["poe_mode"] = poe
@@ -386,8 +351,9 @@ def _port_kwargs(
 
     if config.get("description"):
         kwargs["description"] = config["description"]
-    if state.get("mac_address"):
-        kwargs["primary_mac_address"] = str(state["mac_address"]).upper()
+    mac = _normalized_mac(state.get("mac_address"))
+    if mac:
+        kwargs["primary_mac_address"] = mac
 
     if capability is not None and isinstance(capability.get("management_port"), bool):
         kwargs["mgmt_only"] = capability["management_port"]
@@ -495,8 +461,9 @@ def _lag_kwargs(
         oper_state = port_state.get("oper_state")
         if oper_state is not None:
             kwargs["mark_connected"] = oper_state == OPER_STATE_UP
-        if port_state.get("mac_address"):
-            kwargs["primary_mac_address"] = str(port_state["mac_address"]).upper()
+        mac = _normalized_mac(port_state.get("mac_address"))
+        if mac:
+            kwargs["primary_mac_address"] = mac
     return kwargs
 
 
@@ -691,17 +658,17 @@ def _orphan_ip_entities(
                 (str(row["asset_interface_id"]) for row in rows if row.get("asset_interface_id")),
                 key or None,
             )
-            iface_kwargs: dict = {
-                "device": device,
-                "name": name,
-                "tags": PROVENANCE_TAGS,
-            }
-            custom_fields = _interface_custom_fields(
-                interface_id=str(interface_id) if interface_id else None,
+            entities.append(
+                Entity(
+                    interface=Interface(
+                        **_interface_identity_kwargs(
+                            device=device,
+                            name=name,
+                            interface_id=str(interface_id) if interface_id else None,
+                        )
+                    )
+                )
             )
-            if custom_fields:
-                iface_kwargs["custom_fields"] = custom_fields
-            entities.append(Entity(interface=Interface(**iface_kwargs)))
             emitted_names.add(name)
         entities.extend(_ip_entities_for_interface(device=device, interface_name=name, rows=rows))
     return entities

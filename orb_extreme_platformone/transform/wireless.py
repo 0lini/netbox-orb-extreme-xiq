@@ -6,17 +6,17 @@ from collections import defaultdict
 
 from netboxlabs.diode.sdk.ingester import Entity, Interface, WirelessLAN
 
-from .common import PROVENANCE_TAGS, _interface_custom_fields
+from orb_extreme_platformone.extract.tables import WIRELESS_TABLES
 
-# Keys `radios_to_entities` reads from each device's wireless tables dict.
-WIRELESS_ENTITY_TABLE_KEYS = frozenset(
-    {
-        "wireless_interfaces",
-        "wireless_states",
-        "ssid_configs",
-        "ssid_states",
-    }
+from .common import (
+    PROVENANCE_TAGS,
+    _compact_token,
+    _interface_identity_kwargs,
+    _normalized_mac,
 )
+
+# Keys `radios_to_entities` reads — derived from the extract catalog.
+WIRELESS_ENTITY_TABLE_KEYS = frozenset(WIRELESS_TABLES)
 _RADIO_TYPE_BY_MODE = {
     "_11a": "ieee802.11a",
     "_11bg": "ieee802.11g",
@@ -63,7 +63,7 @@ def _channel_frequency_mhz(band: str | None, channel: int | None) -> float | Non
     if not band:
         return None
     # Collapse separators so BAND_5_GHZ / "5 GHz" / "5g" all normalize alike.
-    normalized = str(band).casefold().replace(" ", "").replace("_", "").replace("-", "")
+    normalized = _compact_token(band)
     if "6g" in normalized or normalized in {"6", "band6"}:
         offset = 5950.0
     elif "2.4" in normalized or "2,4" in normalized or normalized in {"24g", "2g", "band24", "band2.4"}:
@@ -82,7 +82,7 @@ def _radio_type(radio_mode: str | None) -> str | None:
     mapped = _RADIO_TYPE_BY_MODE.get(key) or _RADIO_TYPE_BY_MODE.get(key.casefold())
     if mapped:
         return mapped
-    compact = key.casefold().replace(" ", "").replace("-", "").replace(".", "")
+    compact = _compact_token(key, drop=" -.")
     # Wi-Fi 7 / 11be has no confirmed NetBox Interface type — Meraki uses
     # ``other`` for AP radios; match that when radio_mode is unknown/unverified.
     if "11be" in compact:
@@ -119,42 +119,32 @@ def _tx_power(value) -> int | None:
         return None
 
 
-def _auth_type_from_encryption(encryption: str | None) -> str:
-    """Map AssetSsidState.encryption to NetBox WirelessLAN auth_type.
+def _auth_from_encryption(encryption: str | None) -> tuple[str, str]:
+    """Map AssetSsidState.encryption to NetBox WirelessLAN auth_type + auth_cipher.
 
-    Unknown / empty values default to ``open`` (Cisco Meraki posture).
+    Unknown / empty values default to ``open`` / ``auto`` (Cisco Meraki posture).
     """
     if not encryption or not str(encryption).strip():
-        return "open"
-    compact = str(encryption).casefold().replace(" ", "").replace("-", "").replace("_", "")
+        return "open", "auto"
+    compact = _compact_token(encryption)
     if compact in {"open", "enhancedopen", "none", "owe"} or compact.startswith("open"):
-        return "open"
+        return "open", "auto"
     if "wep" in compact:
-        return "wep"
+        return "wep", "wep"
     if any(token in compact for token in ("8021x", "enterprise", "radius", "eap", "dot1x")):
-        return "wpa-enterprise"
-    if any(token in compact for token in ("psk", "ppsk", "sae", "personal", "wpa2", "wpa3")):
-        return "wpa-personal"
-    return "open"
+        auth_type = "wpa-enterprise"
+    elif any(token in compact for token in ("psk", "ppsk", "sae", "personal", "wpa2", "wpa3")):
+        auth_type = "wpa-personal"
+    else:
+        auth_type = "open"
 
-
-def _auth_cipher_from_encryption(encryption: str | None) -> str:
-    """Map AssetSsidState.encryption to NetBox WirelessLAN auth_cipher.
-
-    Mirrors Meraki encryptionMode → auth_cipher; unknown defaults to ``auto``.
-    """
-    if not encryption or not str(encryption).strip():
-        return "auto"
-    compact = str(encryption).casefold().replace(" ", "").replace("-", "").replace("_", "")
-    if "wep" in compact:
-        return "wep"
     if "tkip" in compact or compact in {"wpa", "wpaeap"}:
-        return "tkip"
-    if any(token in compact for token in ("wpa2", "wpa3", "aes", "ccmp", "gcmp", "sae")):
-        return "aes"
-    if compact in {"open", "enhancedopen", "none", "owe"} or compact.startswith("open"):
-        return "auto"
-    return "auto"
+        auth_cipher = "tkip"
+    elif any(token in compact for token in ("wpa2", "wpa3", "aes", "ccmp", "gcmp", "sae")):
+        auth_cipher = "aes"
+    else:
+        auth_cipher = "auto"
+    return auth_type, auth_cipher
 
 
 def _split_if_names(value) -> list[str]:
@@ -198,11 +188,12 @@ def _wlan_status(enabled) -> str:
 
 
 def _wlan_kwargs(ssid: str, *, enabled, encryption: str | None) -> dict:
+    auth_type, auth_cipher = _auth_from_encryption(encryption)
     return {
         "ssid": ssid,
         "status": _wlan_status(enabled),
-        "auth_type": _auth_type_from_encryption(encryption),
-        "auth_cipher": _auth_cipher_from_encryption(encryption),
+        "auth_type": auth_type,
+        "auth_cipher": auth_cipher,
         "tags": PROVENANCE_TAGS,
     }
 
@@ -216,26 +207,22 @@ def _radio_interface_kwargs(
     ssids: list[str],
 ) -> dict:
     interface_id = str(config.get("asset_interface_id") or state.get("asset_interface_id") or "")
-    custom_fields = _interface_custom_fields(interface_id=interface_id or None)
-    kwargs: dict = {
-        "device": device,
-        "name": name,
-        "rf_role": "ap",
-        "tags": PROVENANCE_TAGS,
-    }
-    if custom_fields:
-        kwargs["custom_fields"] = custom_fields
-    if "enabled" in config and isinstance(config.get("enabled"), bool):
-        kwargs["enabled"] = config["enabled"]
+    kwargs = _interface_identity_kwargs(
+        device=device,
+        name=name,
+        interface_id=interface_id or None,
+        enabled=config.get("enabled") if "enabled" in config else None,
+    )
+    kwargs["rf_role"] = "ap"
     radio_type = _radio_type(state.get("radio_mode") or config.get("radio_mode"))
     if radio_type is not None:
         kwargs["type"] = radio_type
     tx_power = _tx_power(state.get("power"))
     if tx_power is not None:
         kwargs["tx_power"] = tx_power
-    bssid = state.get("bssid")
-    if bssid:
-        kwargs["primary_mac_address"] = str(bssid).upper()
+    mac = _normalized_mac(state.get("bssid"))
+    if mac:
+        kwargs["primary_mac_address"] = mac
     frequency = _channel_frequency_mhz(state.get("band"), state.get("channel"))
     if frequency is not None:
         kwargs["rf_channel_frequency"] = frequency
@@ -245,6 +232,35 @@ def _radio_interface_kwargs(
     if ssids:
         kwargs["wireless_lans"] = ssids
     return kwargs
+
+
+def _ensure_wlan(
+    wlans: dict[str, dict],
+    ssid: str,
+    *,
+    enabled=None,
+    encryption=None,
+) -> dict:
+    entry = wlans.setdefault(ssid, {"enabled": None, "encryption": None})
+    if isinstance(enabled, bool):
+        entry["enabled"] = enabled
+    if entry.get("encryption") is None and encryption is not None:
+        entry["encryption"] = encryption
+    return entry
+
+
+def _link_ssid_radios(
+    *,
+    device_id: str,
+    ssid: str,
+    if_names,
+    name_to_key: dict[str, str],
+    ssids_by_radio: dict[tuple[str, str], list[str]],
+) -> None:
+    for if_name in _split_if_names(if_names):
+        radio_key = name_to_key.get(if_name)
+        if radio_key and ssid not in ssids_by_radio[(device_id, radio_key)]:
+            ssids_by_radio[(device_id, radio_key)].append(ssid)
 
 
 def radios_to_entities(
@@ -309,7 +325,7 @@ def radios_to_entities(
                 ssid = str(state_row.get("ssid_name") or "").strip()
                 if ssid and ssid not in ssids_by_radio[(device_id, key)]:
                     ssids_by_radio[(device_id, key)].append(ssid)
-                    wlans.setdefault(ssid, {"enabled": None, "encryption": None})
+                    _ensure_wlan(wlans, ssid)
 
         encryption_by_ssid = {
             str(row.get("name") or "").strip(): row.get("encryption")
@@ -320,26 +336,31 @@ def radios_to_entities(
             ssid = str(row.get("name") or "").strip()
             if not ssid:
                 continue
-            entry = wlans.setdefault(ssid, {"enabled": None, "encryption": None})
-            if isinstance(row.get("enabled"), bool):
-                entry["enabled"] = row["enabled"]
-            if entry.get("encryption") is None and encryption_by_ssid.get(ssid) is not None:
-                entry["encryption"] = encryption_by_ssid[ssid]
-            for if_name in _split_if_names(row.get("if_names")):
-                radio_key = name_to_key.get(if_name)
-                if radio_key and ssid not in ssids_by_radio[(device_id, radio_key)]:
-                    ssids_by_radio[(device_id, radio_key)].append(ssid)
+            _ensure_wlan(
+                wlans,
+                ssid,
+                enabled=row.get("enabled"),
+                encryption=encryption_by_ssid.get(ssid),
+            )
+            _link_ssid_radios(
+                device_id=device_id,
+                ssid=ssid,
+                if_names=row.get("if_names"),
+                name_to_key=name_to_key,
+                ssids_by_radio=ssids_by_radio,
+            )
         for row in ssid_states:
             ssid = str(row.get("name") or "").strip()
             if not ssid:
                 continue
-            entry = wlans.setdefault(ssid, {"enabled": None, "encryption": None})
-            if entry.get("encryption") is None and row.get("encryption") is not None:
-                entry["encryption"] = row.get("encryption")
-            for if_name in _split_if_names(row.get("if_names")):
-                radio_key = name_to_key.get(if_name)
-                if radio_key and ssid not in ssids_by_radio[(device_id, radio_key)]:
-                    ssids_by_radio[(device_id, radio_key)].append(ssid)
+            _ensure_wlan(wlans, ssid, encryption=row.get("encryption"))
+            _link_ssid_radios(
+                device_id=device_id,
+                ssid=ssid,
+                if_names=row.get("if_names"),
+                name_to_key=name_to_key,
+                ssids_by_radio=ssids_by_radio,
+            )
 
     entities = [
         Entity(

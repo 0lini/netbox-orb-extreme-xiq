@@ -56,6 +56,19 @@ __all__ = [
 ]
 
 
+def _log_failed_tables(policy_name: str, failed_tables: list[str], *, domain: str = "") -> None:
+    """Warn once when any ConfigState table degraded during a fan-out."""
+    if not failed_tables:
+        return
+    label = f"ConfigState {domain}degradation" if domain else "ConfigState degradation"
+    logger.warning(
+        "Policy %s: %s this tick; failed tables: %s",
+        policy_name,
+        label,
+        ", ".join(failed_tables),
+    )
+
+
 def _cfg(config, key: str, default=None):
     return getattr(config, key, default) if config is not None else default
 
@@ -263,12 +276,7 @@ class Backend(WorkerBackend):
                 )
             )
         logger.info("Policy %s: mapped %d wired port entities", policy_name, len(entities))
-        if failed_tables:
-            logger.warning(
-                "Policy %s: ConfigState degradation this tick; failed tables: %s",
-                policy_name,
-                ", ".join(failed_tables),
-            )
+        _log_failed_tables(policy_name, failed_tables)
         return entities, primary_ips_by_cs_id
 
     @staticmethod
@@ -296,10 +304,5 @@ class Backend(WorkerBackend):
             )
         entities = transform.radios_to_entities(tables_by_device, device_names=device_names)
         logger.info("Policy %s: mapped %d wireless radio/WLAN entities", policy_name, len(entities))
-        if failed_tables:
-            logger.warning(
-                "Policy %s: ConfigState wireless degradation this tick; failed tables: %s",
-                policy_name,
-                ", ".join(failed_tables),
-            )
+        _log_failed_tables(policy_name, failed_tables, domain="wireless ")
         return entities
