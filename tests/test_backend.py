@@ -16,7 +16,7 @@ import json
 import responses
 from worker.models import Config, Policy
 
-from orb_extreme_platformone.backend import INTERFACE_ID_TABLES, PORT_TABLES, Backend
+from orb_extreme_platformone.backend import INTERFACE_ID_TABLES, PORT_TABLES, WIRELESS_TABLES, Backend
 from orb_extreme_platformone.client import DEFAULT_BASE_URL, configstate_response_key
 from tests.conftest import CS_SWITCH, SWITCH_ASSET
 
@@ -56,6 +56,11 @@ def _mock_empty_port_and_lag_tables():
 def _mock_interface_id_tables_empty():
     """Empty mocks for PoE-config / interface-IP (fetched when interface UUIDs exist)."""
     for table, _ in INTERFACE_ID_TABLES.values():
+        _mock_cs(table, configstate_response_key(table), [])
+
+
+def _mock_empty_wireless_tables():
+    for table, _ in WIRELESS_TABLES.values():
         _mock_cs(table, configstate_response_key(table), [])
 
 
@@ -331,14 +336,14 @@ def test_run_survives_a_failed_port_table_and_keeps_the_rest(caplog):
 
 
 def test_correlate_warns_on_duplicate_serial(caplog):
-    from orb_extreme_platformone.backend import _correlate
+    from orb_extreme_platformone.fetch import correlate
 
     assets = [{"device_id": 1, "serial_number": "SN1"}]
     cs_devices = [
         {"id": "a", "serial_number": "SN1"},
         {"id": "b", "serial_number": "sn1"},
     ]
-    matched = _correlate(assets, cs_devices)
+    matched = correlate(assets, cs_devices)
 
     assert matched[1]["id"] == "a"
     assert "Duplicate ConfigState AssetDevice serial_number" in caplog.text
@@ -540,6 +545,94 @@ def test_run_uncorrelated_device_syncs_without_ports():
     port_calls = [c for c in responses.calls if "/retrieve-asset-port" in c.request.url]
     assert not port_calls
     assert not [c for c in responses.calls if "/retrieve-inferred-cluster" in c.request.url]
+
+
+@responses.activate
+def test_run_maps_ap_radios_and_wlans():
+    ap_asset = {
+        "device_id": 99,
+        "host_name": "ap-lobby",
+        "serial_number": "AP99",
+        "mac_address": "aabbccddee99",
+        "product_type": "AP5050",
+        "function": "AP",
+        "os_version": "10.7.0",
+        "is_connected": True,
+        "ip_address": "10.0.0.99",
+        "site_name": "HQ",
+    }
+    _mock_assets([ap_asset])
+    _mock_cs(
+        "asset-device",
+        "AssetDevice",
+        [{"id": "cs-ap-1", "serial_number": "AP99", "base_mac_address": "AA:BB:CC:DD:EE:99"}],
+    )
+    _mock_cs(
+        "asset-location",
+        "AssetLocation",
+        [{"asset_device_id": "cs-ap-1", "site_name": "HQ", "building_name": "B1", "floor_name": "F1"}],
+    )
+    _mock_cs(
+        "asset-wireless-interface",
+        "AssetWirelessInterface",
+        [
+            {
+                "asset_device_id": "cs-ap-1",
+                "asset_interface_id": "radio-1",
+                "name": "wifi0",
+                "enabled": True,
+            }
+        ],
+    )
+    _mock_cs(
+        "asset-wireless-interface-state",
+        "AssetWirelessInterfaceState",
+        [
+            {
+                "asset_device_id": "cs-ap-1",
+                "asset_interface_id": "radio-1",
+                "name": "wifi0",
+                "band": "5GHz",
+                "channel": 36,
+                "channel_width": 40,
+                "bssid": "aa:bb:cc:dd:ee:01",
+                "power": 15,
+                "radio_mode": "_11ax_5g",
+            }
+        ],
+    )
+    _mock_cs(
+        "asset-ssid-config",
+        "AssetSsidConfig",
+        [{"asset_device_id": "cs-ap-1", "name": "Corp", "enabled": True, "if_names": "wifi0"}],
+    )
+    _mock_cs(
+        "asset-ssid-state",
+        "AssetSsidState",
+        [{"asset_device_id": "cs-ap-1", "name": "Corp", "encryption": "TYPE_802DOT1X", "if_names": "wifi0"}],
+    )
+    _mock_empty_clusters()
+
+    entities = list(Backend().run("platformone_worker", _policy()))
+
+    wlans = [e.wireless_lan for e in entities if e.HasField("wireless_lan")]
+    radios = [e.interface for e in entities if e.HasField("interface")]
+    devices = [e.device for e in entities if e.HasField("device")]
+    assert [d.name for d in devices] == ["ap-lobby"]
+    assert devices[0].role.name == "Wireless AP"
+    assert [w.ssid for w in wlans] == ["Corp"]
+    assert wlans[0].auth_type == "wpa-enterprise"
+    assert wlans[0].status == "active"
+    assert len(radios) == 1
+    assert radios[0].name == "wifi0"
+    assert radios[0].rf_role == "ap"
+    assert radios[0].type == "ieee802.11ax"
+    assert radios[0].tx_power == 15
+    assert radios[0].rf_channel_frequency == 5180.0
+    assert radios[0].rf_channel_width == 40.0
+    assert [w.ssid for w in radios[0].wireless_lans] == ["Corp"]
+    # APs must not trigger switch port retrieves.
+    assert not [c for c in responses.calls if "/retrieve-asset-port-config" in c.request.url]
 
 
 def test_collect_interface_ids_includes_vlan_only_interfaces():

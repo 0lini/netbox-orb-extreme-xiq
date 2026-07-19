@@ -1,68 +1,15 @@
-"""Map Extreme Platform ONE records to Diode entities.
-
-Fields are asserted unconditionally whenever Platform ONE reports the
-underlying data; fields with no Platform ONE equivalent are never asserted.
-Device identity uses the native `serial` field plus deterministic names
-(see `identity`), with `platformone_*` custom fields carried as provenance.
-
-Callers pass "device records" pre-joined by backend.py:
-{"asset": <Assets Device>, "cs_device_id": str | None,
- "cs_device": <ConfigState AssetDevice> | None,
- "location": <AssetLocation> | None}.
-
-InferredCluster rows (ConfigState retrieve-inferred-cluster) map to
-VirtualChassis via `virtual_chassis_to_entities`. LAG interfaces and
-membership come from AssetLagConfig / AssetLagState (and nested or
-fetched member ports) via `ports_to_entities`.
-"""
+"""Switch port, LAG, VLAN, PoE, and interface-IP mapping."""
 
 from __future__ import annotations
 
 import ipaddress
-import logging
 from collections import defaultdict
 
-from netboxlabs.diode.sdk.ingester import (
-    VLAN,
-    CustomFieldValue,
-    Device,
-    DeviceRole,
-    DeviceType,
-    Entity,
-    Interface,
-    IPAddress,
-    Location,
-    Platform,
-    Site,
-    VirtualChassis,
-)
+from netboxlabs.diode.sdk.ingester import VLAN, Entity, Interface, IPAddress
 
-from . import bootstrap
-from .identity import (
-    SLASH_PORT_FUNCTIONS,
-    device_name,
-    device_type_model_for,
-    expand_location_paths,
-    native_port_name,
-    platform_name,
-    resolve_location,
-    role_for,
-)
+from orb_extreme_platformone.identity import SLASH_PORT_FUNCTIONS, native_port_name
 
-__all__ = [
-    "PORT_ENTITY_TABLE_KEYS",
-    "devices_to_entities",
-    "ports_to_entities",
-    "primary_ips_from_tables",
-    "scope_devices",
-    "virtual_chassis_to_entities",
-]
-
-logger = logging.getLogger(__name__)
-
-MANUFACTURER = "Extreme Networks"
-
-PROVENANCE_TAGS = [tag["name"] for tag in bootstrap.TAGS]
+from .common import PROVENANCE_TAGS, _cf_text, logger
 
 # Extreme Networks reserves VIDs 4060–4094 for internal use (e.g. Fabric
 # Engine). These are filtered from Interface untagged/tagged memberships.
@@ -90,39 +37,6 @@ PORT_ENTITY_TABLE_KEYS = frozenset(
         "interface_ips",
     }
 )
-
-
-def _status_for(asset: dict) -> str | None:
-    """Map Assets `is_connected` to Device status; omit when unknown.
-
-    Only an explicit bool is asserted — a missing/null value must not become
-    ``offline`` the way a falsy check would.
-    """
-    connected = asset.get("is_connected")
-    if connected is True:
-        return "active"
-    if connected is False:
-        return "offline"
-    return None
-
-
-def _primary_ips_from_asset(asset: dict) -> dict[str, str]:
-    """Split Assets `ip_address` into primary_ip4 vs primary_ip6.
-
-    Assets reports a bare host with no mask. Inventing /32 or /128 would
-    create misleading host prefixes in NetBox, so a bare address is skipped.
-    Only values that already include a prefix length are asserted (fallback
-    when ConfigState did not yield a primary). Invalid values assert nothing.
-    """
-    raw = (asset.get("ip_address") or "").strip()
-    if not raw or "/" not in raw:
-        return {}
-    try:
-        iface = ipaddress.ip_interface(raw)
-    except ValueError:
-        return {}
-    key = "primary_ip4" if iface.version == 4 else "primary_ip6"
-    return {key: str(iface)}
 
 
 def _mgmt_interface_ids(tables: dict[str, list[dict]]) -> set[str]:
@@ -167,10 +81,10 @@ def primary_ips_from_tables(
     rows_with_cidr: list[tuple[dict, str, ipaddress.IPv4Interface | ipaddress.IPv6Interface]] = []
     for row in tables.get("interface_ips") or []:
         raw = str(row.get("address") or "").strip()
-        mask = row.get("mask_length")
+        mask = _coerce_int(row.get("mask_length"))
         # Require an explicit prefix from ConfigState (mask_length or inline /n);
         # never accept ip_interface's implicit /32 or /128 on a bare host.
-        if not raw or ("/" not in raw and not (isinstance(mask, int) and 0 <= mask <= 128)):
+        if not raw or ("/" not in raw and not (mask is not None and 0 <= mask <= 128)):
             continue
         cidr = _interface_ip_cidr(row)
         if not cidr:
@@ -210,295 +124,6 @@ def primary_ips_from_tables(
             return _pick_primary_cidr(ranked)
 
     return {}
-
-
-def _cf_text(value: str) -> CustomFieldValue:
-    return CustomFieldValue(text=value)
-
-
-def _coord(value) -> float | None:
-    """Return a finite float coordinate, or None when unset/invalid."""
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if number != number:  # NaN
-        return None
-    return number
-
-
-def _site_kwargs(site_name: str, coords: tuple[float | None, float | None] | None) -> dict:
-    kwargs: dict = {"name": site_name}
-    if coords:
-        lat, lon = coords
-        if lat is not None:
-            kwargs["latitude"] = lat
-        if lon is not None:
-            kwargs["longitude"] = lon
-    return kwargs
-
-
-def _device_kwargs(
-    asset: dict,
-    *,
-    site_name: str,
-    location: Location | None,
-    name_source: str,
-    cs_device: dict | None = None,
-    vc_membership: dict | None = None,
-    primary_ips: dict[str, str] | None = None,
-) -> dict:
-    custom_fields: dict = {}
-    if asset.get("device_id") is not None:
-        custom_fields["platformone_device_id"] = _cf_text(str(asset["device_id"]))
-
-    kwargs = {
-        "name": device_name(asset, name_source),
-        "serial": asset.get("serial_number") or None,
-        "site": Site(name=site_name),
-        "custom_fields": custom_fields,
-        "tags": PROVENANCE_TAGS,
-    }
-    status = _status_for(asset)
-    if status is not None:
-        kwargs["status"] = status
-    if location is not None:
-        kwargs["location"] = location
-
-    role = role_for(asset.get("function"))
-    if role:
-        role_name, role_slug = role
-        kwargs["role"] = DeviceRole(name=role_name, slug=role_slug)
-
-    # Assets product_type / os_version preferred; ConfigState model_name /
-    # firmware_version fill gaps when Assets omitted them.
-    cs = cs_device or {}
-    product_type = asset.get("product_type") or cs.get("model_name")
-    if product_type:
-        kwargs["device_type"] = DeviceType(
-            model=device_type_model_for(product_type), manufacturer=MANUFACTURER
-        )
-        kwargs["manufacturer"] = MANUFACTURER
-    os_version = asset.get("os_version") or cs.get("firmware_version")
-    platform = platform_name(asset.get("function"), os_version)
-    if platform:
-        kwargs["platform"] = Platform(name=platform, manufacturer=MANUFACTURER)
-    # ConfigState interface IPs (with mask_length) win; Assets CIDR is fallback.
-    kwargs.update(primary_ips or _primary_ips_from_asset(asset))
-    if vc_membership:
-        kwargs["virtual_chassis"] = VirtualChassis(name=vc_membership["name"])
-        kwargs["vc_position"] = vc_membership["position"]
-    return kwargs
-
-
-def _virtual_chassis_name(cluster: dict, device_one_name: str, device_two_name: str) -> str:
-    """Stable VirtualChassis name from InferredCluster peer names or member device names.
-
-    Requires two distinct peer names so a shared placeholder like "Default" does
-    not collapse every chassis to the same NetBox name. Falls back to distinct
-    member device names, then the cluster UUID.
-    """
-    peers = sorted(
-        {name for name in (cluster.get("device_one_peer_name"), cluster.get("device_two_peer_name")) if name}
-    )
-    if len(peers) >= 2:
-        return " / ".join(peers)
-    members = sorted({device_one_name, device_two_name})
-    if len(members) >= 2:
-        return " / ".join(members)
-    return f"cluster-{cluster.get('id')}"
-
-
-def virtual_chassis_to_entities(
-    clusters: list[dict],
-    *,
-    records_by_cs_id: dict[str, dict],
-    name_source: str = "hostname",
-) -> tuple[list[Entity], dict[str, dict]]:
-    """Map ConfigState InferredCluster rows to VirtualChassis entities + memberships.
-
-    `device_one_id` / `device_two_id` must already be AssetDevice UUIDs
-    (backend remaps from InferredDevice IDs). Both members must be present in
-    `records_by_cs_id` (already site-scoped); partial clusters are skipped so
-    Diode never creates an orphan half-chassis.
-
-    Returns (VC entities, {cs_device_id: {"name", "position"}}) for
-    `devices_to_entities` to attach `virtual_chassis` / `vc_position`.
-    device_one is the primary/master per the InferredCluster schema.
-    """
-    entities: list[Entity] = []
-    memberships: dict[str, dict] = {}
-    used_names: set[str] = set()
-
-    for cluster in clusters:
-        one_id = str(cluster.get("device_one_id") or "")
-        two_id = str(cluster.get("device_two_id") or "")
-        if not one_id or not two_id:
-            continue
-        record_one = records_by_cs_id.get(one_id)
-        record_two = records_by_cs_id.get(two_id)
-        if record_one is None or record_two is None:
-            continue
-
-        name_one = device_name(record_one["asset"], name_source)
-        name_two = device_name(record_two["asset"], name_source)
-        chassis_name = _virtual_chassis_name(cluster, name_one, name_two)
-        # Colliding names are emitted as-is: the unique platformone_cluster_id
-        # custom field makes NetBox reject the merge at ingest, surfacing the
-        # upstream data problem (e.g. stale Assets hostnames) instead of
-        # hiding it behind an invented suffix.
-        if chassis_name in used_names:
-            logger.warning(
-                "Duplicate VirtualChassis name %r (cluster %s); NetBox uniqueness will reject it at ingest",
-                chassis_name,
-                cluster.get("id"),
-            )
-        used_names.add(chassis_name)
-
-        vc_kwargs: dict = {
-            "name": chassis_name,
-            "master": name_one,
-            "tags": PROVENANCE_TAGS,
-        }
-        if cluster.get("id"):
-            vc_kwargs["custom_fields"] = {"platformone_cluster_id": _cf_text(str(cluster["id"]))}
-        entities.append(Entity(virtual_chassis=VirtualChassis(**vc_kwargs)))
-
-        memberships[one_id] = {"name": chassis_name, "position": 1}
-        memberships[two_id] = {"name": chassis_name, "position": 2}
-
-    return entities, memberships
-
-
-def _iter_scoped_devices(records: list[dict], *, site_scope: set[str] | None):
-    """Yield (record, site_name, location_path) for devices that pass scope.
-
-    Single resolve_location pass used by both `scope_devices` and
-    `devices_to_entities`. Platform ONE assigns every device a site itself, so
-    a record without one is unexpected and skipped (with a warning).
-    """
-    for record in records:
-        site_name, location_path = resolve_location(record.get("location"), record["asset"])
-        if site_name is None:
-            asset = record["asset"]
-            logger.warning(
-                "Skipping device %s: Platform ONE reports no site for it",
-                asset.get("host_name") or asset.get("serial_number") or asset.get("device_id"),
-            )
-            continue
-        if site_scope and site_name not in site_scope:
-            continue
-        yield record, site_name, location_path
-
-
-def scope_devices(records: list[dict], *, site_scope: set[str] | None) -> list[dict]:
-    """Return the device records whose resolved site is in site_scope (all, if no scope).
-
-    Ownership: the backend scopes once up front (port fan-out must match the
-    device list). Pass the result to `devices_to_entities` with
-    `site_scope=None` so mapping does not re-filter by site. Direct callers
-    that have not scoped yet may pass `site_scope` into `devices_to_entities`
-    instead.
-    """
-    return [record for record, _, _ in _iter_scoped_devices(records, site_scope=site_scope)]
-
-
-def _merge_site_coords(
-    site_coords: dict[str, tuple[float | None, float | None]],
-    site_name: str,
-    location: dict | None,
-) -> None:
-    """Keep the first non-null lat/lon seen per site name."""
-    if not location:
-        return
-    lat = _coord(location.get("site_latitude"))
-    lon = _coord(location.get("site_longitude"))
-    if lat is None and lon is None:
-        return
-    existing = site_coords.get(site_name)
-    if existing is None:
-        site_coords[site_name] = (lat, lon)
-        return
-    prev_lat, prev_lon = existing
-    site_coords[site_name] = (
-        prev_lat if prev_lat is not None else lat,
-        prev_lon if prev_lon is not None else lon,
-    )
-
-
-def devices_to_entities(
-    records: list[dict],
-    *,
-    name_source: str = "hostname",
-    site_scope: set[str] | None = None,
-    virtual_chassis_entities: list[Entity] | None = None,
-    vc_memberships: dict[str, dict] | None = None,
-    primary_ips_by_cs_id: dict[str, dict[str, str]] | None = None,
-) -> list[Entity]:
-    """Map device records to Diode entities: one Site per distinct site, one
-    nested Location per Building/Floor level in use, VirtualChassis (if any),
-    then one Device per device.
-
-    When the caller has already run `scope_devices` (backend tick path), pass
-    `site_scope=None` so this does not re-filter by site. When calling
-    directly with an unscoped list, pass `site_scope` here instead.
-
-    `vc_memberships` is keyed by ConfigState device UUID (`cs_device_id`).
-    `primary_ips_by_cs_id` supplies Device primary_ip4/primary_ip6 from
-    ConfigState interface IPs (see `primary_ips_from_tables`); when absent,
-    Assets `ip_address` is used only if it already includes a prefix.
-    VirtualChassis entities are emitted after locations and before devices so
-    Diode can resolve membership references in the same ingest batch.
-    """
-    entities: list[Entity] = []
-    resolved: list[tuple[dict, str, list[str]]] = []
-    site_names: set[str] = set()
-    location_paths: set[tuple[str, tuple[str, ...]]] = set()
-    site_coords: dict[str, tuple[float | None, float | None]] = {}
-
-    # One pass: filter (if site_scope set) + resolve. Does not call
-    # scope_devices separately (avoids a second filter pass inside the mapper).
-    for record, site_name, location_path in _iter_scoped_devices(records, site_scope=site_scope):
-        resolved.append((record, site_name, location_path))
-        site_names.add(site_name)
-        _merge_site_coords(site_coords, site_name, record.get("location"))
-        if location_path:
-            location_paths.add((site_name, tuple(location_path)))
-
-    for site_name in sorted(site_names):
-        entities.append(Entity(site=Site(**_site_kwargs(site_name, site_coords.get(site_name)))))
-
-    # expand_location_paths orders ancestors before descendants, so one pass
-    # can thread `parent` through the cache.
-    location_cache: dict[tuple[str, tuple[str, ...]], Location] = {}
-    for site_name, path in expand_location_paths(location_paths):
-        parent = location_cache.get((site_name, path[:-1])) if len(path) > 1 else None
-        location = Location(name=path[-1], site=site_name, parent=parent)
-        location_cache[(site_name, path)] = location
-        entities.append(Entity(location=location))
-
-    if virtual_chassis_entities:
-        entities.extend(virtual_chassis_entities)
-
-    for record, site_name, location_path in resolved:
-        location = location_cache.get((site_name, tuple(location_path))) if location_path else None
-        cs_device_id = record.get("cs_device_id")
-        membership = (vc_memberships or {}).get(cs_device_id) if cs_device_id else None
-        primary_ips = (primary_ips_by_cs_id or {}).get(cs_device_id) if cs_device_id else None
-        kwargs = _device_kwargs(
-            record["asset"],
-            site_name=site_name,
-            location=location,
-            name_source=name_source,
-            cs_device=record.get("cs_device"),
-            vc_membership=membership,
-            primary_ips=primary_ips,
-        )
-        entities.append(Entity(device=Device(**kwargs)))
-
-    return entities
 
 
 # ConfigState reports oper_speed / oper_duplex / connector_type as integer
@@ -602,12 +227,12 @@ def _vlan_fields(vlan_records: list[dict]) -> dict:
     untagged: int | None = None
     mapped: set[int] = set()
     for record in vlan_records:
-        port_vlan = record.get("port_vlan")
-        if untagged is None and isinstance(port_vlan, int) and port_vlan > 0:
+        port_vlan = _coerce_int(record.get("port_vlan"))
+        if untagged is None and port_vlan is not None and port_vlan > 0:
             untagged = port_vlan
         for vlan_map in record.get("vlans") or []:
-            number = vlan_map.get("vlan_number") if isinstance(vlan_map, dict) else None
-            if isinstance(number, int) and number > 0:
+            number = _coerce_int(vlan_map.get("vlan_number")) if isinstance(vlan_map, dict) else None
+            if number is not None and number > 0:
                 mapped.add(number)
     if untagged is not None and _is_extreme_reserved_vlan(untagged):
         untagged = None
@@ -635,14 +260,15 @@ def _vlan_fields_from_port_config(config: dict) -> dict:
     tagging (Fabric Engine). Applied only as a fallback. Extreme reserved
     VIDs (4060–4094) are omitted entirely (no VLAN fields, no mode).
     """
-    native = config.get("native_vlan")
-    if not isinstance(native, int) or native <= 0 or _is_extreme_reserved_vlan(native):
+    native = _coerce_int(config.get("native_vlan"))
+    if native is None or native <= 0 or _is_extreme_reserved_vlan(native):
         return {}
     fields: dict = {"untagged_vlan": VLAN(vid=native)}
     port_mode = config.get("port_mode")
-    if port_mode is True:
-        fields["mode"] = "tagged"
-    elif port_mode is False:
+    # port_mode True means trunk on Fabric Engine, but without a tagged member
+    # list we must not assert mode=tagged (empty tagged_vlans). Leave mode
+    # unset in that case; False is a real access port.
+    if port_mode is False:
         fields["mode"] = "access"
     return fields
 
@@ -661,6 +287,17 @@ def _poe_mode(config: dict, state: dict) -> str | None:
     return None
 
 
+def _coerce_int(value) -> int | None:
+    """Accept JSON ints or digit-only strings; reject floats/bools/garbage."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
 def _interface_ip_cidr(row: dict) -> str | None:
     """Build address/prefix for AssetInterfaceIpAddress → Diode IPAddress.
 
@@ -671,9 +308,9 @@ def _interface_ip_cidr(row: dict) -> str | None:
     raw = str(row.get("address") or "").strip()
     if not raw:
         return None
-    mask = row.get("mask_length")
+    mask = _coerce_int(row.get("mask_length"))
     if "/" not in raw:
-        if not (isinstance(mask, int) and 0 <= mask <= 128):
+        if mask is None or not 0 <= mask <= 128:
             return None
         raw = f"{raw}/{mask}"
     try:

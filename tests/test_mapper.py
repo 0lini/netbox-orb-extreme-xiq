@@ -10,7 +10,7 @@ nested `AssetInterfaceVlanMap` rows), `AssetLagConfig` /
 from __future__ import annotations
 
 from orb_extreme_platformone import mapper
-from orb_extreme_platformone.backend import INTERFACE_ID_TABLES, PORT_TABLES
+from orb_extreme_platformone.backend import INTERFACE_ID_TABLES, PORT_TABLES, WIRELESS_TABLES
 from tests.conftest import PORT_CONFIG, PORT_STATE, SWITCH_ASSET, VLAN_PROPERTIES, cf
 
 
@@ -26,6 +26,10 @@ def _record(asset=SWITCH_ASSET, location=None, cs_device_id="cs-uuid-42", cs_dev
 def test_port_entity_table_keys_match_backend_fetches():
     """Mapper port keys must stay aligned with backend PORT_TABLES + INTERFACE_ID_TABLES."""
     assert frozenset(PORT_TABLES) | frozenset(INTERFACE_ID_TABLES) == mapper.PORT_ENTITY_TABLE_KEYS
+
+
+def test_wireless_entity_table_keys_match_backend_fetches():
+    assert frozenset(WIRELESS_TABLES) == mapper.WIRELESS_ENTITY_TABLE_KEYS
 
 
 def test_devices_to_entities_builds_site_location_chain_and_device(stub_sdk):
@@ -425,7 +429,17 @@ def test_ports_to_entities_falls_back_to_native_vlan_when_no_vlan_properties(stu
 
     port = entities[0]._kw["interface"]._kw
     assert port["untagged_vlan"]._kw == {"vid": 99}
-    assert port["mode"] == "tagged"
+    # Trunk flag without a tagged member list must not invent mode=tagged.
+    assert "mode" not in port
+
+
+def test_ports_to_entities_native_vlan_access_fallback_when_port_mode_false(stub_sdk):
+    config = {**PORT_CONFIG, "native_vlan": 99, "port_mode": False}
+    entities = mapper.ports_to_entities(_tables(port_configs=[config], vlan_properties=[]), device="sw-idf1")
+
+    port = entities[0]._kw["interface"]._kw
+    assert port["untagged_vlan"]._kw == {"vid": 99}
+    assert port["mode"] == "access"
 
 
 def test_ports_to_entities_vlan_properties_win_over_native_vlan_fallback(stub_sdk):
@@ -564,7 +578,7 @@ def test_ports_to_entities_untagged_only_is_access_mode(stub_sdk):
 def test_ports_to_entities_no_vlan_rows_asserts_no_mode():
     """FLEX-UNI/Fabric-Attach ports can be mapped to an I-SID instead of a
     VLAN -- inventing an access mode would misrepresent them."""
-    fields = mapper._vlan_fields([])
+    fields = mapper.ports._vlan_fields([])
     assert fields == {}
 
 
@@ -608,7 +622,7 @@ def test_ports_to_entities_only_reserved_vlan_asserts_no_vlan_or_mode():
         "port_vlan": 4094,
         "vlans": [{"vlan_number": 4094}],
     }
-    assert mapper._vlan_fields([vlan]) == {}
+    assert mapper.ports._vlan_fields([vlan]) == {}
 
 
 def test_ports_to_entities_omits_reserved_native_vlan_fallback(stub_sdk):
@@ -755,7 +769,7 @@ def test_ports_to_entities_skips_lag_row_duplicated_in_port_tables(stub_sdk):
     assert ports[0]["description"] == "core lag"
     assert ports[0]["mark_connected"] is True
     assert ports[0]["primary_mac_address"] == "aa:bb:cc:dd:ee:99"
-    assert ports[0]["mode"] == "tagged"
+    assert "mode" not in ports[0]  # trunk flag without tagged members
     assert ports[0]["untagged_vlan"]._kw["vid"] == 99
     assert "speed" not in ports[0]
     assert "duplex" not in ports[0]
@@ -1004,3 +1018,208 @@ def test_devices_to_entities_attaches_virtual_chassis_membership(stub_sdk):
     assert devices["sw-idf1"]["vc_position"] == 1
     assert devices["sw-idf2"]["vc_position"] == 2
     assert entities[1]._kw["virtual_chassis"]._kw["master"] == "sw-idf1"
+
+
+AP_ASSET = {
+    "device_id": 99,
+    "host_name": "ap-lobby",
+    "serial_number": "AP99",
+    "mac_address": "aabbccddee99",
+    "product_type": "AP5050",
+    "function": "AP",
+    "os_version": "10.7.0",
+    "is_connected": True,
+    "ip_address": "10.0.0.99",
+    "site_name": "Assets-Site",
+}
+
+
+def test_radios_to_entities_maps_native_rf_fields_and_wlans(stub_sdk):
+    tables = {
+        "cs-ap-1": {
+            "wireless_interfaces": [
+                {
+                    "asset_device_id": "cs-ap-1",
+                    "asset_interface_id": "radio-uuid-1",
+                    "name": "wifi0",
+                    "enabled": True,
+                }
+            ],
+            "wireless_states": [
+                {
+                    "asset_device_id": "cs-ap-1",
+                    "asset_interface_id": "radio-uuid-1",
+                    "name": "wifi0",
+                    "band": "5GHz",
+                    "channel": 36,
+                    "channel_width": 80,
+                    "bssid": "aa:bb:cc:dd:ee:01",
+                    "power": 18,
+                    "radio_mode": "_11ax_5g",
+                    "ssid_name": "Corp",
+                }
+            ],
+            "ssid_configs": [
+                {
+                    "asset_device_id": "cs-ap-1",
+                    "name": "Corp",
+                    "enabled": True,
+                    "if_names": "wifi0",
+                },
+                {
+                    "asset_device_id": "cs-ap-1",
+                    "name": "Guest",
+                    "enabled": False,
+                    "if_names": "wifi0",
+                },
+            ],
+            "ssid_states": [
+                {"asset_device_id": "cs-ap-1", "name": "Corp", "encryption": "PSK", "if_names": "wifi0"},
+                {
+                    "asset_device_id": "cs-ap-1",
+                    "name": "Guest",
+                    "encryption": "OPEN",
+                    "if_names": "wifi0",
+                },
+            ],
+        }
+    }
+
+    entities = mapper.radios_to_entities(tables, device_names={"cs-ap-1": "ap-lobby"})
+
+    wlans = {
+        e._kw["wireless_lan"]._kw["ssid"]: e._kw["wireless_lan"]._kw
+        for e in entities
+        if "wireless_lan" in e._kw
+    }
+    radios = [e._kw["interface"]._kw for e in entities if "interface" in e._kw]
+    assert set(wlans) == {"Corp", "Guest"}
+    assert wlans["Corp"]["status"] == "active"
+    assert wlans["Corp"]["auth_type"] == "wpa-personal"
+    assert wlans["Guest"]["status"] == "disabled"
+    assert wlans["Guest"]["auth_type"] == "open"
+    assert len(radios) == 1
+    radio = radios[0]
+    assert radio["device"] == "ap-lobby"
+    assert radio["name"] == "wifi0"
+    assert radio["type"] == "ieee802.11ax"
+    assert radio["rf_role"] == "ap"
+    assert radio["enabled"] is True
+    assert radio["tx_power"] == 18
+    assert radio["primary_mac_address"] == "aa:bb:cc:dd:ee:01"
+    assert radio["rf_channel_frequency"] == 5180.0
+    assert radio["rf_channel_width"] == 80.0
+    assert radio["wireless_lans"] == ["Corp", "Guest"]
+    assert cf(radio["custom_fields"]["platformone_interface_id"]._kw) == "radio-uuid-1"
+
+
+def test_radios_to_entities_leaves_unverified_rf_codes_unset(stub_sdk):
+    tables = {
+        "cs-ap-1": {
+            "wireless_interfaces": [
+                {
+                    "asset_device_id": "cs-ap-1",
+                    "asset_interface_id": "radio-uuid-2",
+                    "name": "wifi1",
+                    "enabled": True,
+                }
+            ],
+            "wireless_states": [
+                {
+                    "asset_device_id": "cs-ap-1",
+                    "asset_interface_id": "radio-uuid-2",
+                    "name": "wifi1",
+                    "band": "mystery",
+                    "channel": 1,
+                    "channel_width": 7,
+                    "radio_mode": "_11be_6g",
+                    "power": 10,
+                }
+            ],
+            "ssid_configs": [],
+            "ssid_states": [],
+        }
+    }
+
+    entities = mapper.radios_to_entities(tables, device_names={"cs-ap-1": "ap-lobby"})
+    radio = entities[0]._kw["interface"]._kw
+    assert "type" not in radio
+    assert "rf_channel_frequency" not in radio
+    assert "rf_channel_width" not in radio
+    assert radio["tx_power"] == 10
+    assert radio["rf_role"] == "ap"
+
+
+def test_radios_to_entities_skips_devices_missing_from_device_names(stub_sdk):
+    tables = {
+        "cs-ap-1": {
+            "wireless_interfaces": [
+                {"asset_device_id": "cs-ap-1", "asset_interface_id": "r1", "name": "wifi0"}
+            ],
+            "wireless_states": [],
+            "ssid_configs": [],
+            "ssid_states": [],
+        }
+    }
+    assert mapper.radios_to_entities(tables, device_names={}) == []
+
+
+def test_radios_to_entities_accepts_band_enum_style_labels(stub_sdk):
+    tables = {
+        "cs-ap-1": {
+            "wireless_interfaces": [
+                {
+                    "asset_device_id": "cs-ap-1",
+                    "asset_interface_id": "radio-uuid-3",
+                    "name": "wifi0",
+                    "enabled": True,
+                }
+            ],
+            "wireless_states": [
+                {
+                    "asset_device_id": "cs-ap-1",
+                    "asset_interface_id": "radio-uuid-3",
+                    "name": "wifi0",
+                    "band": "BAND_5_GHZ",
+                    "channel": 36,
+                    "channel_width": 40,
+                    "radio_mode": "_11ax_5g",
+                }
+            ],
+            "ssid_configs": [],
+            "ssid_states": [],
+        }
+    }
+
+    radio = mapper.radios_to_entities(tables, device_names={"cs-ap-1": "ap-lobby"})[0]._kw["interface"]._kw
+    assert radio["rf_channel_frequency"] == 5180.0
+
+
+def test_radios_to_entities_omits_wlan_status_when_enabled_unknown(stub_sdk):
+    tables = {
+        "cs-ap-1": {
+            "wireless_interfaces": [],
+            "wireless_states": [],
+            "ssid_configs": [{"asset_device_id": "cs-ap-1", "name": "Corp", "if_names": "wifi0"}],
+            "ssid_states": [{"asset_device_id": "cs-ap-1", "name": "Corp", "encryption": "OPEN"}],
+        }
+    }
+
+    wlan = mapper.radios_to_entities(tables, device_names={"cs-ap-1": "ap-lobby"})[0]._kw["wireless_lan"]._kw
+    assert wlan["ssid"] == "Corp"
+    assert "status" not in wlan
+    assert wlan["auth_type"] == "open"
+
+
+def test_ports_to_entities_accepts_string_mask_length(stub_sdk):
+    ips = [
+        {
+            "asset_interface_id": "if-uuid-1",
+            "address": "10.0.0.2",
+            "mask_length": "24",
+            "is_primary": True,
+        }
+    ]
+    entities = mapper.ports_to_entities(_tables(vlan_properties=[], interface_ips=ips), device="sw-idf1")
+    ip_entities = [e._kw["ip_address"]._kw for e in entities if "ip_address" in e._kw]
+    assert ip_entities[0]["address"] == "10.0.0.2/24"
