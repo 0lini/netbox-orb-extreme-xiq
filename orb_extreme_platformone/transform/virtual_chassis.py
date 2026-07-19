@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from netboxlabs.diode.sdk.ingester import Entity, VirtualChassis
 
-from orb_extreme_platformone.identity import device_name
+from orb_extreme_platformone.identity import device_name, resolve_location
 
-from .common import CF_CLUSTER_ID, PROVENANCE_TAGS, _cf_text, logger
+from .common import CF_CLUSTER_ID, PROVENANCE_TAGS, _cf_text, _device_ref, logger
 
 
 def _virtual_chassis_name(cluster: dict, device_one_name: str, device_two_name: str) -> str:
@@ -27,6 +27,26 @@ def _virtual_chassis_name(cluster: dict, device_one_name: str, device_two_name: 
     return f"cluster-{cluster.get('id')}"
 
 
+def _master_ref(record: dict, name: str):
+    """Nested Device stub for VirtualChassis.master (Diode-required fields).
+
+    Name-only master stubs fail Diode generate-diff the same way Interface
+    nested Devices do (site/role/device_type required). That failure drops the
+    whole VirtualChassis entity — including ``platformone_cluster_id`` — and
+    subsequent name-only membership refs create orphan duplicate chassis.
+    """
+    asset = record["asset"]
+    site_name, _ = resolve_location(record.get("location"), asset)
+    cs = record.get("cs_device") or {}
+    product_type = asset.get("product_type") or cs.get("model_name")
+    return _device_ref(
+        name=name,
+        site_name=site_name,
+        function=asset.get("function"),
+        product_type=product_type,
+    )
+
+
 def virtual_chassis_to_entities(
     clusters: list[dict],
     *,
@@ -39,8 +59,8 @@ def virtual_chassis_to_entities(
     `records_by_cs_id` (already site-scoped); partial clusters are skipped so
     Diode never creates an orphan half-chassis.
 
-    Returns (VC entities, {cs_device_id: {"name", "position"}}) for
-    `devices_to_entities` to attach `virtual_chassis` / `vc_position`.
+    Returns (VC entities, {cs_device_id: {"name", "position", "cluster_id"?}})
+    for `devices_to_entities` to attach `virtual_chassis` / `vc_position`.
     device_one is the primary/master per the InferredCluster schema.
     """
     entities: list[Entity] = []
@@ -66,28 +86,35 @@ def virtual_chassis_to_entities(
             )
             continue
         chassis_name = _virtual_chassis_name(cluster, name_one, name_two)
-        # Colliding names are emitted as-is: the unique platformone_cluster_id
-        # custom field makes NetBox reject the merge at ingest, surfacing the
-        # upstream data problem (e.g. stale Assets hostnames) instead of
-        # hiding it behind an invented suffix.
+        # Colliding human names are emitted as-is: NetBox does not unique
+        # VirtualChassis.name (verified 4.6), so identity is the unique
+        # platformone_cluster_id custom field. Warn so upstream hostname
+        # collisions stay visible in worker logs.
         if chassis_name in used_names:
             logger.warning(
-                "Duplicate VirtualChassis name %r (cluster %s); NetBox uniqueness will reject it at ingest",
+                "Duplicate VirtualChassis name %r (cluster %s); "
+                "identity relies on unique platformone_cluster_id",
                 chassis_name,
                 cluster.get("id"),
             )
         used_names.add(chassis_name)
 
+        cluster_id = str(cluster["id"]) if cluster.get("id") else None
         vc_kwargs: dict = {
             "name": chassis_name,
-            "master": name_one,
+            "master": _master_ref(record_one, name_one),
             "tags": PROVENANCE_TAGS,
         }
-        if cluster.get("id"):
-            vc_kwargs["custom_fields"] = {CF_CLUSTER_ID: _cf_text(str(cluster["id"]))}
+        if cluster_id:
+            vc_kwargs["custom_fields"] = {CF_CLUSTER_ID: _cf_text(cluster_id)}
         entities.append(Entity(virtual_chassis=VirtualChassis(**vc_kwargs)))
 
-        memberships[one_id] = {"name": chassis_name, "position": 1}
-        memberships[two_id] = {"name": chassis_name, "position": 2}
+        membership_one: dict = {"name": chassis_name, "position": 1}
+        membership_two: dict = {"name": chassis_name, "position": 2}
+        if cluster_id:
+            membership_one["cluster_id"] = cluster_id
+            membership_two["cluster_id"] = cluster_id
+        memberships[one_id] = membership_one
+        memberships[two_id] = membership_two
 
     return entities, memberships

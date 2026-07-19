@@ -21,12 +21,15 @@ def test_native_port_name_rewrites_colon_ports_for_slash_native_oses():
     assert native_port_name("1:52", "FABRIC ENGINE") == "1/52"
     assert native_port_name("1:52", "VOSS") == "1/52"
     assert native_port_name("2:52:1", "Fabric Engine") == "2/52/1"
+    assert native_port_name("1:s2", "Fabric Engine") == "1/s2"
+    assert native_port_name("1:s1", "VOSS") == "1/s1"
 
 
 def test_native_port_name_keeps_colon_native_oses_and_non_port_names():
     assert native_port_name("1:52", "Switch Engine") == "1:52"
     assert native_port_name("1:52", "EXOS") == "1:52"
     assert native_port_name("1:52", None) == "1:52"
+    assert native_port_name("1:s2", "Switch Engine") == "1:s2"
     assert native_port_name("vlan10", "Fabric Engine") == "vlan10"
     assert native_port_name("lag 1", "Fabric Engine") == "lag 1"
     assert native_port_name("mgmt", "Fabric Engine") == "mgmt"

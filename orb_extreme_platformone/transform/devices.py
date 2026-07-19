@@ -25,7 +25,15 @@ from orb_extreme_platformone.identity import (
     role_for,
 )
 
-from .common import CF_DEVICE_ID, MANUFACTURER, PROVENANCE_TAGS, _cf_text, _explicit_cidr, logger
+from .common import (
+    CF_CLUSTER_ID,
+    CF_DEVICE_ID,
+    MANUFACTURER,
+    PROVENANCE_TAGS,
+    _cf_text,
+    _explicit_cidr,
+    logger,
+)
 
 
 def _status_for(asset: dict) -> str:
@@ -130,7 +138,13 @@ def _device_kwargs(
     # ConfigState interface IPs (with mask_length) win; Assets CIDR is fallback.
     kwargs.update(primary_ips or _primary_ips_from_asset(asset))
     if vc_membership:
-        kwargs["virtual_chassis"] = VirtualChassis(name=vc_membership["name"])
+        # Include platformone_cluster_id so Diode matches the same VC as the
+        # top-level entity (NetBox VirtualChassis.name is not unique).
+        vc_kwargs: dict = {"name": vc_membership["name"]}
+        cluster_id = vc_membership.get("cluster_id")
+        if cluster_id:
+            vc_kwargs["custom_fields"] = {CF_CLUSTER_ID: _cf_text(str(cluster_id))}
+        kwargs["virtual_chassis"] = VirtualChassis(**vc_kwargs)
         kwargs["vc_position"] = vc_membership["position"]
     return kwargs
 
@@ -200,8 +214,8 @@ def devices_to_entities(
     primary_ips_by_cs_id: dict[str, dict[str, str]] | None = None,
 ) -> list[Entity]:
     """Map device records to Diode entities: one Site per distinct site, one
-    nested Location per Building/Floor level in use, VirtualChassis (if any),
-    then one Device per device.
+    nested Location per Building/Floor level in use, Devices, then
+    VirtualChassis (if any).
 
     When the caller has already run `scope_devices` (backend tick path), pass
     `site_scope=None` so this does not re-filter by site. When calling
@@ -211,8 +225,12 @@ def devices_to_entities(
     `primary_ips_by_cs_id` supplies Device primary_ip4/primary_ip6 from
     ConfigState interface IPs (see `primary_ips_from_tables`); when absent,
     Assets `ip_address` is used only if it already includes a prefix.
-    VirtualChassis entities are emitted after locations and before devices so
-    Diode can resolve membership references in the same ingest batch.
+
+    Devices with ``virtual_chassis`` / ``vc_position`` are emitted before the
+    first-class VirtualChassis entities that set ``master``. NetBox rejects
+    assigning a master that is not yet a chassis member; on a fresh VC create
+    Diode applies entities in iterable order within a batch, so membership
+    must land before master.
     """
     entities: list[Entity] = []
     resolved: list[tuple[dict, str, list[str]]] = []
@@ -241,9 +259,6 @@ def devices_to_entities(
         location_cache[(site_name, path)] = location
         entities.append(Entity(location=location))
 
-    if virtual_chassis_entities:
-        entities.extend(virtual_chassis_entities)
-
     for record, site_name, location_path in resolved:
         location = location_cache.get((site_name, tuple(location_path))) if location_path else None
         cs_device_id = record.get("cs_device_id")
@@ -258,5 +273,9 @@ def devices_to_entities(
             primary_ips=primary_ips,
         )
         entities.append(Entity(device=Device(**kwargs)))
+
+    # After member Devices so NetBox accepts VirtualChassis.master on create.
+    if virtual_chassis_entities:
+        entities.extend(virtual_chassis_entities)
 
     return entities

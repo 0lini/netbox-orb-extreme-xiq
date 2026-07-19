@@ -38,8 +38,8 @@ Platform ONE (Assets + ConfigState)
 |---------------------|----------------|
 | Devices (Assets API) | `Device` — name (Assets `host_name` when present), serial, status (`active`/`offline`; unknown → `active`, Meraki-style), role (from Assets `function` when present; no static default), device type and manufacturer, platform (OS family + version), primary IPv4 or IPv6, provenance tags, `platformone_device_id` custom field |
 | Device locations (ConfigState) | `Site` (optional latitude/longitude) plus a nested `Location` chain (building → floor), falling back to the Assets API's flat site name |
-| Switch ports (ConfigState) | `Interface` — name, admin state (`enabled`), link state (`mark_connected`), speed/duplex/type (verified codes), description, MAC (uppercase), `mgmt_only`, `poe_mode`, untagged/tagged VLANs with 802.1Q `mode`, `platformone_interface_id` custom field |
-| VLAN membership (ConfigState) | Interface `untagged_vlan` / `tagged_vlans` by bare `vid` only (switch-local VLAN names are not site-scoped; named VLAN sync via `retrieve-asset-vlan-config` is not used) |
+| Switch ports (ConfigState) | `Interface` — name, admin state (`enabled`), link state (`mark_connected`), speed/duplex (verified codes), `type` (verified codes else `other`), description, MAC (uppercase), `mgmt_only`, `poe_mode`, untagged/tagged VLANs with 802.1Q `mode`, `platformone_interface_id` custom field |
+| VLAN membership (ConfigState) | Interface `untagged_vlan` / `tagged_vlans` by `vid` with `name=str(vid)` (NetBox requires a name; switch-local names are not site-scoped, so VID is the stable placeholder; named VLAN sync via `retrieve-asset-vlan-config` is not used) |
 | Interface IP addresses (ConfigState) | `IPAddress` — address + `mask_length`, `status` `active`, assigned to the matching interface (bare addresses without a prefix are skipped; SVI/orphan IPs also emit a minimal Interface) |
 | Link aggregation (ConfigState) | `Interface` — LAG parent (`type=lag`, name, admin `enabled`, VLAN trunk/access, `poe_mode` when joined, optional description/MAC from duplicate port rows, interface CFs); member ports use the same physical-port fields plus Diode `Interface.lag` |
 | Inferred clusters (ConfigState) | `VirtualChassis` — name from peer names, master = primary member (`device_one`), member `vc_position`, provenance tags, `platformone_cluster_id` custom field |
@@ -434,21 +434,23 @@ transformed from ConfigState tables joined on `asset_interface_id`
   tagged set). Extreme reserved internal VIDs **4060–4094** (inclusive) are
   filtered from ingest: they are omitted from Interface `untagged_vlan` /
   `tagged_vlans`; if a port has only reserved memberships after filtering,
-  `mode` is omitted too. VLANs are referenced by bare `vid` only (names are
-  switch-local while Diode/NetBox VLANs are site-scoped). VLAN groups are
-  not asserted.
+  `mode` is omitted too. VLANs are referenced by `vid` with `name=str(vid)`
+  (NetBox requires a non-blank name; switch-local names are not used because
+  Diode/NetBox VLANs are site-scoped). VLAN groups are not asserted.
 - **Interface IP addresses** from `retrieve-asset-interface-ip-address`
   become Diode `IPAddress` entities with `status` `active` (Meraki/Catalyst),
   assigned to the matching interface, using `address` + `mask_length`. Bare
   addresses without a prefix are skipped (no invented `/32` or `/128`). IPs on
   interfaces with no port/LAG row (e.g. SVIs) also emit a minimal `Interface`
-  first so the address has a real assigned object; `type` is left unset.
+  first so the address has a real assigned object; `type` is `virtual`.
 - **Speed, duplex, and connector use verified codes only.** ConfigState
   reports `oper_speed`, `oper_duplex`, and `connector_type` as integer codes
   with no value table in its OpenAPI spec. Only codes confirmed against
   production hardware are mapped (`oper_speed 4` = 1 Gbit/s, `oper_duplex 2`
   = full, `connector_type 1/2` = copper/fiber, yielding `1000base-t` /
-  `1000base-x-sfp`); unknown codes assert nothing. Config-side `speed` /
+  `1000base-x-sfp`); unknown codes leave speed/duplex unset but set
+  Interface `type` to `other` (NetBox requires a non-blank type; same
+  fallback as AP radios / Meraki). Config-side `speed` /
   `duplex` integers are likewise unverified and are not used as fallbacks.
   MACs are uppercased (Meraki posture).
 
@@ -463,7 +465,7 @@ Membership is taken from the nested `member_ports` list on those rows.
   `platformone_interface_id` from `asset_interface_id` (the existing interface
   UUID CF — `lag_number` is naming-only, not a second custom field). Shared
   joins on that interface id apply vlan-properties (untagged / tagged VLANs by
-  bare `vid` and 802.1Q `mode`), PoE (`poe_mode`), and interface IP addresses the
+  `vid` + `name=str(vid)` and 802.1Q `mode`), PoE (`poe_mode`), and interface IP addresses the
   same way as for physical ports. When AssetPortConfig/State also returns the
   LAG's `asset_interface_id`, description, `mark_connected`, and
   `primary_mac_address` are taken from those rows (and port-config
@@ -474,7 +476,8 @@ Membership is taken from the nested `member_ports` list on those rows.
   and otherwise use the full physical-port field set when port
   config/state/capability/PoE/VLAN data exists. Membership prefers config
   member ports; state members fill gaps. A member named only on the LAG (no
-  port-config/state row) is still emitted with device, name, `lag`, and
+  port-config/state row) is still emitted with device, name, `type=other`,
+  `lag`, and
   provenance tags so membership is not lost.
 - **Not mapped (LACP / MLT extras):** AssetLagConfig also reports `mode`
   (schema: STATIC / LACP / VLACP on Fabric Engine; STATIC / LACP /
@@ -539,7 +542,10 @@ AssetDevice UUIDs, and transforms each complete in-scope pair to a NetBox
   clusters are emitted as-is with a warning: the unique `platformone_cluster_id`
   custom field makes NetBox reject the collision at ingest, surfacing the
   upstream data problem instead of hiding it behind an invented suffix.
-- **Master** is `device_one`; members get `vc_position` 1 and 2.
+- **Master** is `device_one`; members get `vc_position` 1 and 2. Device
+  membership entities are emitted before the VirtualChassis `master` field so
+  a fresh create does not hit NetBox's "master is not assigned to this virtual
+  chassis" validation (Diode applies in iterable order within a batch).
 - **`platformone_cluster_id`** stores the InferredCluster UUID for stable
   correlation; provenance tags match other synced objects.
 - Clusters where either member is missing from the scoped device set are
@@ -563,7 +569,7 @@ documented Platform ONE APIs. Operational differences:
 | Credentials | `XIQ_API_TOKEN` or username/password | `PLATFORMONE_USERNAME` / `PLATFORMONE_PASSWORD`, or `PLATFORMONE_API_TOKEN` |
 | Tags | `extreme-networks`, `xiq`, `discovered` | `extreme-networks`, `platform-one`, `discovered` |
 | Custom fields | `xiq_network_policy`, `xiq_port_id` | `platformone_device_id`, `platformone_interface_id`, `platformone_cluster_id` |
-| Port admin state / VLANs | not available | `enabled`, `mark_connected`, untagged/tagged VLANs by bare `vid`, 802.1Q `mode` |
+| Port admin state / VLANs | not available | `enabled`, `mark_connected`, untagged/tagged VLANs by `vid` + `name=str(vid)`, 802.1Q `mode` |
 | Wireless radios / WLANs | synced (XIQ-era fields) | synced (ConfigState wireless + SSID → native Interface RF fields + WirelessLAN) |
 | Internal layout | monolithic modules | ETL packages: `client` → `extract` → `transform` |
 

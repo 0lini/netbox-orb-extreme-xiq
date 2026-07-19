@@ -5,9 +5,17 @@ from __future__ import annotations
 import ipaddress
 import logging
 
-from netboxlabs.diode.sdk.ingester import CustomFieldValue
+from netboxlabs.diode.sdk.ingester import (
+    CustomFieldValue,
+    Device,
+    DeviceRole,
+    DeviceType,
+    Site,
+)
 
-from orb_extreme_platformone import bootstrap
+from orb_extreme_platformone.identity import device_type_model_for, role_for
+
+from .. import bootstrap
 
 logger = logging.getLogger("orb_extreme_platformone.transform")
 
@@ -24,6 +32,37 @@ def _cf_text(value: str) -> CustomFieldValue:
     return CustomFieldValue(text=value)
 
 
+def _device_ref(
+    *,
+    name: str,
+    site_name: str | None = None,
+    function: str | None = None,
+    product_type: str | None = None,
+) -> Device:
+    """Nested Device stub for Interface / IPAddress / VirtualChassis.master refs.
+
+    Diode's generate-diff validates nested ``dcim.device`` against NetBox
+    required fields (site, role, device_type) even when the device already
+    exists. Name-only stubs therefore fail reconciliation (and for
+    VirtualChassis, drop the whole chassis entity including its unique
+    ``platformone_cluster_id``). Mirror enough identity from the parent
+    Assets row to pass that check; top-level Device entities remain the
+    source of truth.
+    """
+    kwargs: dict = {"name": name}
+    if site_name:
+        kwargs["site"] = Site(name=site_name)
+    role = role_for(function)
+    if role:
+        role_name, role_slug = role
+        kwargs["role"] = DeviceRole(name=role_name, slug=role_slug)
+    model = device_type_model_for(product_type)
+    if model:
+        kwargs["device_type"] = DeviceType(model=model, manufacturer=MANUFACTURER)
+        kwargs["manufacturer"] = MANUFACTURER
+    return Device(**kwargs)
+
+
 def _interface_custom_fields(*, interface_id: str | None = None) -> dict:
     """Build interface custom fields (ConfigState asset_interface_id)."""
     if not interface_id:
@@ -31,9 +70,24 @@ def _interface_custom_fields(*, interface_id: str | None = None) -> dict:
     return {CF_INTERFACE_ID: _cf_text(str(interface_id))}
 
 
+def _coerce_bool(value) -> bool | None:
+    """Accept JSON bools, 0/1, or common true/false strings; else None."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().casefold()
+        if text in {"true", "1", "yes"}:
+            return True
+        if text in {"false", "0", "no"}:
+            return False
+    return None
+
+
 def _interface_identity_kwargs(
     *,
-    device: str,
+    device: str | Device,
     name: str,
     interface_id: str | None = None,
     enabled=None,
@@ -47,8 +101,9 @@ def _interface_identity_kwargs(
     custom_fields = _interface_custom_fields(interface_id=interface_id)
     if custom_fields:
         kwargs["custom_fields"] = custom_fields
-    if isinstance(enabled, bool):
-        kwargs["enabled"] = enabled
+    coerced = _coerce_bool(enabled)
+    if coerced is not None:
+        kwargs["enabled"] = coerced
     return kwargs
 
 

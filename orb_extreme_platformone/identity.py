@@ -30,8 +30,11 @@ AP_DEVICE_FUNCTIONS = frozenset({"AP"})
 # and keep that form.
 SLASH_PORT_FUNCTIONS = frozenset({"FABRIC ENGINE", "VOSS"})
 
-# slot:port with optional channel levels, e.g. "1:52" or "1:52:1".
-_COLON_PORT_NAME_RE = re.compile(r"^\d+(?::\d+)+$")
+# slot:port with optional channel levels, e.g. "1:52", "1:52:1", or Insight
+# ports "1:s1" / "1:s2". Segments after the slot may be alphanumeric so the
+# colon→slash rewrite covers Insight ports too; named interfaces (lag 1,
+# vlan10) never match this shape.
+_COLON_PORT_NAME_RE = re.compile(r"^\d+(?::[A-Za-z0-9]+)+$")
 
 
 def is_switch(function: str | None) -> bool:
@@ -47,8 +50,9 @@ def is_ap(function: str | None) -> bool:
 def native_port_name(name: str, function: str | None) -> str:
     """Rewrite ConfigState's slot:port notation to the switch OS's native form.
 
-    "1:52" becomes "1/52" on Fabric Engine / VOSS; every other OS (and any
-    name that is not pure slot:port, e.g. "lag 1" or "vlan10") passes through.
+    "1:52" becomes "1/52" (and "1:s2" → "1/s2") on Fabric Engine / VOSS; every
+    other OS (and any name that is not slot:port, e.g. "lag 1" or "vlan10")
+    passes through.
     """
     if function and function.upper() in SLASH_PORT_FUNCTIONS and _COLON_PORT_NAME_RE.match(name):
         return name.replace(":", "/")

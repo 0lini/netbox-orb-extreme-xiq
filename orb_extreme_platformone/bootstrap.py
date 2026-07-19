@@ -64,18 +64,21 @@ TAGS = [
     {
         "name": "extreme-networks",
         "slug": "extreme-networks",
-        "color": "2196f3",
+        # Extreme Networks brand primary purple (#440099).
+        "color": "440099",
         "description": "Objects synced from Extreme Networks via netbox-orb-extreme-platformone.",
     },
     {
         "name": "platform-one",
         "slug": "platform-one",
-        "color": "2196f3",
+        # Same Extreme brand purple as extreme-networks (#440099).
+        "color": "440099",
         "description": "Objects synced from Extreme Platform ONE via netbox-orb-extreme-platformone.",
     },
     {
         "name": "discovered",
         "slug": "discovered",
+        # Neutral gray — provenance marker, not brand-colored.
         "color": "9e9e9e",
         "description": "Objects created by automated discovery rather than manually.",
     },
