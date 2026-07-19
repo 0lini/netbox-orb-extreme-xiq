@@ -141,14 +141,24 @@ STUB_CLASSES = {
 
 @pytest.fixture
 def stub_sdk(monkeypatch):
-    """Swap the real Diode SDK classes `mapper` imported for kwargs-recording stubs.
+    """Swap the real Diode SDK classes mapper submodules imported for stubs.
 
     The real classes build protobuf messages, which are awkward to assert on
     directly; these stand-ins record constructor kwargs on `._kw` instead, so
-    tests can assert on the *shape* of what mapper.py builds.
+    tests can assert on the *shape* of what the mapper builds.
     """
+    import orb_extreme_platformone.mapper.common as mapper_common
+    import orb_extreme_platformone.mapper.devices as mapper_devices
+    import orb_extreme_platformone.mapper.ports as mapper_ports
+    import orb_extreme_platformone.mapper.virtual_chassis as mapper_vc
+    import orb_extreme_platformone.mapper.wireless as mapper_wireless
+
+    modules = (mapper, mapper_common, mapper_devices, mapper_ports, mapper_vc, mapper_wireless)
     for name, cls in STUB_CLASSES.items():
-        monkeypatch.setattr(mapper, name, cls)
+        for mod in modules:
+            # Only patch names the module actually binds (imports or defines).
+            if name in mod.__dict__:
+                monkeypatch.setattr(mod, name, cls)
     return STUB_CLASSES
 
 
