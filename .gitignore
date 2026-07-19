@@ -10,10 +10,9 @@ dist/
 test.json
 
 # Local NetBox + Diode test stack secrets / generated files
+# (dev/netbox/env/*.env are committed local demo defaults — not production secrets)
 dev/.env.local
 dev/diode/.env
 dev/diode/oauth2/client/client-credentials.json
 dev/netbox/secrets/
-dev/netbox/env/*.env
-!dev/netbox/env/*.env.example
 dev/agent.local.yaml

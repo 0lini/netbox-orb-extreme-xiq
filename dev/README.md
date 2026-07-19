@@ -4,6 +4,11 @@ This stack runs **NetBox** (with the Diode plugin) and the **Diode server** via
 `docker compose`, on one shared network, for exercising this Orb worker against
 a real ingest path.
 
+**Local demo only.** Committed NetBox/Postgres/Redis env files under
+`dev/netbox/env/` use well-known insecure defaults (password `netbox`, UI
+`admin`/`admin`, fixed `SECRET_KEY`). Do not reuse them outside this compose
+stack.
+
 ## Prerequisites
 
 - `docker` / Podman with the docker CLI shim (`podman-docker`)
@@ -31,9 +36,11 @@ docker compose -f dev/docker-compose.yml up -d --build
 | NetBox UI | http://localhost:8000 (`admin` / `admin`) |
 | Diode gRPC | `grpc://localhost:8080/diode` |
 
-Generated secrets and agent env land in gitignored files (`dev/.env.local`,
-`dev/diode/.env`, `dev/netbox/env/*.env`). Templates live next to them as
-`*.env.example`.
+`setup.sh` generates Diode OAuth / server env and `agent.local.yaml` into
+gitignored files (`dev/.env.local`, `dev/diode/.env`, OAuth
+`client-credentials.json`, `dev/netbox/secrets/`). NetBox compose env under
+`dev/netbox/env/*.env` is already committed with local demo defaults, so
+`compose up` works without inventing secrets first.
 
 After NetBox is up, mint a REST API token for bootstrap:
 
@@ -61,7 +68,7 @@ tags are created. Set it to `false` afterward.
 
 ## Dev Container
 
-1. Run `./dev/setup.sh` once on the host (creates OAuth secrets before compose starts).
+1. Run `./dev/setup.sh` once on the host (creates Diode OAuth secrets before compose starts).
 2. Command Palette → **Dev Containers: Reopen in Container**.
 
 That uses `.devcontainer/devcontainer.json`, which starts the same
@@ -76,8 +83,8 @@ container, NetBox is `http://netbox:8080` and Diode is
 | `dev/docker-compose.yml` | NetBox services + includes Diode compose + workspace |
 | `dev/diode/` | Upstream Diode server compose + nginx |
 | `dev/netbox/` | NetBox image with `netboxlabs-diode-netbox-plugin` |
-| `dev/setup.sh` | Generates OAuth + NetBox env secrets and `agent.local.yaml` |
-| `dev/netbox/env/*.env.example` | Templates; real `*.env` files are generated and gitignored |
+| `dev/setup.sh` | Generates Diode OAuth + `agent.local.yaml` (not NetBox env) |
+| `dev/netbox/env/*.env` | Committed local demo defaults for NetBox/Postgres/Redis |
 | `.devcontainer/` | VS Code / Cursor Dev Container definition |
 
 ## Tear down

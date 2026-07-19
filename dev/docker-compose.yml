@@ -1,6 +1,7 @@
 # Local NetBox + Diode + workspace for orb worker development.
+# NetBox/Postgres/Redis env under ./netbox/env/ are committed local demo defaults.
 # Usage:
-#   ./dev/setup.sh          # generate secrets once
+#   ./dev/setup.sh          # generate Diode OAuth + agent.local.yaml once
 #   docker compose -f dev/docker-compose.yml up -d --build
 # Or: reopen this repo in a Dev Container (starts the same compose file).
 
