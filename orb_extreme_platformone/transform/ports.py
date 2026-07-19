@@ -129,13 +129,15 @@ def primary_ips_from_tables(
 # ConfigState reports oper_speed / oper_duplex / connector_type as integer
 # codes with no value table in its OpenAPI spec. Only codes verified against
 # production hardware (or fixtures derived from that gear) are mapped;
-# unknown codes assert nothing. Admin `enabled` is mapped; link/oper state is
-# not (Meraki/ACI/Catalyst do not assert mark_connected).
+# unknown codes assert nothing. Admin `enabled` and link `mark_connected`
+# (from IF-MIB-style oper_state) are both asserted so admin-down vs link-down
+# stay distinguishable.
 #
 # Verified in-repo today: oper_speed 4, oper_duplex 2, connector_type 1/2.
 # Config-side speed/duplex integers remain unverified and are not used.
 VERIFIED_OPER_SPEED_KBPS = {4: 1_000_000}
 VERIFIED_DUPLEX = {2: "full"}
+OPER_STATE_UP = 1
 
 # (oper_speed, connector_type) -> NetBox interface type. connector_type:
 # 1 = copper, 2 = fiber. Unlisted combinations leave `type` unset.
@@ -366,8 +368,12 @@ def _port_kwargs(
         poe_state=poe_state,
     )
 
-    # Link/oper state is not mapped: Meraki/ACI/Catalyst assert admin `enabled`
-    # only (no mark_connected). Keep speed/duplex/type from verified codes.
+    # Link state maps to mark_connected, never to `enabled` -- admin state is
+    # asserted separately above.
+    oper_state = state.get("oper_state")
+    if oper_state is not None:
+        kwargs["mark_connected"] = oper_state == OPER_STATE_UP
+
     speed = VERIFIED_OPER_SPEED_KBPS.get(state.get("oper_speed"))
     if speed is not None:
         kwargs["speed"] = speed
@@ -458,8 +464,9 @@ def _lag_kwargs(
     `enabled`, `platformone_interface_id` (`asset_interface_id`). Shared joins
     on that interface id fill VLAN trunk/access, PoE, and (separately)
     IPAddress entities. When port config/state also lists the same id, pull
-    fields lag tables lack (`description`, MAC, port-config VLAN fallback) —
-    never speed/duplex/connector `type`, which would overwrite `type=lag`.
+    fields lag tables lack (`description`, `mark_connected`, MAC, port-config
+    VLAN fallback) — never speed/duplex/connector `type`, which would
+    overwrite `type=lag`.
 
     AssetLagConfig also carries LACP `mode` / `lacp_key` / `load_balance_algo`
     / `dynamic`, but Diode's Interface has no matching fields and the mode /
@@ -484,8 +491,12 @@ def _lag_kwargs(
 
     if port_config and port_config.get("description"):
         kwargs["description"] = port_config["description"]
-    if port_state and port_state.get("mac_address"):
-        kwargs["primary_mac_address"] = str(port_state["mac_address"]).upper()
+    if port_state:
+        oper_state = port_state.get("oper_state")
+        if oper_state is not None:
+            kwargs["mark_connected"] = oper_state == OPER_STATE_UP
+        if port_state.get("mac_address"):
+            kwargs["primary_mac_address"] = str(port_state["mac_address"]).upper()
     return kwargs
 
 

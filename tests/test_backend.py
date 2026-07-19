@@ -165,7 +165,7 @@ def test_run_produces_site_location_device_and_interface_entities():
     assert interface.name == "1/1"
     assert interface.device.name == "sw-idf1"
     assert interface.enabled is True
-    assert not interface.HasField("mark_connected")
+    assert interface.mark_connected is True
     assert interface.speed == 1_000_000
     assert interface.type == "1000base-t"
     assert interface.untagged_vlan.vid == 10

@@ -290,7 +290,7 @@ def test_ports_to_entities_maps_config_state_and_vlans_onto_one_interface(stub_s
     assert port["device"] == "sw-idf1"
     assert port["name"] == "1/1"
     assert port["enabled"] is True
-    assert "mark_connected" not in port
+    assert port["mark_connected"] is True
     assert port["speed"] == 1_000_000
     assert port["duplex"] == "full"
     assert port["type"] == "1000base-t"
@@ -318,7 +318,7 @@ def test_ports_to_entities_state_only_port_still_syncs_link_state(stub_sdk):
     )
 
     port = entities[0]._kw["interface"]._kw
-    assert "mark_connected" not in port
+    assert port["mark_connected"] is False
     assert "enabled" not in port
 
 
@@ -331,7 +331,7 @@ def test_ports_to_entities_admin_down_and_link_down_are_independent(stub_sdk):
 
     port = entities[0]._kw["interface"]._kw
     assert port["enabled"] is False
-    assert "mark_connected" not in port
+    assert port["mark_connected"] is False
 
 
 def test_ports_to_entities_unverified_enum_codes_assert_nothing(stub_sdk):
@@ -670,9 +670,9 @@ def test_ports_to_entities_ports_join_on_interface_id_not_row_order(stub_sdk):
 
     ports = {e._kw["interface"]._kw["name"]: e._kw["interface"]._kw for e in entities}
     assert ports["1/1"]["enabled"] is True
-    assert "mark_connected" not in ports["1/1"]
+    assert ports["1/1"]["mark_connected"] is True
     assert ports["1/2"]["enabled"] is False
-    assert "mark_connected" not in ports["1/2"]
+    assert ports["1/2"]["mark_connected"] is False
 
 
 LAG_CONFIG = {
@@ -786,7 +786,7 @@ def test_ports_to_entities_skips_lag_row_duplicated_in_port_tables(stub_sdk):
     assert ports[0]["name"] == "lag1"
     assert ports[0]["type"] == "lag"
     assert ports[0]["description"] == "core lag"
-    assert "mark_connected" not in ports[0]
+    assert ports[0]["mark_connected"] is True
     assert ports[0]["primary_mac_address"] == "AA:BB:CC:DD:EE:99"
     assert "mode" not in ports[0]  # trunk flag without tagged members
     assert ports[0]["untagged_vlan"]._kw["vid"] == 99

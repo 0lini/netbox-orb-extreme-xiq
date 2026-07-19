@@ -38,7 +38,7 @@ Platform ONE (Assets + ConfigState)
 |---------------------|----------------|
 | Devices (Assets API) | `Device` — name (Assets `host_name` when present), serial, status (`active`/`offline`; unknown → `active`, Meraki-style), role (from Assets `function` when present; no static default), device type and manufacturer, platform (OS family + version), primary IPv4 or IPv6, provenance tags, `platformone_device_id` custom field |
 | Device locations (ConfigState) | `Site` (optional latitude/longitude) plus a nested `Location` chain (building → floor), falling back to the Assets API's flat site name |
-| Switch ports (ConfigState) | `Interface` — name, admin state (`enabled`), speed/duplex/type (verified codes), description, MAC (uppercase), `mgmt_only`, `poe_mode`, untagged/tagged VLANs with 802.1Q `mode`, `platformone_interface_id` custom field |
+| Switch ports (ConfigState) | `Interface` — name, admin state (`enabled`), link state (`mark_connected`), speed/duplex/type (verified codes), description, MAC (uppercase), `mgmt_only`, `poe_mode`, untagged/tagged VLANs with 802.1Q `mode`, `platformone_interface_id` custom field |
 | VLAN membership (ConfigState) | Interface `untagged_vlan` / `tagged_vlans` by bare `vid` only (switch-local VLAN names are not site-scoped; named VLAN sync via `retrieve-asset-vlan-config` is not used) |
 | Interface IP addresses (ConfigState) | `IPAddress` — address + `mask_length`, `status` `active`, assigned to the matching interface (bare addresses without a prefix are skipped; SVI/orphan IPs also emit a minimal Interface) |
 | Link aggregation (ConfigState) | `Interface` — LAG parent (`type=lag`, name, admin `enabled`, VLAN trunk/access, `poe_mode` when joined, optional description/MAC from duplicate port rows, interface CFs); member ports use the same physical-port fields plus Diode `Interface.lag` |
@@ -397,9 +397,11 @@ Every in-scope device whose Assets `function` is a switch OS has its ports
 transformed from ConfigState tables joined on `asset_interface_id`
 (capabilities join on `(asset_device_id, port_name)`):
 
-- **Admin state** comes from `AssetPortConfig.enabled` → Interface `enabled`
-  (Meraki/ACI/Catalyst map admin state the same way; link/oper state is not
-  asserted as `mark_connected`).
+- **Admin state and link state are independent fields.** `enabled` reflects
+  real administrative state (`AssetPortConfig.enabled`); link state is
+  asserted separately as `mark_connected` (`AssetPortState.oper_state`,
+  IF-MIB-style 1 = up), so an admin-down port and a link-down port are
+  distinguishable in NetBox.
 - **Management-only** comes from `AssetPortCapabilities.management_port`
   (`retrieve-asset-port-capabilities`).
 - **PoE mode** is `pse` when `AssetPoePowerPortsState.supported` is true or
@@ -447,8 +449,9 @@ Membership is taken from the nested `member_ports` list on those rows.
   joins on that interface id apply vlan-properties (untagged / tagged VLANs by
   bare `vid` and 802.1Q `mode`), PoE (`poe_mode`), and interface IP addresses the
   same way as for physical ports. When AssetPortConfig/State also returns the
-  LAG's `asset_interface_id`, description and `primary_mac_address` are taken
-  from those rows (and port-config `native_vlan` is a VLAN fallback);
+  LAG's `asset_interface_id`, description, `mark_connected`, and
+  `primary_mac_address` are taken from those rows (and port-config
+  `native_vlan` is a VLAN fallback);
   speed/duplex/connector type are not, so `type=lag` is never overwritten.
   Port-table duplicates are not emitted as a second Interface.
 - **Members** set Diode `Interface.lag` to the parent LAG (by device + name)
@@ -544,7 +547,7 @@ documented Platform ONE APIs. Operational differences:
 | Credentials | `XIQ_API_TOKEN` or username/password | `PLATFORMONE_USERNAME` / `PLATFORMONE_PASSWORD`, or `PLATFORMONE_API_TOKEN` |
 | Tags | `extreme-networks`, `xiq`, `discovered` | `extreme-networks`, `platform-one`, `discovered` |
 | Custom fields | `xiq_network_policy`, `xiq_port_id` | `platformone_device_id`, `platformone_interface_id`, `platformone_cluster_id` |
-| Port admin state / VLANs | not available | `enabled`, untagged/tagged VLANs by bare `vid`, 802.1Q `mode` |
+| Port admin state / VLANs | not available | `enabled`, `mark_connected`, untagged/tagged VLANs by bare `vid`, 802.1Q `mode` |
 | Wireless radios / WLANs | synced (XIQ-era fields) | synced (ConfigState wireless + SSID → native Interface RF fields + WirelessLAN) |
 | Internal layout | monolithic modules | ETL packages: `client` → `extract` → `transform` |
 
