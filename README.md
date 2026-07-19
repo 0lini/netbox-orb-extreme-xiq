@@ -36,9 +36,9 @@ Platform ONE (Assets + ConfigState)
 
 | Platform ONE source | NetBox objects |
 |---------------------|----------------|
-| Devices (Assets API) | `Device` — name (Assets `host_name` when present), serial, status (`active`/`offline`; unknown → `active`, Meraki-style), role (from Assets `function` when present; no static default), device type and manufacturer, platform (OS family + version), primary IPv4 or IPv6, provenance tags, `platformone_device_id` + `platformone_serial` custom fields |
+| Devices (Assets API) | `Device` — name (Assets `host_name` when present), serial, status (`active`/`offline`; unknown → `active`, Meraki-style), role (from Assets `function` when present; no static default), device type and manufacturer, platform (OS family + version), primary IPv4 or IPv6, provenance tags, `platformone_device_id` custom field |
 | Device locations (ConfigState) | `Site` (optional latitude/longitude) plus a nested `Location` chain (building → floor), falling back to the Assets API's flat site name |
-| Switch ports (ConfigState) | `Interface` — name, admin state (`enabled`), speed/duplex/type (verified codes), description, MAC (uppercase), `mgmt_only`, `poe_mode`, untagged/tagged VLANs with 802.1Q `mode`, `platformone_interface_id` + `platformone_serial` custom fields |
+| Switch ports (ConfigState) | `Interface` — name, admin state (`enabled`), speed/duplex/type (verified codes), description, MAC (uppercase), `mgmt_only`, `poe_mode`, untagged/tagged VLANs with 802.1Q `mode`, `platformone_interface_id` custom field |
 | VLAN membership (ConfigState) | Interface `untagged_vlan` / `tagged_vlans` by bare `vid` only (switch-local VLAN names are not site-scoped; named VLAN sync via `retrieve-asset-vlan-config` is not used) |
 | Interface IP addresses (ConfigState) | `IPAddress` — address + `mask_length`, `status` `active`, assigned to the matching interface (bare addresses without a prefix are skipped; SVI/orphan IPs also emit a minimal Interface) |
 | Link aggregation (ConfigState) | `Interface` — LAG parent (`type=lag`, name, admin `enabled`, VLAN trunk/access, `poe_mode` when joined, optional description/MAC from duplicate port rows, interface CFs); member ports use the same physical-port fields plus Diode `Interface.lag` |
@@ -299,7 +299,6 @@ Same `{product}_{attribute}` pattern as Meraki (`meraki_*`) and ACI (`aci_*`) / 
 | `platformone_device_id` | Device | Assets `device_id` (unique) |
 | `platformone_interface_id` | Interface | ConfigState `asset_interface_id` (unique) |
 | `platformone_cluster_id` | VirtualChassis | InferredCluster UUID (unique) |
-| `platformone_serial` | Device, Interface | Assets `serial_number` (like Meraki `meraki_serial`; also on native `Device.serial`) |
 
 ### Assurance-ready output
 
@@ -544,7 +543,7 @@ documented Platform ONE APIs. Operational differences:
 | Package / `config.package` | `orb_extreme_xiq` | `orb_extreme_platformone` |
 | Credentials | `XIQ_API_TOKEN` or username/password | `PLATFORMONE_USERNAME` / `PLATFORMONE_PASSWORD`, or `PLATFORMONE_API_TOKEN` |
 | Tags | `extreme-networks`, `xiq`, `discovered` | `extreme-networks`, `platform-one`, `discovered` |
-| Custom fields | `xiq_network_policy`, `xiq_port_id` | `platformone_device_id`, `platformone_interface_id`, `platformone_cluster_id`, `platformone_serial` |
+| Custom fields | `xiq_network_policy`, `xiq_port_id` | `platformone_device_id`, `platformone_interface_id`, `platformone_cluster_id` |
 | Port admin state / VLANs | not available | `enabled`, untagged/tagged VLANs by bare `vid`, 802.1Q `mode` |
 | Wireless radios / WLANs | synced (XIQ-era fields) | synced (ConfigState wireless + SSID → native Interface RF fields + WirelessLAN) |
 | Internal layout | monolithic modules | ETL packages: `client` → `extract` → `transform` |

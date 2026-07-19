@@ -324,12 +324,11 @@ def _iface_base_kwargs(
     name: str,
     interface_id: str | None,
     config: dict,
-    serial: str | None = None,
     poe_config: dict | None = None,
     poe_state: dict | None = None,
 ) -> dict:
     """Shared identity / admin / PoE fields for physical ports and LAG parents."""
-    custom_fields = _interface_custom_fields(interface_id=interface_id, serial=serial)
+    custom_fields = _interface_custom_fields(interface_id=interface_id)
     kwargs: dict = {
         "device": device,
         "name": name,
@@ -354,7 +353,6 @@ def _port_kwargs(
     config: dict,
     state: dict,
     vlan_records: list[dict],
-    serial: str | None = None,
     capability: dict | None = None,
     poe_config: dict | None = None,
     poe_state: dict | None = None,
@@ -364,7 +362,6 @@ def _port_kwargs(
         name=name,
         interface_id=interface_id,
         config=config,
-        serial=serial,
         poe_config=poe_config,
         poe_state=poe_state,
     )
@@ -450,7 +447,6 @@ def _lag_kwargs(
     interface_id: str | None,
     config: dict,
     vlan_records: list[dict],
-    serial: str | None = None,
     poe_config: dict | None = None,
     poe_state: dict | None = None,
     port_config: dict | None = None,
@@ -476,7 +472,6 @@ def _lag_kwargs(
         name=name,
         interface_id=interface_id,
         config=config,
-        serial=serial,
         poe_config=poe_config,
         poe_state=poe_state,
     )
@@ -529,7 +524,6 @@ def _lag_entities(
     poe_configs: dict[str, list[dict]],
     poe_states: dict[str, list[dict]],
     interface_ips: dict[str, list[dict]],
-    serial: str | None = None,
     port_configs: dict[str, list[dict]] | None = None,
     port_states: dict[str, list[dict]] | None = None,
 ) -> tuple[list[Entity], set[str], set[str], dict[str, str], dict[str, str]]:
@@ -564,7 +558,6 @@ def _lag_entities(
             interface_id=str(interface_id) if interface_id else None,
             config=config,
             vlan_records=vlans.get(key, []),
-            serial=serial,
             poe_config=_optional_first_row(poe_configs, key, table="poe_configs"),
             poe_state=_optional_first_row(poe_states, key, table="poe_states"),
             port_config=_optional_first_row(port_configs, key, table="port_configs"),
@@ -592,7 +585,6 @@ def _physical_port_entities(
     lag_names: set[str],
     lag_interface_ids: set[str],
     membership: dict[str, str],
-    serial: str | None = None,
 ) -> tuple[list[Entity], set[str], dict[str, str]]:
     """Emit physical (non-LAG) port interfaces joined on asset_interface_id."""
     entities: list[Entity] = []
@@ -619,7 +611,6 @@ def _physical_port_entities(
             config=config,
             state=state,
             vlan_records=vlans.get(key, []),
-            serial=serial,
             capability=capabilities.get((port_device_id, name)),
             poe_config=_optional_first_row(poe_configs, key, table="poe_configs"),
             poe_state=_optional_first_row(poe_states, key, table="poe_states"),
@@ -667,7 +658,6 @@ def _orphan_ip_entities(
     device: str,
     interface_ips: dict[str, list[dict]],
     emitted_keys: dict[str, str],
-    serial: str | None = None,
 ) -> list[Entity]:
     """IPs on interfaces that got no Interface entity above (e.g. VLAN/SVI
     interfaces, which appear in vlan_properties but not the port tables).
@@ -697,7 +687,6 @@ def _orphan_ip_entities(
             }
             custom_fields = _interface_custom_fields(
                 interface_id=str(interface_id) if interface_id else None,
-                serial=serial,
             )
             if custom_fields:
                 iface_kwargs["custom_fields"] = custom_fields
@@ -740,7 +729,6 @@ def ports_to_entities(
     *,
     device: str,
     function: str | None = None,
-    serial: str | None = None,
 ) -> list[Entity]:
     """Map one switch's ConfigState port + LAG + VLAN tables to Diode entities.
 
@@ -778,7 +766,6 @@ def ports_to_entities(
         poe_configs=poe_configs,
         poe_states=poe_states,
         interface_ips=interface_ips,
-        serial=serial,
         port_configs=configs,
         port_states=states,
     )
@@ -796,7 +783,6 @@ def ports_to_entities(
         lag_names=lag_names,
         lag_interface_ids=lag_interface_ids,
         membership=membership,
-        serial=serial,
     )
     entities.extend(port_entities)
     emitted_keys.update(port_keys)
@@ -805,8 +791,6 @@ def ports_to_entities(
         _orphan_member_entities(device=device, membership=membership, emitted_port_names=emitted_port_names)
     )
     entities.extend(
-        _orphan_ip_entities(
-            device=device, interface_ips=interface_ips, emitted_keys=emitted_keys, serial=serial
-        )
+        _orphan_ip_entities(device=device, interface_ips=interface_ips, emitted_keys=emitted_keys)
     )
     return entities

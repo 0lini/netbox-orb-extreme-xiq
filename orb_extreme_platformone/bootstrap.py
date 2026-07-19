@@ -42,18 +42,6 @@ CUSTOM_FIELDS = [
         "unique": True,
     },
     {
-        "name": "platformone_serial",
-        "label": "Platform ONE Serial",
-        "type": "text",
-        "object_types": ["dcim.device", "dcim.interface"],
-        "description": (
-            "Assets serial_number for correlation (mirrors Meraki meraki_serial / "
-            "Catalyst catalyst_serial_number). Also asserted natively on Device.serial."
-        ),
-        "filter_logic": "exact",
-        "unique": False,
-    },
-    {
         "name": "platformone_cluster_id",
         "label": "Platform ONE Cluster ID",
         "type": "text",

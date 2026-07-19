@@ -95,14 +95,8 @@ def _device_kwargs(
     custom_fields: dict = {}
     if asset.get("device_id") is not None:
         custom_fields["platformone_device_id"] = _cf_text(str(asset["device_id"]))
-    serial = asset.get("serial_number") or None
-    if serial:
-        # Mirrors Meraki `meraki_serial` / Catalyst `catalyst_serial_number`:
-        # native Device.serial plus a product-prefixed CF for correlation.
-        custom_fields["platformone_serial"] = _cf_text(str(serial))
-
     kwargs = {
-        "serial": serial,
+        "serial": asset.get("serial_number") or None,
         "site": Site(name=site_name),
         "custom_fields": custom_fields,
         "tags": PROVENANCE_TAGS,

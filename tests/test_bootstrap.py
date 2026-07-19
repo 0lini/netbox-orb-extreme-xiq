@@ -45,11 +45,7 @@ def test_ensure_schema_creates_missing_definitions():
         for c in responses.calls
         if c.request.method == "POST" and "custom-fields" in c.request.url
     ]
-    by_name = {body["name"]: body for body in field_bodies}
-    assert by_name["platformone_device_id"]["unique"] is True
-    assert by_name["platformone_interface_id"]["unique"] is True
-    assert by_name["platformone_cluster_id"]["unique"] is True
-    assert by_name["platformone_serial"]["unique"] is False
+    assert all(body["unique"] is True for body in field_bodies)
 
 
 @responses.activate
@@ -81,8 +77,7 @@ def test_ensure_schema_patches_unique_onto_existing_fields():
     bootstrap.ensure_schema(NETBOX, "token")
 
     patches = [c for c in responses.calls if c.request.method == "PATCH"]
-    # Only fields with unique=True are patched when an existing row is unique=False.
-    assert len(patches) == sum(1 for f in bootstrap.CUSTOM_FIELDS if f.get("unique") is True)
+    assert len(patches) == len(bootstrap.CUSTOM_FIELDS)
     assert all(json.loads(c.request.body) == {"unique": True} for c in patches)
     # Tags carry no `unique` concept; existing tags are left untouched.
     assert not [c for c in responses.calls if c.request.method == "POST"]
@@ -94,16 +89,11 @@ def test_custom_fields_and_tags_speak_platform_one():
         "platformone_device_id",
         "platformone_interface_id",
         "platformone_cluster_id",
-        "platformone_serial",
     }
     by_name = {f["name"]: f for f in bootstrap.CUSTOM_FIELDS}
     assert by_name["platformone_device_id"]["object_types"] == ["dcim.device"]
     assert by_name["platformone_interface_id"]["object_types"] == ["dcim.interface"]
     assert by_name["platformone_cluster_id"]["object_types"] == ["dcim.virtualchassis"]
-    assert by_name["platformone_serial"]["object_types"] == ["dcim.device", "dcim.interface"]
-    assert by_name["platformone_serial"]["unique"] is False
-    assert all(
-        field["unique"] is True for field in bootstrap.CUSTOM_FIELDS if field["name"] != "platformone_serial"
-    )
+    assert all(field["unique"] is True for field in bootstrap.CUSTOM_FIELDS)
     slugs = {tag["slug"] for tag in bootstrap.TAGS}
     assert slugs == {"extreme-networks", "platform-one", "discovered"}

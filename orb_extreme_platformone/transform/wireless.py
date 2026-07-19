@@ -214,13 +214,9 @@ def _radio_interface_kwargs(
     config: dict,
     state: dict,
     ssids: list[str],
-    serial: str | None = None,
 ) -> dict:
     interface_id = str(config.get("asset_interface_id") or state.get("asset_interface_id") or "")
-    custom_fields = _interface_custom_fields(
-        interface_id=interface_id or None,
-        serial=serial,
-    )
+    custom_fields = _interface_custom_fields(interface_id=interface_id or None)
     kwargs: dict = {
         "device": device,
         "name": name,
@@ -255,15 +251,13 @@ def radios_to_entities(
     tables_by_device: dict[str, dict[str, list[dict]]],
     *,
     device_names: dict[str, str],
-    device_serials: dict[str, str] | None = None,
 ) -> list[Entity]:
     """Map ConfigState wireless + SSID tables to Interface and WirelessLAN entities.
 
     `tables_by_device` maps ConfigState AssetDevice UUID -> wireless table
     buckets (`wireless_interfaces`, `wireless_states`, `ssid_configs`,
     `ssid_states`). `device_names` maps the same UUID to the NetBox device
-    name already used for Device entities. `device_serials` supplies
-    `platformone_serial` on radio Interfaces (Meraki-style).
+    name already used for Device entities.
 
     Each radio becomes an Interface with native RF fields (`rf_role`,
     `tx_power`, `rf_channel_frequency`, `rf_channel_width`, `type`,
@@ -273,7 +267,6 @@ def radios_to_entities(
     sites. SSIDs link to radios via `AssetSsid*.if_names` and any
     `ssid_name` on wireless interface state rows.
     """
-    device_serials = device_serials or {}
     wlans: dict[str, dict] = {}
     ssids_by_radio: dict[tuple[str, str], list[str]] = defaultdict(list)
     radio_rows: dict[tuple[str, str], dict] = {}
@@ -369,7 +362,6 @@ def radios_to_entities(
                         config=radio["config"],
                         state=state,
                         ssids=ssids_by_radio.get((device_id, key), []),
-                        serial=device_serials.get(device_id),
                     )
                 )
             )
