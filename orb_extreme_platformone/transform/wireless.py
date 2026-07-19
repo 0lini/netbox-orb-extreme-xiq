@@ -64,10 +64,16 @@ def _channel_frequency_mhz(band: str | None, channel: int | None) -> float | Non
     if not band:
         return None
     # Collapse separators so BAND_5_GHZ / "5 GHz" / "5g" all normalize alike.
+    # BAND_2_4_GHZ → "band24ghz"; match via "24g" substring (covers 24ghz / 24g).
     normalized = _compact_token(band)
     if "6g" in normalized or normalized in {"6", "band6"}:
         offset = 5950.0
-    elif "2.4" in normalized or "2,4" in normalized or normalized in {"24g", "2g", "band24", "band2.4"}:
+    elif (
+        "2.4" in normalized
+        or "2,4" in normalized
+        or "24g" in normalized
+        or normalized in {"2g", "band24", "band2.4"}
+    ):
         offset = 2407.0
     elif "5g" in normalized or normalized in {"5", "band5"}:
         offset = 5000.0
