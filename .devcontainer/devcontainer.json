@@ -1,0 +1,60 @@
+{
+  "name": "Platform ONE Orb + NetBox/Diode",
+  "dockerComposeFile": ["../dev/docker-compose.yml"],
+  "service": "workspace",
+  "workspaceFolder": "/workspaces/netbox-orb-extreme-platformone",
+  "shutdownAction": "stopCompose",
+  "runServices": [
+    "workspace",
+    "netbox",
+    "netbox-worker",
+    "netbox-postgres",
+    "netbox-redis",
+    "netbox-redis-cache",
+    "ingress-nginx",
+    "diode-ingester",
+    "diode-reconciler",
+    "diode-auth",
+    "redis",
+    "postgres",
+    "hydra",
+    "hydra-migrate",
+    "diode-auth-bootstrap"
+  ],
+  "containerEnv": {
+    "COMPOSE_PROFILES": "devcontainer"
+  },
+  "forwardPorts": [8000, 8080],
+  "portsAttributes": {
+    "8000": { "label": "NetBox", "onAutoForward": "notify" },
+    "8080": { "label": "Diode", "onAutoForward": "silent" }
+  },
+  "postCreateCommand": "bash -lc 'pip install -e \".[dev]\" && test -f dev/.env.local || ./dev/setup.sh'",
+  "postStartCommand": "bash -lc 'echo NetBox: $NETBOX_API_URL  Diode: $DIODE_TARGET'",
+  "remoteEnv": {
+    "NETBOX_API_URL": "http://netbox:8080",
+    "DIODE_TARGET": "grpc://ingress-nginx:80/diode"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python"
+      },
+      "mcp": {
+        "servers": {
+          "netbox": {
+            "type": "stdio",
+            "command": "bash",
+            "args": ["${workspaceFolder}/dev/netbox-mcp.sh"]
+          }
+        }
+      }
+    }
+  }
+}
+
