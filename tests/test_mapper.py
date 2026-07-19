@@ -63,7 +63,7 @@ def test_devices_to_entities_maps_the_assets_fields(stub_sdk):
     assert "primary_ip4" not in device
     assert "primary_ip6" not in device
     assert device["role"]._kw == {"name": "Switch", "slug": "switch"}
-    assert cf(device["custom_fields"]["platformone_id"]._kw) == "42"
+    assert cf(device["custom_fields"]["platformone_device_id"]._kw) == "42"
     # The ConfigState UUID stays an internal join key; it is not synced.
     assert "platformone_configstate_device_id" not in device["custom_fields"]
     assert device["tags"] == ["extreme-networks", "platform-one", "discovered"]
@@ -286,7 +286,7 @@ def test_ports_to_entities_maps_config_state_and_vlans_onto_one_interface(stub_s
     assert port["untagged_vlan"]._kw == {"vid": 10}
     assert [v._kw["vid"] for v in port["tagged_vlans"]] == [20, 30]
     assert port["mode"] == "tagged"
-    assert cf(port["custom_fields"]["platformone_id"]._kw) == "if-uuid-1"
+    assert cf(port["custom_fields"]["platformone_interface_id"]._kw) == "if-uuid-1"
 
 
 def test_ports_to_entities_config_only_port_still_syncs_admin_state(stub_sdk):
@@ -531,7 +531,7 @@ def test_ports_to_entities_emits_svi_ips_via_interface_name(stub_sdk):
     svi = next(i for i in iface_entities if i["name"] == "vlan10")
     assert svi["device"] == "sw-idf1"
     assert "type" not in svi
-    assert cf(svi["custom_fields"]["platformone_id"]._kw) == "if-svi"
+    assert cf(svi["custom_fields"]["platformone_interface_id"]._kw) == "if-svi"
 
     ip_entities = [e._kw["ip_address"]._kw for e in entities if "ip_address" in e._kw]
     assert [ip["address"] for ip in ip_entities] == ["10.0.10.1/24"]
@@ -681,7 +681,7 @@ def test_ports_to_entities_maps_lag_parent_and_member_refs(stub_sdk):
     assert [e._kw["interface"]._kw["name"] for e in entities][0] == "lag1"
     assert ports["lag1"]["type"] == "lag"
     assert ports["lag1"]["enabled"] is True
-    assert cf(ports["lag1"]["custom_fields"]["platformone_id"]._kw) == "lag-if-1"
+    assert cf(ports["lag1"]["custom_fields"]["platformone_interface_id"]._kw) == "lag-if-1"
     assert ports["1/1"]["lag"]._kw == {"device": "sw-idf1", "name": "lag1"}
     assert ports["1/2"]["lag"]._kw == {"device": "sw-idf1", "name": "lag1"}
 
@@ -816,7 +816,7 @@ def test_ports_to_entities_lag_joins_poe_and_ip_like_physical_ports(stub_sdk):
     ips_out = [e._kw["ip_address"]._kw for e in entities if "ip_address" in e._kw]
     assert interfaces[0]["type"] == "lag"
     assert interfaces[0]["poe_mode"] == "pse"
-    assert cf(interfaces[0]["custom_fields"]["platformone_id"]._kw) == "lag-if-1"
+    assert cf(interfaces[0]["custom_fields"]["platformone_interface_id"]._kw) == "lag-if-1"
     assert "lag_number" not in interfaces[0].get("custom_fields", {})
     assert ips_out[0]["address"] == "10.0.0.1/24"
     assert ips_out[0]["assigned_object_interface"]._kw["name"] == "lag1"
@@ -885,7 +885,7 @@ def test_virtual_chassis_to_entities_maps_inferred_cluster(stub_sdk):
     assert vc["master"] == "sw-idf1"
     assert "description" not in vc
     assert vc["tags"] == ["extreme-networks", "platform-one", "discovered"]
-    assert cf(vc["custom_fields"]["platformone_id"]._kw) == "cluster-uuid-1"
+    assert cf(vc["custom_fields"]["platformone_cluster_id"]._kw) == "cluster-uuid-1"
     assert "domain" not in vc
     assert "comments" not in vc
     assert memberships == {
@@ -945,7 +945,7 @@ def test_virtual_chassis_ignores_identical_placeholder_peer_names(stub_sdk):
 
 def test_virtual_chassis_warns_on_duplicate_computed_names(stub_sdk, caplog):
     """Colliding names are emitted as-is (no invented suffix): the unique
-    platformone_id custom field rejects the merge at ingest, and the
+    platformone_cluster_id custom field rejects the merge at ingest, and the
     worker warns so the upstream data problem is visible in the logs."""
     twin = {
         "device_id": 44,
