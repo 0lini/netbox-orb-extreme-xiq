@@ -56,7 +56,7 @@ def _mock_empty_port_and_lag_tables():
 
 
 def _mock_interface_id_tables_empty():
-    """Empty mocks for PoE-config / interface-IP (fetched when interface UUIDs exist)."""
+    """Empty mocks for interface-IP (fetched when interface UUIDs exist)."""
     for table, _ in INTERFACE_ID_TABLES.values():
         _mock_cs(table, configstate_response_key(table), [])
 
@@ -201,7 +201,6 @@ def test_run_sets_device_primary_ip_from_configstate_interface_cidr():
     _mock_cs("asset-lag-state", "AssetLagState", [])
     _mock_cs("asset-port-capabilities", "AssetPortCapabilities", [])
     _mock_cs("asset-poe-power-ports-state", "AssetPoePowerPortsState", [])
-    _mock_cs("asset-poe-power-ports-config", "AssetPoePowerPortsConfig", [])
     _mock_cs(
         "asset-interface-ip-address",
         "AssetInterfaceIpAddress",

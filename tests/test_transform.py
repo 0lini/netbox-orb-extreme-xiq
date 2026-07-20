@@ -178,14 +178,18 @@ def test_primary_ips_from_tables_skips_bare_addresses_without_mask():
     assert transform.primary_ips_from_tables(tables) == {}
 
 
-def test_devices_to_entities_uses_configstate_model_and_firmware_fallbacks(stub_sdk):
+def test_devices_to_entities_ignores_configstate_model_and_firmware(stub_sdk):
+    """Device type / OS version come from Assets only — no CS model/firmware fill-in."""
     asset = {**SWITCH_ASSET, "product_type": None, "os_version": None}
     cs = {"id": "cs-uuid-42", "model_name": "FabricEngine_5520_24T", "firmware_version": "8.10.1.0"}
     entities = transform.devices_to_entities([_record(asset=asset, cs_device=cs)])
 
     device = entities[-1]._kw["device"]._kw
-    assert device["device_type"]._kw["model"] == "5520-24T-FabricEngine"
-    assert device["platform"]._kw["name"] == "Fabric Engine 8.10.1.0"
+    assert "device_type" not in device
+    # OS family alone may still form a platform; CS firmware must not appear.
+    platform = device.get("platform")
+    if platform is not None:
+        assert "8.10.1.0" not in platform._kw["name"]
 
 
 def test_devices_to_entities_non_switch_function_platform_is_version_only(stub_sdk):
@@ -421,13 +425,29 @@ def test_ports_to_entities_maps_poe_mode_pse_when_supported(stub_sdk):
     assert "poe_type" not in port
 
 
-def test_ports_to_entities_omits_poe_when_not_supported_or_enabled(stub_sdk):
+def test_ports_to_entities_omits_poe_when_not_supported(stub_sdk):
     poe_state = {
         "device_id": "cs-uuid-42",
         "asset_interface_id": "if-uuid-1",
         "supported": False,
     }
-    poe_config = {"asset_interface_id": "if-uuid-1", "enable": False}
+    entities = transform.ports_to_entities(
+        _tables(vlan_properties=[], poe_states=[poe_state]),
+        device="sw-idf1",
+    )
+
+    assert "poe_mode" not in entities[0]._kw["interface"]._kw
+
+
+def test_ports_to_entities_ignores_poe_config_enable_without_supported(stub_sdk):
+    """PoE admin enable alone does not imply pse — only state.supported does."""
+    poe_state = {
+        "device_id": "cs-uuid-42",
+        "asset_interface_id": "if-uuid-1",
+        "supported": False,
+    }
+    # poe_configs are no longer fetched; even if present in tables, ignored.
+    poe_config = {"asset_interface_id": "if-uuid-1", "enable": True}
     entities = transform.ports_to_entities(
         _tables(vlan_properties=[], poe_states=[poe_state], poe_configs=[poe_config]),
         device="sw-idf1",
@@ -436,30 +456,19 @@ def test_ports_to_entities_omits_poe_when_not_supported_or_enabled(stub_sdk):
     assert "poe_mode" not in entities[0]._kw["interface"]._kw
 
 
-def test_ports_to_entities_falls_back_to_native_vlan_when_no_vlan_properties(stub_sdk):
+def test_ports_to_entities_does_not_use_native_vlan_without_vlan_properties(stub_sdk):
+    """VLANs come only from vlan-properties — no AssetPortConfig.native_vlan invent."""
     config = {**PORT_CONFIG, "native_vlan": 99, "port_mode": True}
     entities = transform.ports_to_entities(
         _tables(port_configs=[config], vlan_properties=[]), device="sw-idf1"
     )
 
     port = entities[0]._kw["interface"]._kw
-    assert port["untagged_vlan"]._kw == {"vid": 99, "name": "99"}
-    # Trunk flag without a tagged member list must not invent mode=tagged.
+    assert "untagged_vlan" not in port
     assert "mode" not in port
 
 
-def test_ports_to_entities_native_vlan_access_fallback_when_port_mode_false(stub_sdk):
-    config = {**PORT_CONFIG, "native_vlan": 99, "port_mode": False}
-    entities = transform.ports_to_entities(
-        _tables(port_configs=[config], vlan_properties=[]), device="sw-idf1"
-    )
-
-    port = entities[0]._kw["interface"]._kw
-    assert port["untagged_vlan"]._kw == {"vid": 99, "name": "99"}
-    assert port["mode"] == "access"
-
-
-def test_ports_to_entities_vlan_properties_win_over_native_vlan_fallback(stub_sdk):
+def test_ports_to_entities_vlan_properties_still_apply_with_native_vlan_present(stub_sdk):
     config = {**PORT_CONFIG, "native_vlan": 99, "port_mode": True}
     entities = transform.ports_to_entities(_tables(port_configs=[config]), device="sw-idf1")
 
@@ -671,18 +680,6 @@ def test_ports_to_entities_only_reserved_vlan_asserts_no_vlan_or_mode():
     assert transform.ports._vlan_fields([vlan]) == {}
 
 
-def test_ports_to_entities_omits_reserved_native_vlan_fallback(stub_sdk):
-    """native_vlan fallback also strips Extreme reserved VIDs."""
-    config = {**PORT_CONFIG, "native_vlan": 4094, "port_mode": True}
-    entities = transform.ports_to_entities(
-        _tables(port_configs=[config], vlan_properties=[]),
-        device="sw-idf1",
-    )
-    port = entities[0]._kw["interface"]._kw
-    assert "untagged_vlan" not in port
-    assert "mode" not in port
-
-
 def test_ports_to_entities_ports_join_on_interface_id_not_row_order(stub_sdk):
     config2 = {**PORT_CONFIG, "asset_interface_id": "if-uuid-2", "name": "1/2", "enabled": False}
     state2 = {**PORT_STATE, "asset_interface_id": "if-uuid-2", "name": "1/2", "oper_state": 2}
@@ -775,8 +772,8 @@ def test_ports_to_entities_skips_lag_without_name(stub_sdk):
     assert entities == []
 
 
-def test_ports_to_entities_member_only_from_lag_still_emits_interface(stub_sdk):
-    """A member named only on the LAG still becomes an Interface with lag set."""
+def test_ports_to_entities_skips_lag_members_without_port_rows(stub_sdk):
+    """LAG membership alone does not invent stub member Interfaces."""
     entities = transform.ports_to_entities(
         _tables(
             port_configs=[],
@@ -789,9 +786,7 @@ def test_ports_to_entities_member_only_from_lag_still_emits_interface(stub_sdk):
     )
 
     ports = {e._kw["interface"]._kw["name"]: e._kw["interface"]._kw for e in entities}
-    assert set(ports) == {"lag1", "1/1", "1/2"}
-    assert ports["1/1"]["lag"]._kw["name"] == "lag1"
-    assert ports["1/1"]["type"] == "other"
+    assert set(ports) == {"lag1"}
 
 
 def test_ports_to_entities_skips_lag_row_duplicated_in_port_tables(stub_sdk):
@@ -802,8 +797,6 @@ def test_ports_to_entities_skips_lag_row_duplicated_in_port_tables(stub_sdk):
         "name": "lag1",
         "enabled": True,
         "description": "core lag",
-        "native_vlan": 99,
-        "port_mode": True,
     }
     lag_as_state = {
         "asset_device_id": "cs-uuid-42",
@@ -833,8 +826,8 @@ def test_ports_to_entities_skips_lag_row_duplicated_in_port_tables(stub_sdk):
     assert ports[0]["description"] == "core lag"
     assert ports[0]["mark_connected"] is True
     assert ports[0]["primary_mac_address"] == "AA:BB:CC:DD:EE:99"
-    assert "mode" not in ports[0]  # trunk flag without tagged members
-    assert ports[0]["untagged_vlan"]._kw["vid"] == 99
+    assert "untagged_vlan" not in ports[0]
+    assert "mode" not in ports[0]
     assert "speed" not in ports[0]
     assert "duplex" not in ports[0]
 
@@ -950,7 +943,6 @@ def test_ports_to_entities_ignores_vlan_rows_without_asset_interface_id(stub_sdk
 def test_ports_to_entities_lag_joins_poe_and_ip_like_physical_ports(stub_sdk):
     """PoE + IP joins use the LAG's asset_interface_id the same way as ports."""
     poe_state = {"asset_interface_id": "lag-if-1", "supported": True}
-    poe_config = {"asset_interface_id": "lag-if-1", "enable": True}
     ips = [
         {
             "asset_interface_id": "lag-if-1",
@@ -966,7 +958,6 @@ def test_ports_to_entities_lag_joins_poe_and_ip_like_physical_ports(stub_sdk):
             lag_configs=[{**LAG_CONFIG, "member_ports": []}],
             lag_states=[],
             poe_states=[poe_state],
-            poe_configs=[poe_config],
             interface_ips=ips,
         ),
         device="sw-idf1",

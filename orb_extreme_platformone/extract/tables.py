@@ -23,7 +23,6 @@ PORT_TABLES = {
 # Tables that only filter by asset_interface_id (no device filter). Fetched
 # after port/LAG rows are collected so interface UUIDs are known.
 INTERFACE_ID_TABLES = {
-    "poe_configs": ("asset-poe-power-ports-config", "asset_interface_id"),
     "interface_ips": ("asset-interface-ip-address", "asset_interface_id"),
 }
 

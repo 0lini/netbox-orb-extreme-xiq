@@ -43,10 +43,11 @@ def attach_interface_id_tables(
     policy_name: str,
     failed_tables: list[str],
 ) -> None:
-    """Fetch PoE config + interface IPs by collected interface UUIDs.
+    """Fetch interface IPs by collected interface UUIDs.
 
-    These ConfigState tables have no device filter; rows are bucketed back
-    onto devices via the interface→device map from port/LAG/PoE-state rows.
+    ``retrieve-asset-interface-ip-address`` has no device filter; rows are
+    bucketed back onto devices via the interface→device map from port/LAG/
+    VLAN/PoE-state rows.
     """
     interface_to_device = collect_interface_ids(tables_by_device)
     for tables in tables_by_device.values():
@@ -80,9 +81,9 @@ def extract_port_tables(
     """Batched device-filtered port/LAG tables, then interface-UUID tables.
 
     Returns ``(tables_by_device, failed_tables)``. Independent device-filtered
-    tables retrieve concurrently; PoE-config / interface-IP tables run afterward
-    once ``asset_interface_id`` values are known. LAG membership comes from
-    nested ``member_ports`` on lag-config/state rows.
+    tables retrieve concurrently; interface-IP tables run afterward once
+    ``asset_interface_id`` values are known. LAG membership comes from
+    nested ``member_ports`` on lag-config rows.
     """
     tables_by_device, failed_tables = extract_device_table_buckets(
         client,

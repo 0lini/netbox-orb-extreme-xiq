@@ -9,12 +9,12 @@ from orb_extreme_platformone.identity import device_name, resolve_location
 from .common import CF_CLUSTER_ID, PROVENANCE_TAGS, _cf_text, _device_ref, logger
 
 
-def _virtual_chassis_name(cluster: dict, device_one_name: str, device_two_name: str) -> str:
-    """Stable VirtualChassis name from InferredCluster peer names or member device names.
+def _virtual_chassis_name(cluster: dict, device_one_name: str, device_two_name: str) -> str | None:
+    """Stable VirtualChassis name from peer names or member device names.
 
     Requires two distinct peer names so a shared placeholder like "Default" does
     not collapse every chassis to the same NetBox name. Falls back to distinct
-    member device names, then the cluster UUID.
+    member device names. No invented ``cluster-{uuid}`` name.
     """
     peers = sorted(
         {name for name in (cluster.get("device_one_peer_name"), cluster.get("device_two_peer_name")) if name}
@@ -24,7 +24,7 @@ def _virtual_chassis_name(cluster: dict, device_one_name: str, device_two_name: 
     members = sorted({device_one_name, device_two_name})
     if len(members) >= 2:
         return " / ".join(members)
-    return f"cluster-{cluster.get('id')}"
+    return None
 
 
 def _master_ref(record: dict, name: str):
@@ -37,13 +37,11 @@ def _master_ref(record: dict, name: str):
     """
     asset = record["asset"]
     site_name, _ = resolve_location(record.get("location"), asset)
-    cs = record.get("cs_device") or {}
-    product_type = asset.get("product_type") or cs.get("model_name")
     return _device_ref(
         name=name,
         site_name=site_name,
         function=asset.get("function"),
-        product_type=product_type,
+        product_type=asset.get("product_type"),
     )
 
 
@@ -86,6 +84,12 @@ def virtual_chassis_to_entities(
             )
             continue
         chassis_name = _virtual_chassis_name(cluster, name_one, name_two)
+        if not chassis_name:
+            logger.warning(
+                "Skipping InferredCluster %s: no distinct peer or member names for VirtualChassis",
+                cluster.get("id"),
+            )
+            continue
         # Colliding human names are emitted as-is: NetBox does not unique
         # VirtualChassis.name (verified 4.6), so identity is the unique
         # platformone_cluster_id custom field. Warn so upstream hostname

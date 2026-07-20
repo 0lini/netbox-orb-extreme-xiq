@@ -77,7 +77,6 @@ def _device_kwargs(
     *,
     site_name: str,
     location: Location | None,
-    cs_device: dict | None = None,
     vc_membership: dict | None = None,
     primary_ips: dict[str, str] | None = None,
 ) -> dict:
@@ -102,17 +101,15 @@ def _device_kwargs(
         role_name, role_slug = role
         kwargs["role"] = DeviceRole(name=role_name, slug=role_slug)
 
-    # Assets product_type / os_version preferred; ConfigState model_name /
-    # firmware_version fill gaps when Assets omitted them.
-    cs = cs_device or {}
-    product_type = asset.get("product_type") or cs.get("model_name")
+    # Assets product_type / os_version only — no ConfigState model_name /
+    # firmware_version fallback.
+    product_type = asset.get("product_type")
     if product_type:
         kwargs["device_type"] = DeviceType(
             model=device_type_model_for(product_type), manufacturer=MANUFACTURER
         )
         kwargs["manufacturer"] = MANUFACTURER
-    os_version = asset.get("os_version") or cs.get("firmware_version")
-    platform = platform_name(asset.get("function"), os_version)
+    platform = platform_name(asset.get("function"), asset.get("os_version"))
     if platform:
         kwargs["platform"] = Platform(name=platform, manufacturer=MANUFACTURER)
     # Primary IPs come only from ConfigState interface rows (with mask_length).
@@ -251,7 +248,6 @@ def devices_to_entities(
             record["asset"],
             site_name=site_name,
             location=location,
-            cs_device=record.get("cs_device"),
             vc_membership=membership,
             primary_ips=primary_ips,
         )
