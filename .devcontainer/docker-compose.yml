@@ -94,8 +94,10 @@ services:
       - netbox-redis-cache-data:/data
 
   # Loopback-only publish (upstream Diode compose binds all interfaces).
+  # !override replaces ports instead of appending; otherwise both the
+  # all-interfaces and loopback bindings remain after include merge.
   ingress-nginx:
-    ports:
+    ports: !override
       - "127.0.0.1:${DIODE_NGINX_PORT:-8080}:80"
 
   workspace:

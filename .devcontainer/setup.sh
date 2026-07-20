@@ -135,8 +135,64 @@ else
 fi
 
 # --- Official Diode quickstart (downloads compose / nginx / .env / oauth clients) ---
+# Keep existing secrets so Postgres/Redis volumes stay valid (same idea as NetBox
+# env above). Upstream quickstart only fills missing files, but minting a new
+# .env or OAuth clients against leftover volumes breaks auth until Diode volumes
+# are wiped (do not use parent compose down -v — that also drops NetBox data).
 CREDS="$DIODE/oauth2/client/client-credentials.json"
-if [[ ! -f "$DIODE/docker-compose.yaml" || ! -f "$DIODE/.env" || ! -f "$CREDS" ]]; then
+DIODE_COMPOSE="$DIODE/docker-compose.yaml"
+DIODE_ENV="$DIODE/.env"
+
+diode_data_volumes_exist() {
+  if command -v docker >/dev/null 2>&1; then
+    local vols
+    if vols="$(docker volume ls --format '{{.Name}}' 2>/dev/null)"; then
+      grep -Eq '(^|_)diode-(postgres|redis)-data$' <<<"$vols"
+      return $?
+    fi
+    # docker CLI present but daemon unreachable — fall through to compose heuristic.
+  fi
+  # Without a reliable volume listing, treat a prior compose download as evidence
+  # of an existing stack (safer than minting passwords that may not match data).
+  [[ -f "$DIODE_COMPOSE" ]]
+}
+
+if [[ ! -f "$DIODE_COMPOSE" || ! -f "$DIODE_ENV" || ! -f "$CREDS" ]]; then
+  missing_env=false
+  missing_creds=false
+  [[ -f "$DIODE_ENV" ]] || missing_env=true
+  [[ -f "$CREDS" ]] || missing_creds=true
+
+  if [[ "$missing_env" == true || "$missing_creds" == true ]]; then
+    if [[ -z "${DIODE_FORCE_QUICKSTART:-}" ]] && diode_data_volumes_exist; then
+      cat >&2 <<EOF
+Error: Diode secrets are missing (.env and/or client-credentials.json) but Diode
+Postgres/Redis Docker volumes still exist. Re-running the official quickstart
+would generate new passwords that no longer match persisted data.
+
+Restore the missing files, or wipe Diode volumes only (not NetBox) and re-run:
+  docker compose -f "$DEV/docker-compose.yml" down
+  docker volume ls -q | grep -E '(^|_)diode-(postgres|redis)-data\$' | xargs -r docker volume rm
+  ./.devcontainer/setup.sh
+
+To proceed anyway (breaks an existing Diode volume), set DIODE_FORCE_QUICKSTART=1.
+EOF
+      exit 1
+    fi
+    # Regenerating only one secret file desyncs OAuth clients from .env
+    # (DIODE_TO_NETBOX_CLIENT_SECRET is not rewritten once placeholders are gone).
+    if [[ -z "${DIODE_FORCE_QUICKSTART:-}" && "$missing_env" != "$missing_creds" ]]; then
+      cat >&2 <<EOF
+Error: Diode secrets are incomplete — need both:
+  $DIODE_ENV
+  $CREDS
+Restore the missing file, or remove both (and wipe Diode volumes if present)
+before re-running setup. To proceed anyway, set DIODE_FORCE_QUICKSTART=1.
+EOF
+      exit 1
+    fi
+  fi
+
   echo "Running official Diode quickstart in $DIODE ..."
   curl -sSfLo "$DIODE/quickstart.sh" "$DIODE_QUICKSTART_URL"
   chmod +x "$DIODE/quickstart.sh"
