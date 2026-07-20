@@ -22,6 +22,16 @@ cat .devcontainer/setup.log
 Common causes: missing `jq`, leftover Diode Docker volumes without secrets,
 or Docker not running.
 
+### Full local reset
+
+```bash
+bash ./.devcontainer/cleanup.sh --volumes --secrets
+bash ./.devcontainer/setup.sh
+docker compose -f .devcontainer/docker-compose.yml --profile '*' up -d --build
+```
+
+Then **Dev Containers: Rebuild Container**.
+
 ## Quick start
 
 **Dev Container / Codespaces:** reopen in container (`initializeCommand` runs
