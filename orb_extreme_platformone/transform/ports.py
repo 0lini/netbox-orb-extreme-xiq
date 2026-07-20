@@ -171,28 +171,10 @@ def _by_key(records: list[dict]) -> dict[str, list[dict]]:
     return grouped
 
 
-def _by_interface_name(records: list[dict]) -> dict[str, list[dict]]:
-    """Index rows by interface_name for name-based VLAN joins."""
-    grouped: dict[str, list[dict]] = defaultdict(list)
-    for record in records:
-        name = record.get("interface_name")
-        if name:
-            grouped[str(name)].append(record)
-    return grouped
-
-
-def _vlan_records_for(
-    vlans_by_id: dict[str, list[dict]],
-    vlans_by_name: dict[str, list[dict]],
-    *,
-    interface_id: str | None,
-    name: str | None,
-) -> list[dict]:
-    """Prefer asset_interface_id joins; fall back to interface_name."""
+def _vlan_records_for(vlans_by_id: dict[str, list[dict]], *, interface_id: str | None) -> list[dict]:
+    """VLAN rows for an interface, joined only on asset_interface_id."""
     if interface_id and interface_id in vlans_by_id:
         return vlans_by_id[interface_id]
-    if name and name in vlans_by_name:
-        return vlans_by_name[name]
     return []
 
 
@@ -495,8 +477,7 @@ def _lag_kwargs(
     (Platform ONE's AssetLagConfig.enabled is observed always-false for
     in-service MLTs, and Diode maps an omitted bool to false). Shared joins
     on that interface id fill VLAN trunk/access, PoE, and (separately)
-    IPAddress entities. VLAN rows also join by `interface_name` when
-    `asset_interface_id` is missing. When port config/state also lists the
+    IPAddress entities. When port config/state also lists the
     same id, pull fields lag tables lack (`description`, `mark_connected`,
     MAC, port-config VLAN fallback) — never speed/duplex/connector `type`,
     which would overwrite `type=lag`.
@@ -571,7 +552,6 @@ def _lag_entities(
     lag_configs: list[dict],
     lag_states: list[dict],
     vlans: dict[str, list[dict]],
-    vlans_by_name: dict[str, list[dict]] | None = None,
     poe_configs: dict[str, list[dict]],
     poe_states: dict[str, list[dict]],
     interface_ips: dict[str, list[dict]],
@@ -584,7 +564,6 @@ def _lag_entities(
     lag_keys = set(lag_configs_by_key) | set(lag_states_by_key)
     port_configs = port_configs or {}
     port_states = port_states or {}
-    vlans_by_name = vlans_by_name or {}
 
     lag_interface_ids = {
         str(record["asset_interface_id"])
@@ -610,9 +589,7 @@ def _lag_entities(
             name=name,
             interface_id=interface_id_str,
             config=config,
-            vlan_records=_vlan_records_for(
-                vlans, vlans_by_name, interface_id=interface_id_str or key, name=name
-            ),
+            vlan_records=_vlan_records_for(vlans, interface_id=interface_id_str or key),
             poe_config=_optional_first_row(poe_configs, key, table="poe_configs"),
             poe_state=_optional_first_row(poe_states, key, table="poe_states"),
             port_config=_optional_first_row(port_configs, key, table="port_configs"),
@@ -633,7 +610,6 @@ def _physical_port_entities(
     configs: dict[str, list[dict]],
     states: dict[str, list[dict]],
     vlans: dict[str, list[dict]],
-    vlans_by_name: dict[str, list[dict]] | None = None,
     capabilities: dict[tuple[str, str], dict],
     poe_configs: dict[str, list[dict]],
     poe_states: dict[str, list[dict]],
@@ -646,7 +622,6 @@ def _physical_port_entities(
     entities: list[Entity] = []
     emitted_port_names: set[str] = set(lag_names)
     emitted_keys: dict[str, str] = {}
-    vlans_by_name = vlans_by_name or {}
 
     for key in sorted(set(configs) | set(states)):
         config = _first_row(configs, key, table="port_configs")
@@ -668,9 +643,7 @@ def _physical_port_entities(
             interface_id=interface_id_str,
             config=config,
             state=state,
-            vlan_records=_vlan_records_for(
-                vlans, vlans_by_name, interface_id=interface_id_str or key, name=name
-            ),
+            vlan_records=_vlan_records_for(vlans, interface_id=interface_id_str or key),
             capability=capabilities.get((port_device_id, name)),
             poe_config=_optional_first_row(poe_configs, key, table="poe_configs"),
             poe_state=_optional_first_row(poe_states, key, table="poe_states"),
@@ -854,7 +827,6 @@ def ports_to_entities(
     states = _by_key(tables.get("port_states") or [])
     vlan_rows = tables.get("vlan_properties") or []
     vlans = _by_key(vlan_rows)
-    vlans_by_name = _by_interface_name(vlan_rows)
     capabilities = _capabilities_by_port(tables.get("port_capabilities") or [])
     poe_configs = _by_key(tables.get("poe_configs") or [])
     poe_states = _by_key(tables.get("poe_states") or [])
@@ -867,7 +839,6 @@ def ports_to_entities(
         lag_configs=lag_configs,
         lag_states=lag_states,
         vlans=vlans,
-        vlans_by_name=vlans_by_name,
         poe_configs=poe_configs,
         poe_states=poe_states,
         interface_ips=interface_ips,
@@ -881,7 +852,6 @@ def ports_to_entities(
         configs=configs,
         states=states,
         vlans=vlans,
-        vlans_by_name=vlans_by_name,
         capabilities=capabilities,
         poe_configs=poe_configs,
         poe_states=poe_states,

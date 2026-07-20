@@ -900,9 +900,10 @@ def test_ports_to_entities_lag_enabled_follows_duplicate_port_config(stub_sdk):
     assert entities[0]._kw["interface"]._kw["enabled"] is False
 
 
-def test_ports_to_entities_lag_vlan_falls_back_to_interface_name(stub_sdk):
-    """Vlan-properties keyed only by interface_name still attach to the LAG."""
+def test_ports_to_entities_lag_vlan_joins_on_asset_interface_id(stub_sdk):
+    """VLAN rows attach to the LAG only via asset_interface_id (always present)."""
     vlan_on_lag = {
+        "asset_interface_id": "lag-if-1",
         "interface_name": "lag1",
         "port_vlan": 10,
         "vlans": [{"vlan_number": 10}, {"vlan_number": 20}],
@@ -921,6 +922,29 @@ def test_ports_to_entities_lag_vlan_falls_back_to_interface_name(stub_sdk):
     assert lag["mode"] == "tagged"
     assert lag["untagged_vlan"]._kw["vid"] == 10
     assert [v._kw["vid"] for v in lag["tagged_vlans"]] == [20]
+
+
+def test_ports_to_entities_ignores_vlan_rows_without_asset_interface_id(stub_sdk):
+    """Name-only vlan-properties rows are not joined (asset_interface_id is required)."""
+    vlan_name_only = {
+        "interface_name": "lag1",
+        "port_vlan": 10,
+        "vlans": [{"vlan_number": 10}, {"vlan_number": 20}],
+    }
+    entities = transform.ports_to_entities(
+        _tables(
+            port_configs=[],
+            port_states=[],
+            vlan_properties=[vlan_name_only],
+            lag_configs=[{**LAG_CONFIG, "member_ports": []}],
+            lag_states=[],
+        ),
+        device="sw-idf1",
+    )
+    lag = entities[0]._kw["interface"]._kw
+    assert "mode" not in lag
+    assert "untagged_vlan" not in lag
+    assert "tagged_vlans" not in lag
 
 
 def test_ports_to_entities_lag_joins_poe_and_ip_like_physical_ports(stub_sdk):
