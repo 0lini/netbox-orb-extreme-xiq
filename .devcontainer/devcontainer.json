@@ -10,7 +10,7 @@
     "8000": { "label": "NetBox", "onAutoForward": "notify" },
     "8080": { "label": "Diode", "onAutoForward": "silent" }
   },
-  "initializeCommand": "./.devcontainer/setup.sh",
+  "initializeCommand": "bash ./.devcontainer/setup.sh",
   "postCreateCommand": "pip install -e '.[dev]'",
   "customizations": {
     "vscode": {

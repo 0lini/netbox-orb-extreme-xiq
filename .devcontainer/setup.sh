@@ -45,7 +45,11 @@ generate_hex() {
 }
 
 if ! command -v jq >/dev/null 2>&1; then
-  echo "jq is required" >&2
+  echo "jq is required for Diode OAuth client parsing." >&2
+  echo "Install it, then reopen the Dev Container:" >&2
+  echo "  Fedora/Bazzite:  rpm-ostree install jq && systemctl reboot" >&2
+  echo "  Debian/Ubuntu:   sudo apt-get install -y jq" >&2
+  echo "  macOS:           brew install jq" >&2
   exit 1
 fi
 if ! command -v curl >/dev/null 2>&1; then
@@ -57,7 +61,16 @@ if ((BASH_VERSINFO[0] < 4)); then
   exit 1
 fi
 
-mkdir -p "$NETBOX_SECRETS" "$DEV/netbox/env" "$DIODE"
+# Persist output for Dev Containers (Cursor often hides initializeCommand stderr).
+SETUP_LOG="$DEV/setup.log"
+mkdir -p "$DEV" "$NETBOX_SECRETS" "$DEV/netbox/env" "$DIODE"
+if [[ -z "${_ORB_SETUP_LOGGING:-}" ]]; then
+  export _ORB_SETUP_LOGGING=1
+  # Re-exec so a tee'd log still preserves the real exit code.
+  bash "$0" "$@" 2>&1 | tee "$SETUP_LOG"
+  exit "${PIPESTATUS[0]}"
+fi
+echo "Logging setup to $SETUP_LOG"
 
 # --- NetBox compose env (gitignored); keep existing so volumes stay valid ---
 NETBOX_ENV="$DEV/netbox/env/netbox.env"
@@ -143,18 +156,43 @@ CREDS="$DIODE/oauth2/client/client-credentials.json"
 DIODE_COMPOSE="$DIODE/docker-compose.yaml"
 DIODE_ENV="$DIODE/.env"
 
-diode_data_volumes_exist() {
-  if command -v docker >/dev/null 2>&1; then
-    local vols
-    if vols="$(docker volume ls --format '{{.Name}}' 2>/dev/null)"; then
-      grep -Eq '(^|_)diode-(postgres|redis)-data$' <<<"$vols"
-      return $?
-    fi
-    # docker CLI present but daemon unreachable — fall through to compose heuristic.
+list_diode_data_volumes() {
+  if ! command -v docker >/dev/null 2>&1; then
+    return 0
   fi
-  # Without a reliable volume listing, treat a prior compose download as evidence
+  docker volume ls -q 2>/dev/null | grep -E '(^|_)diode-(postgres|redis)-data$' || true
+}
+
+diode_data_volumes_exist() {
+  local vols
+  vols="$(list_diode_data_volumes)"
+  if [[ -n "$vols" ]]; then
+    return 0
+  fi
+  # docker CLI missing/unreachable — treat a prior compose download as evidence
   # of an existing stack (safer than minting passwords that may not match data).
   [[ -f "$DIODE_COMPOSE" ]]
+}
+
+wipe_diode_data_volumes() {
+  local vols cid
+  vols="$(list_diode_data_volumes)"
+  if [[ -z "$vols" ]]; then
+    return 0
+  fi
+  # Compose down needs diode/.env (include env_file), which is exactly what is
+  # missing in this recovery path. Remove only containers that still hold the
+  # Diode data volumes, then delete those volumes. NetBox volumes stay intact.
+  echo "Removing orphaned Diode volumes (NetBox volumes are left untouched):"
+  while IFS= read -r v; do
+    [[ -n "$v" ]] || continue
+    while IFS= read -r cid; do
+      [[ -n "$cid" ]] || continue
+      docker rm -f "$cid" >/dev/null 2>&1 || true
+    done < <(docker ps -aq --filter "volume=$v" 2>/dev/null || true)
+    echo "  $v"
+    docker volume rm "$v" >/dev/null 2>&1 || docker volume rm -f "$v" >/dev/null
+  done <<<"$vols"
 }
 
 if [[ ! -f "$DIODE_COMPOSE" || ! -f "$DIODE_ENV" || ! -f "$CREDS" ]]; then
@@ -164,8 +202,17 @@ if [[ ! -f "$DIODE_COMPOSE" || ! -f "$DIODE_ENV" || ! -f "$CREDS" ]]; then
   [[ -f "$CREDS" ]] || missing_creds=true
 
   if [[ "$missing_env" == true || "$missing_creds" == true ]]; then
-    if [[ -z "${DIODE_FORCE_QUICKSTART:-}" ]] && diode_data_volumes_exist; then
-      cat >&2 <<EOF
+    if diode_data_volumes_exist; then
+      # Both secret files gone (common after the move into .devcontainer/, or a
+      # clean clone with leftover project volumes): wipe Diode volumes and
+      # re-mint. A partial loss still needs an explicit force to avoid desync.
+      if [[ -z "${DIODE_FORCE_QUICKSTART:-}" && "$missing_env" == true && "$missing_creds" == true ]]; then
+        echo "Diode secrets are missing but leftover Diode Docker volumes exist."
+        echo "Wiping Diode volumes only so quickstart can mint matching secrets"
+        echo "(NetBox data volumes are left untouched)."
+        wipe_diode_data_volumes
+      elif [[ -z "${DIODE_FORCE_QUICKSTART:-}" ]]; then
+        cat >&2 <<EOF
 Error: Diode secrets are missing (.env and/or client-credentials.json) but Diode
 Postgres/Redis Docker volumes still exist. Re-running the official quickstart
 would generate new passwords that no longer match persisted data.
@@ -173,11 +220,15 @@ would generate new passwords that no longer match persisted data.
 Restore the missing files, or wipe Diode volumes only (not NetBox) and re-run:
   docker compose -f "$DEV/docker-compose.yml" down
   docker volume ls -q | grep -E '(^|_)diode-(postgres|redis)-data\$' | xargs -r docker volume rm
-  ./.devcontainer/setup.sh
+  bash ./.devcontainer/setup.sh
 
 To proceed anyway (breaks an existing Diode volume), set DIODE_FORCE_QUICKSTART=1.
 EOF
-      exit 1
+        exit 1
+      else
+        echo "DIODE_FORCE_QUICKSTART=1: wiping Diode volumes before regenerating secrets."
+        wipe_diode_data_volumes || true
+      fi
     fi
     # Regenerating only one secret file desyncs OAuth clients from .env
     # (DIODE_TO_NETBOX_CLIENT_SECRET is not rewritten once placeholders are gone).
@@ -192,7 +243,6 @@ EOF
       exit 1
     fi
   fi
-
   echo "Running official Diode quickstart in $DIODE ..."
   curl -sSfLo "$DIODE/quickstart.sh" "$DIODE_QUICKSTART_URL"
   chmod +x "$DIODE/quickstart.sh"
