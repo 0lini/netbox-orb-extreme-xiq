@@ -1,9 +1,10 @@
-# Local NetBox + Diode + Dev Container workspace.
+# Local NetBox (Diode plugin) + official Diode server + Dev Container workspace.
 #
-# Dev Container: reopen in container (runs setup.sh, starts this compose).
-# Host only:
-#   ./.devcontainer/setup.sh
+# Prerequisites:
+#   ./.devcontainer/setup.sh   # NetBox secrets + official Diode quickstart
+# Then:
 #   docker compose -f .devcontainer/docker-compose.yml up -d --build
+# Or reopen in a Dev Container / Codespace (runs setup via initializeCommand).
 
 name: orb-platformone-test
 
@@ -27,10 +28,8 @@ services:
         condition: service_started
     env_file: ./netbox/env/netbox.env
     environment:
-      # Needed for Codespaces / *.app.github.dev UI form posts.
       CSRF_TRUSTED_ORIGINS: https://*.app.github.dev https://*.githubpreview.dev
     healthcheck:
-      # First boot: DB migrations + Diode plugin (can take several minutes).
       start_period: 900s
       timeout: 5s
       interval: 15s
@@ -94,26 +93,11 @@ services:
     volumes:
       - netbox-redis-cache-data:/data
 
-  # Rootless Podman: bind-mount initdb instead of Diode's tmpfs approach.
-  postgres:
-    image: docker.io/postgres:18-alpine
-    env_file: ./diode/.env
-    environment:
-      PGDATA: /var/lib/postgresql/data/pgdata
-    entrypoint: ["docker-entrypoint.sh"]
-    command: ["postgres"]
-    volumes:
-      - diode-postgres-data:/var/lib/postgresql/data
-      - ./diode/initdb.d:/docker-entrypoint-initdb.d:z,ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -q -t 2 -d $$DIODE_POSTGRES_DB_NAME -U $$DIODE_POSTGRES_USER"]
-      start_period: 20s
-      interval: 2s
-      timeout: 5s
-      retries: 15
-    restart: on-failure
+  # Loopback-only publish (upstream Diode compose binds all interfaces).
+  ingress-nginx:
+    ports:
+      - "127.0.0.1:${DIODE_NGINX_PORT:-8080}:80"
 
-  # Same network as NetBox/Diode. Profile keeps `compose up` on the host lean.
   workspace:
     build:
       context: ..

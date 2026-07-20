@@ -1,15 +1,15 @@
 # Local NetBox + Diode + Dev Container
 
-One compose stack under `.devcontainer/`: NetBox (with Diode plugin), Diode, and
-a Python workspace. Codespaces / VS Code Dev Containers start it via
-`devcontainer.json` (no Docker-in-Docker required).
+NetBox (with Diode plugin) and a Python workspace live in this folder. **Diode
+server** comes from the [official quickstart](https://github.com/netboxlabs/diode)
+(not vendored): `setup.sh` downloads and runs it under `diode/`.
 
 ## Quick start
 
-**Dev Container / Codespaces:** reopen in container. `setup.sh` runs on the host
-first; compose brings up NetBox, Diode, and the workspace.
+**Dev Container / Codespaces:** reopen in container (`initializeCommand` runs
+`setup.sh`, then compose starts NetBox + Diode + workspace).
 
-**Host only:**
+**Host:**
 
 ```bash
 ./.devcontainer/setup.sh
@@ -23,7 +23,7 @@ docker compose -f .devcontainer/docker-compose.yml up -d --build
 | Diode | `grpc://localhost:8080/diode` |
 | In workspace | NetBox `http://netbox:8080`, Diode `grpc://ingress-nginx:80/diode` |
 
-Ports bind to **127.0.0.1** only. Secrets are gitignored under `.devcontainer/`.
+Ports bind to **127.0.0.1** only. Generated Diode files and secrets are gitignored.
 
 ## Orb agent
 

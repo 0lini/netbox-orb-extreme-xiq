@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# Generate Diode OAuth credentials and wire local NetBox + agent config.
+# Bootstrap local NetBox env + official Diode quickstart + Orb agent config.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEV="$ROOT/.devcontainer"
 DIODE="$DEV/diode"
 NETBOX_SECRETS="$DEV/netbox/secrets"
+# Compose-network URL so Diode reconciler can reach the NetBox plugin API.
+NETBOX_HOST="${NETBOX_HOST:-http://netbox:8080}"
+DIODE_QUICKSTART_URL="${DIODE_QUICKSTART_URL:-https://raw.githubusercontent.com/netboxlabs/diode/release/diode-server/docker/scripts/quickstart.sh}"
 
 generate_secret() {
-  # Enough entropy after base64 charset filtering.
   while true; do
     local s
     s="$(head -c 48 /dev/urandom | base64 | tr -d '/\n+=' | head -c 40)"
@@ -19,7 +21,6 @@ generate_secret() {
   done
 }
 
-# NetBox SECRET_KEY / pepper need >= 50 chars.
 generate_long_secret() {
   while true; do
     local s
@@ -35,8 +36,6 @@ generate_hex() {
   local n="${1:-40}"
   while true; do
     local s
-    # `od` (coreutils) is used instead of `xxd` (ships with vim, not guaranteed
-    # on a bare host) so setup does not hang when xxd is absent.
     s="$(head -c "$((n + 8))" /dev/urandom | od -An -v -tx1 | tr -d ' \n' | head -c "$n")"
     if [[ ${#s} -eq "$n" ]]; then
       printf '%s' "$s"
@@ -49,16 +48,18 @@ if ! command -v jq >/dev/null 2>&1; then
   echo "jq is required" >&2
   exit 1
 fi
-
-mkdir -p "$DIODE/oauth2/client" "$NETBOX_SECRETS" "$DIODE/nginx" "$DEV/netbox/env"
-
-# Ensure upstream Diode assets exist (compose + nginx).
-if [[ ! -f "$DIODE/docker-compose.yaml" ]]; then
-  echo "Missing $DIODE/docker-compose.yaml — re-run from a complete checkout." >&2
+if ! command -v curl >/dev/null 2>&1; then
+  echo "curl is required" >&2
+  exit 1
+fi
+if ((BASH_VERSINFO[0] < 4)); then
+  echo "Bash 4+ required (official Diode quickstart uses associative arrays)" >&2
   exit 1
 fi
 
-# NetBox compose env files (gitignored). Skip if already present so volumes stay usable.
+mkdir -p "$NETBOX_SECRETS" "$DEV/netbox/env" "$DIODE"
+
+# --- NetBox compose env (gitignored); keep existing so volumes stay valid ---
 NETBOX_ENV="$DEV/netbox/env/netbox.env"
 POSTGRES_ENV="$DEV/netbox/env/postgres.env"
 REDIS_ENV="$DEV/netbox/env/redis.env"
@@ -125,7 +126,6 @@ SUPERUSER_PASSWORD=admin
 SUPERUSER_API_TOKEN=${NB_SUPERUSER_API_TOKEN}
 WEBHOOKS_ENABLED=true
 DEBUG=False
-# Required for API tokens on NetBox 4.6+
 API_TOKEN_PEPPER_1=${NB_API_PEPPER}
 EOF
   chmod 600 "$NETBOX_ENV" "$POSTGRES_ENV" "$REDIS_ENV" "$REDIS_CACHE_ENV"
@@ -134,122 +134,46 @@ else
   NB_SUPERUSER_API_TOKEN="$(grep -E '^SUPERUSER_API_TOKEN=' "$NETBOX_ENV" | cut -d= -f2- || true)"
 fi
 
+# --- Official Diode quickstart (downloads compose / nginx / .env / oauth clients) ---
 CREDS="$DIODE/oauth2/client/client-credentials.json"
-if [[ ! -f "$CREDS" ]]; then
-  echo "Generating OAuth2 client credentials..."
-  INGEST_SECRET="$(generate_secret)"
-  TO_NETBOX_SECRET="$(generate_secret)"
-  NETBOX_TO_DIODE_SECRET="$(generate_secret)"
-  cat >"$CREDS" <<EOF
-[
-  {
-    "client_id": "diode-ingest",
-    "client_secret": "${INGEST_SECRET}",
-    "grant_types": ["client_credentials"],
-    "scope": "diode:ingest"
-  },
-  {
-    "client_id": "diode-to-netbox",
-    "client_secret": "${TO_NETBOX_SECRET}",
-    "grant_types": ["client_credentials"],
-    "scope": "netbox:read netbox:write"
-  },
-  {
-    "client_id": "netbox-to-diode",
-    "client_secret": "${NETBOX_TO_DIODE_SECRET}",
-    "grant_types": ["client_credentials"],
-    "scope": "diode:read diode:write"
-  }
-]
-EOF
+if [[ ! -f "$DIODE/docker-compose.yaml" || ! -f "$DIODE/.env" || ! -f "$CREDS" ]]; then
+  echo "Running official Diode quickstart in $DIODE ..."
+  curl -sSfLo "$DIODE/quickstart.sh" "$DIODE_QUICKSTART_URL"
+  chmod +x "$DIODE/quickstart.sh"
+  (
+    cd "$DIODE"
+    ./quickstart.sh "$NETBOX_HOST"
+  )
 else
-  echo "Using existing $CREDS"
-  INGEST_SECRET="$(jq -r '.[] | select(.client_id=="diode-ingest") | .client_secret' "$CREDS")"
-  TO_NETBOX_SECRET="$(jq -r '.[] | select(.client_id=="diode-to-netbox") | .client_secret' "$CREDS")"
-  NETBOX_TO_DIODE_SECRET="$(jq -r '.[] | select(.client_id=="netbox-to-diode") | .client_secret' "$CREDS")"
+  echo "Using existing Diode quickstart files under $DIODE/"
 fi
 
-# Secret file consumed by the Diode NetBox plugin (default path).
+# Local HTTP NetBox: skip TLS verify between Diode reconciler and the plugin.
+if grep -q '^NETBOX_DIODE_PLUGIN_SKIP_TLS_VERIFY=' "$DIODE/.env"; then
+  tmp="$(mktemp)"
+  awk '
+    /^NETBOX_DIODE_PLUGIN_SKIP_TLS_VERIFY=/ {print "NETBOX_DIODE_PLUGIN_SKIP_TLS_VERIFY=true"; next}
+    {print}
+  ' "$DIODE/.env" >"$tmp"
+  mv "$tmp" "$DIODE/.env"
+  chmod 600 "$DIODE/.env"
+fi
+
+INGEST_SECRET="$(jq -r '.[] | select(.client_id=="diode-ingest") | .client_secret' "$CREDS")"
+NETBOX_TO_DIODE_SECRET="$(jq -r '.[] | select(.client_id=="netbox-to-diode") | .client_secret' "$CREDS")"
+if [[ -z "$INGEST_SECRET" || "$INGEST_SECRET" == "null" ]]; then
+  echo "Missing diode-ingest client secret in $CREDS" >&2
+  exit 1
+fi
+if [[ -z "$NETBOX_TO_DIODE_SECRET" || "$NETBOX_TO_DIODE_SECRET" == "null" ]]; then
+  echo "Missing netbox-to-diode client secret in $CREDS" >&2
+  exit 1
+fi
+
 printf '%s' "$NETBOX_TO_DIODE_SECRET" >"$NETBOX_SECRETS/netbox_to_diode"
 chmod 600 "$NETBOX_SECRETS/netbox_to_diode"
 
-# Diode server .env (same-network NetBox URL).
-# Preserve an existing file so re-running setup does not rotate DB/Redis/Hydra
-# passwords out from under live volumes.
-DIODE_ENV="$DIODE/.env"
-if [[ ! -f "$DIODE_ENV" ]]; then
-  echo "Generating Diode env at $DIODE_ENV ..."
-  REDIS_PASSWORD="$(generate_secret)"
-  POSTGRES_PASSWORD="$(generate_secret)"
-  DIODE_PG_PASSWORD="$(generate_secret)"
-  HYDRA_PG_PASSWORD="$(generate_secret)"
-  HYDRA_SYSTEM_SECRET="$(generate_secret)"
-
-  cat >"$DIODE_ENV" <<EOF
-DIODE_NGINX_PORT=8080
-REDIS_PASSWORD=${REDIS_PASSWORD}
-REDIS_HOST=redis
-REDIS_PORT=6378
-REDIS_USERNAME=
-LOGGING_LEVEL=INFO
-LOGGING_FORMAT=json
-SENTRY_DSN=
-MIGRATION_ENABLED=true
-POSTGRES_HOST=postgres
-POSTGRES_PORT=5432
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-DIODE_POSTGRES_DB_NAME=diode
-DIODE_POSTGRES_USER=diode
-DIODE_POSTGRES_PASSWORD=${DIODE_PG_PASSWORD}
-TELEMETRY_ENVIRONMENT=dev
-TELEMETRY_METRICS_EXPORTER=none
-TELEMETRY_TRACES_EXPORTER=none
-HYDRA_POSTGRES_DB_NAME=hydra
-HYDRA_POSTGRES_USER=hydra
-HYDRA_POSTGRES_PASSWORD=${HYDRA_PG_PASSWORD}
-HYDRA_STRATEGIES_ACCESS_TOKEN=jwt
-HYDRA_STRATEGIES_REFRESH_TOKEN=jwt
-HYDRA_STRATEGIES_JWT_SCOPE_CLAIM=both
-HYDRA_TTL_ACCESS_TOKEN=1h
-HYDRA_OIDC_SUBJECT_IDENTIFIERS_SUPPORTED_TYPES=public
-HYDRA_URLS_SELF_ISSUER=http://hydra:4444
-HYDRA_SECRETS_SYSTEM_0=${HYDRA_SYSTEM_SECRET}
-AUTH_HTTP_PORT=8080
-OAUTH2_PUBLIC_SERVER_URL=http://hydra:4444
-OAUTH2_ADMIN_SERVER_URL=http://hydra:4445
-DIODE_AUTH_TOKEN_URL=http://diode-auth:8080/token
-DIODE_TO_NETBOX_CLIENT_ID=diode-to-netbox
-DIODE_TO_NETBOX_CLIENT_SECRET=${TO_NETBOX_SECRET}
-DIODE_TO_NETBOX_RATE_LIMITER_RPS=20
-DIODE_TO_NETBOX_RATE_LIMITER_BURST=1
-NETBOX_DIODE_PLUGIN_API_BASE_URL=http://netbox:8080/api/plugins/diode
-NETBOX_DIODE_PLUGIN_API_TIMEOUT_SECONDS=30
-NETBOX_DIODE_PLUGIN_SKIP_TLS_VERIFY=true
-ENABLE_GRAPH_DB=false
-INGESTION_LOG_PROCESSOR_BATCH_SIZE=50
-INGESTION_LOG_PROCESSOR_CONCURRENCY=1
-AUTO_APPLY_PROCESSOR_BATCH_SIZE=50
-AUTO_APPLY_PROCESSOR_CONCURRENCY=1
-EOF
-  chmod 600 "$DIODE_ENV"
-else
-  echo "Using existing $DIODE_ENV"
-  # Keep OAuth client secret in sync if credentials were rotated.
-  if grep -q '^DIODE_TO_NETBOX_CLIENT_SECRET=' "$DIODE_ENV"; then
-    tmp="$(mktemp)"
-    awk -v secret="$TO_NETBOX_SECRET" '
-      /^DIODE_TO_NETBOX_CLIENT_SECRET=/ {print "DIODE_TO_NETBOX_CLIENT_SECRET=" secret; next}
-      {print}
-    ' "$DIODE_ENV" >"$tmp"
-    mv "$tmp" "$DIODE_ENV"
-    chmod 600 "$DIODE_ENV"
-  fi
-fi
-
-# Env for host-side orb-agent / workspace.
-# Prefer the NetBox SUPERUSER_API_TOKEN until create-netbox-token.sh mints a v1 token.
-# Preserve an existing .env.local (create-netbox-token.sh may have replaced the token).
+# --- Host / Orb agent env ---
 NETBOX_TOKEN="${NB_SUPERUSER_API_TOKEN:-}"
 if [[ -z "$NETBOX_TOKEN" ]]; then
   NETBOX_TOKEN="$(generate_hex 40)"
@@ -266,7 +190,6 @@ EOF
   chmod 600 "$DEV/.env.local"
 else
   echo "Using existing $DEV/.env.local"
-  # Keep ingest secret aligned with oauth credentials file.
   tmp="$(mktemp)"
   awk -v secret="$INGEST_SECRET" '
     /^DIODE_CLIENT_SECRET=/ {print "DIODE_CLIENT_SECRET=" secret; next}
@@ -276,9 +199,6 @@ else
   chmod 600 "$DEV/.env.local"
 fi
 
-# Agent policy pointed at local Diode (host network / published ports).
-# Preserve an existing file so re-running setup does not flip BOOTSTRAP back
-# to true after the operator has disabled it.
 if [[ ! -f "$DEV/agent.local.yaml" ]]; then
   cat >"$DEV/agent.local.yaml" <<EOF
 # Generated local Orb Agent policy — Diode target is the compose-published port.
@@ -293,14 +213,11 @@ orb:
           client_id: \${DIODE_CLIENT_ID}
           client_secret: \${DIODE_CLIENT_SECRET}
           agent_name: platformone_local_1
-          # dry_run: true
-          # dry_run_output_dir: /opt/orb
   policies:
     worker:
       extreme_platformone_worker:
         config:
           package: orb_extreme_platformone
-          # omit schedule to run once
           BOOTSTRAP: true
           NETBOX_API_URL: \${NETBOX_API_URL}
           NETBOX_API_TOKEN: \${NETBOX_API_TOKEN}
@@ -313,19 +230,19 @@ else
   echo "Using existing $DEV/agent.local.yaml"
 fi
 
-# workers.txt install path for a repo-root mount at /opt/orb
 cat >"$DEV/workers.local.txt" <<EOF
 .
 EOF
 
 cat <<EOF
 
-Setup complete.
+Setup complete (NetBox env + official Diode quickstart).
 
   docker compose -f "$DEV/docker-compose.yml" up -d --build
   ./.devcontainer/create-netbox-token.sh   # once NetBox is healthy
 
 NetBox http://localhost:8000 (admin/admin)  Diode grpc://localhost:8080/diode
+Diode files: $DIODE/ (from upstream quickstart; gitignored)
 Secrets: $DEV/.env.local , $DEV/netbox/env/*.env , $CREDS
 
 Orb agent (from repo root):
