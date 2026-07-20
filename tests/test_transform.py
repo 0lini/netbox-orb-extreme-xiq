@@ -1334,6 +1334,38 @@ def test_radios_to_entities_accepts_band_enum_style_labels(stub_sdk):
     assert radio["rf_channel_frequency"] == 5180.0
 
 
+def test_radios_to_entities_accepts_band_2_4_ghz_enum(stub_sdk):
+    """BAND_2_4_GHZ compactifies to band24ghz; must still map channel 1 → 2412."""
+    tables = {
+        "cs-ap-1": {
+            "wireless_interfaces": [
+                {
+                    "asset_device_id": "cs-ap-1",
+                    "asset_interface_id": "radio-uuid-24",
+                    "name": "wifi1",
+                    "enabled": True,
+                }
+            ],
+            "wireless_states": [
+                {
+                    "asset_device_id": "cs-ap-1",
+                    "asset_interface_id": "radio-uuid-24",
+                    "name": "wifi1",
+                    "band": "BAND_2_4_GHZ",
+                    "channel": 1,
+                    "channel_width": 20,
+                    "radio_mode": "_11ax_2g",
+                }
+            ],
+            "ssid_configs": [],
+            "ssid_states": [],
+        }
+    }
+
+    radio = transform.radios_to_entities(tables, device_names={"cs-ap-1": "ap-lobby"})[0]._kw["interface"]._kw
+    assert radio["rf_channel_frequency"] == 2412.0
+
+
 def test_radios_to_entities_defaults_wlan_status_active_when_enabled_unknown(stub_sdk):
     tables = {
         "cs-ap-1": {

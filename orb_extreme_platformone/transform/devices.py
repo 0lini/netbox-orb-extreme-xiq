@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import math
 
 from netboxlabs.diode.sdk.ingester import (
     Device,
@@ -76,7 +77,7 @@ def _coord(value) -> float | None:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    if number != number:  # NaN
+    if not math.isfinite(number):
         return None
     return number
 
@@ -85,9 +86,9 @@ def _site_kwargs(site_name: str, coords: tuple[float | None, float | None] | Non
     kwargs: dict = {"name": site_name}
     if coords:
         lat, lon = coords
-        if lat is not None:
+        if lat is not None and -90.0 <= lat <= 90.0:
             kwargs["latitude"] = lat
-        if lon is not None:
+        if lon is not None and -180.0 <= lon <= 180.0:
             kwargs["longitude"] = lon
     return kwargs
 
