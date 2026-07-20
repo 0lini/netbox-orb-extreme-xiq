@@ -11,12 +11,3 @@ test.json
 *.dry-run.json
 dry-run-output/
 dry_run_output/
-
-# Local NetBox + Diode test stack (secrets + official Diode quickstart output)
-.devcontainer/.env.local
-.devcontainer/agent.local.yaml
-.devcontainer/netbox/secrets/
-.devcontainer/netbox/env/*.env
-!.devcontainer/netbox/env/*.env.example
-.devcontainer/diode/*
-!.devcontainer/diode/README.md
