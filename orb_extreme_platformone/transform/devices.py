@@ -258,3 +258,52 @@ def devices_to_entities(
         entities.extend(virtual_chassis_entities)
 
     return entities
+
+
+def primary_ip_device_entities(
+    records: list[dict],
+    *,
+    primary_ips_by_cs_id: dict[str, dict[str, str]],
+) -> list[Entity]:
+    """Emit follow-up Device entities that only assert primary_ip4/primary_ip6.
+
+    Diode may split a Device create into a minimal create + an update. When
+    ``primary_ip*`` is on that update before the matching Interface IPAddress
+    exists, NetBox rejects the whole update (``IP address is not assigned to
+    this device``) and drops sibling fields such as ``serial`` and custom
+    fields. Call this *after* port/IP entities so the IP already exists.
+    """
+    if not primary_ips_by_cs_id:
+        return []
+    entities: list[Entity] = []
+    for record, site_name, _location_path in _iter_scoped_devices(records, site_scope=None):
+        cs_device_id = record.get("cs_device_id")
+        if not cs_device_id:
+            continue
+        primary_ips = primary_ips_by_cs_id.get(cs_device_id)
+        if not primary_ips:
+            continue
+        asset = record["asset"]
+        name = device_name(asset)
+        if name is None:
+            continue
+        # Enough identity for Diode generate-diff to match the existing Device;
+        # avoid re-asserting serial/tags/CFs here so a primary-IP failure cannot
+        # wipe them again.
+        kwargs: dict = {
+            "name": name,
+            "site": Site(name=site_name),
+            **primary_ips,
+        }
+        role = role_for(asset.get("function"))
+        if role:
+            role_name, role_slug = role
+            kwargs["role"] = DeviceRole(name=role_name, slug=role_slug)
+        product_type = asset.get("product_type")
+        if product_type:
+            kwargs["device_type"] = DeviceType(
+                model=device_type_model_for(product_type), manufacturer=MANUFACTURER
+            )
+            kwargs["manufacturer"] = MANUFACTURER
+        entities.append(Entity(device=Device(**kwargs)))
+    return entities

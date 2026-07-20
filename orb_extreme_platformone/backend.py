@@ -216,14 +216,19 @@ class Backend(WorkerBackend):
         # /32 from the bare Assets management address.
         port_entities, primary_ips_by_cs_id = self._port_entities(client, scoped, policy_name)
         radio_entities = self._radio_entities(client, scoped, policy_name)
+        # Emit Devices *without* primary_ip* first so serial / custom fields are
+        # not bundled into a Diode update that NetBox rejects when the IP is not
+        # yet assigned. Assert primary_ip* in a follow-up after port/IP entities.
         entities = transform.devices_to_entities(
             scoped,
             virtual_chassis_entities=vc_entities,
             vc_memberships=vc_memberships,
-            primary_ips_by_cs_id=primary_ips_by_cs_id,
         )
         entities.extend(port_entities)
         entities.extend(radio_entities)
+        entities.extend(
+            transform.primary_ip_device_entities(scoped, primary_ips_by_cs_id=primary_ips_by_cs_id)
+        )
 
         return entities
 
@@ -321,9 +326,22 @@ class Backend(WorkerBackend):
             return []
         device_ids = sorted(aps)
         device_names = _device_names(aps, policy_name=policy_name, kind="radios")
+        device_meta: dict[str, dict] = {}
+        for device_id, record in aps.items():
+            asset = record["asset"]
+            site_name, _ = resolve_location(record.get("location"), asset)
+            device_meta[device_id] = {
+                "site_name": site_name,
+                "function": asset.get("function"),
+                "product_type": asset.get("product_type"),
+            }
 
         tables_by_device, failed_tables = extract_wireless_tables(client, device_ids, policy_name)
-        entities = transform.radios_to_entities(tables_by_device, device_names=device_names)
+        entities = transform.radios_to_entities(
+            tables_by_device,
+            device_names=device_names,
+            device_meta=device_meta,
+        )
         logger.info("Policy %s: mapped %d wireless radio/WLAN entities", policy_name, len(entities))
         _log_failed_tables(policy_name, failed_tables, domain="wireless ")
         return entities

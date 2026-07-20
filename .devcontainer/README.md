@@ -4,6 +4,11 @@ NetBox (with Diode plugin) and a Python workspace live in this folder. **Diode
 server** comes from the [official quickstart](https://github.com/netboxlabs/diode)
 (not vendored): `setup.sh` downloads and runs it under `diode/`.
 
+> **Note:** A top-level `dev` symlink points here for older Dev Container
+> caches that still probe `dev/docker-compose.yml` (pre-move path). Prefer
+> `.devcontainer/` in new setups. If Cursor fails with that old path, pull
+> latest and use **Dev Containers: Rebuild Container**.
+
 ## Quick start
 
 **Dev Container / Codespaces:** reopen in container (`initializeCommand` runs

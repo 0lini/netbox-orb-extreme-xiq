@@ -16,7 +16,7 @@ via `ports_to_entities`. AP radios and WLANs via `radios_to_entities`.
 
 from __future__ import annotations
 
-from .devices import devices_to_entities, scope_devices
+from .devices import devices_to_entities, primary_ip_device_entities, scope_devices
 from .ports import PORT_ENTITY_TABLE_KEYS, ports_to_entities, primary_ips_from_tables
 from .virtual_chassis import virtual_chassis_to_entities
 from .wireless import WIRELESS_ENTITY_TABLE_KEYS, radios_to_entities
@@ -26,6 +26,7 @@ __all__ = [
     "WIRELESS_ENTITY_TABLE_KEYS",
     "devices_to_entities",
     "ports_to_entities",
+    "primary_ip_device_entities",
     "primary_ips_from_tables",
     "radios_to_entities",
     "scope_devices",

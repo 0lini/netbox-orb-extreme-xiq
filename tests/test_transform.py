@@ -169,6 +169,23 @@ def test_primary_ips_from_tables_matches_assets_host_when_needed():
     assert transform.primary_ips_from_tables(tables, asset_ip="10.0.0.2") == {"primary_ip4": "10.0.0.2/24"}
 
 
+def test_primary_ips_from_tables_normalizes_assets_ipv6_host():
+    """Assets may report expanded IPv6 while ConfigState uses compressed form."""
+    tables = _tables(
+        port_capabilities=[],
+        interface_ips=[
+            {
+                "asset_interface_id": "if-uuid-1",
+                "address": "2001:db8::2",
+                "mask_length": 64,
+            },
+        ],
+    )
+    assert transform.primary_ips_from_tables(tables, asset_ip="2001:0db8:0000:0000:0000:0000:0000:0002") == {
+        "primary_ip6": "2001:db8::2/64"
+    }
+
+
 def test_primary_ips_from_tables_skips_bare_addresses_without_mask():
     tables = _tables(
         interface_ips=[
@@ -772,6 +789,59 @@ def test_ports_to_entities_skips_lag_without_name(stub_sdk):
     assert entities == []
 
 
+def test_ports_to_entities_uses_state_lag_name_for_config_members(stub_sdk):
+    """Membership comes from lag-config; name may live only on paired lag-state."""
+    lag_config = {**LAG_CONFIG, "name": None}
+    lag_state = {
+        "asset_device_id": "cs-uuid-42",
+        "asset_interface_id": "lag-if-1",
+        "name": "state-lag",
+        "member_ports": [],
+    }
+    port2 = {**PORT_CONFIG, "asset_interface_id": "if-uuid-2", "name": "1/2"}
+    entities = transform.ports_to_entities(
+        _tables(
+            port_configs=[PORT_CONFIG, port2],
+            port_states=[],
+            vlan_properties=[],
+            lag_configs=[lag_config],
+            lag_states=[lag_state],
+        ),
+        device="sw-idf1",
+    )
+
+    ports = {e._kw["interface"]._kw["name"]: e._kw["interface"]._kw for e in entities}
+    assert ports["state-lag"]["type"] == "lag"
+    assert ports["1/1"]["lag"]._kw["name"] == "state-lag"
+    assert ports["1/2"]["lag"]._kw["name"] == "state-lag"
+
+
+def test_ports_to_entities_emits_duplicate_port_when_lag_is_unnamed(stub_sdk):
+    """Unnamed LAG must not suppress a port-table row that shares its interface id."""
+    lag = {**LAG_CONFIG, "name": None, "member_ports": []}
+    lag_as_port = {
+        "asset_device_id": "cs-uuid-42",
+        "asset_interface_id": "lag-if-1",
+        "name": "port-table-lag",
+        "enabled": True,
+    }
+    entities = transform.ports_to_entities(
+        _tables(
+            port_configs=[lag_as_port],
+            port_states=[],
+            vlan_properties=[],
+            lag_configs=[lag],
+            lag_states=[],
+        ),
+        device="sw-idf1",
+    )
+
+    ports = [e._kw["interface"]._kw for e in entities]
+    assert len(ports) == 1
+    assert ports[0]["name"] == "port-table-lag"
+    assert ports[0]["type"] == "other"
+
+
 def test_ports_to_entities_skips_lag_members_without_port_rows(stub_sdk):
     """LAG membership alone does not invent stub member Interfaces."""
     entities = transform.ports_to_entities(
@@ -1276,7 +1346,7 @@ def test_radios_to_entities_maps_native_rf_fields_and_wlans(stub_sdk):
     assert wlans["Guest"]["auth_type"] == "open"
     assert len(radios) == 1
     radio = radios[0]
-    assert radio["device"] == "ap-lobby"
+    assert radio["device"]._kw["name"] == "ap-lobby"
     assert radio["name"] == "wifi0"
     assert radio["type"] == "ieee802.11ax"
     assert radio["rf_role"] == "ap"
@@ -1319,11 +1389,82 @@ def test_radios_to_entities_leaves_unverified_rf_codes_unset(stub_sdk):
 
     entities = transform.radios_to_entities(tables, device_names={"cs-ap-1": "ap-lobby"})
     radio = entities[0]._kw["interface"]._kw
-    assert radio["type"] == "other"
+    # NetBox 4.6 accepts ieee802.11be; RF fields require a wireless type.
+    assert radio["type"] == "ieee802.11be"
+    assert radio["rf_role"] == "ap"
+    assert radio["tx_power"] == 10
+    # mystery band / non-standard width still leave channel fields unset.
     assert "rf_channel_frequency" not in radio
     assert "rf_channel_width" not in radio
-    assert radio["tx_power"] == 10
-    assert radio["rf_role"] == "ap"
+
+
+def test_radios_to_entities_defaults_type_other_when_radio_mode_missing(stub_sdk):
+    """Config-only radios still need Interface.type; omit RF fields on type=other."""
+    tables = {
+        "cs-ap-1": {
+            "wireless_interfaces": [
+                {
+                    "asset_device_id": "cs-ap-1",
+                    "asset_interface_id": "radio-1",
+                    "name": "wifi0",
+                    "enabled": True,
+                }
+            ],
+            "wireless_states": [],
+            "ssid_configs": [],
+            "ssid_states": [],
+        }
+    }
+    radio = transform.radios_to_entities(tables, device_names={"cs-ap-1": "ap-lobby"})[0]._kw["interface"]._kw
+    assert radio["type"] == "other"
+    assert "rf_role" not in radio
+    assert "tx_power" not in radio
+    assert radio["device"]._kw["name"] == "ap-lobby"
+
+
+def test_radios_to_entities_enriches_nested_device_ref(stub_sdk):
+    tables = {
+        "cs-ap-1": {
+            "wireless_interfaces": [
+                {
+                    "asset_device_id": "cs-ap-1",
+                    "asset_interface_id": "radio-1",
+                    "name": "wifi0",
+                    "enabled": True,
+                }
+            ],
+            "wireless_states": [
+                {
+                    "asset_device_id": "cs-ap-1",
+                    "asset_interface_id": "radio-1",
+                    "name": "wifi0",
+                    "radio_mode": "_11ax_5g",
+                }
+            ],
+            "ssid_configs": [],
+            "ssid_states": [],
+        }
+    }
+    radio = (
+        transform.radios_to_entities(
+            tables,
+            device_names={"cs-ap-1": "ap-lobby"},
+            device_meta={
+                "cs-ap-1": {
+                    "site_name": "HQ",
+                    "function": "AP",
+                    "product_type": "AP5050U",
+                }
+            },
+        )[0]
+        ._kw["interface"]
+        ._kw
+    )
+    device = radio["device"]._kw
+    assert device["name"] == "ap-lobby"
+    assert device["site"]._kw["name"] == "HQ"
+    assert device["role"]._kw["name"] == "Wireless AP"
+    assert device["device_type"]._kw["model"] == "AP5050U"
 
 
 def test_radios_to_entities_skips_devices_missing_from_device_names(stub_sdk):
