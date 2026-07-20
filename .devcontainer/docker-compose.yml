@@ -1,7 +1,7 @@
 # Local NetBox + Diode + workspace for orb worker development.
 # Usage:
-#   ./dev/setup.sh          # generate secrets once
-#   docker compose -f dev/docker-compose.yml up -d --build
+#   ./.devcontainer/setup.sh          # generate secrets once
+#   docker compose -f .devcontainer/docker-compose.yml up -d --build
 # Or: reopen this repo in a Dev Container (starts the same compose file).
 
 name: orb-platformone-test

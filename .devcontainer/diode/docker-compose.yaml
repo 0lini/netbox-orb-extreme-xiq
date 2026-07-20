@@ -1,4 +1,4 @@
-# Project name comes from parent dev/docker-compose.yml (shared network).
+# Project name comes from parent .devcontainer/docker-compose.yml (shared network).
 services:
   ingress-nginx:
     image: nginx:latest

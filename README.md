@@ -215,16 +215,16 @@ Full posture, local-stack caveats, and residual risks: [`SECURITY.md`](SECURITY.
 ### Local NetBox + Diode test stack
 
 A compose-based NetBox (with Diode plugin) + Diode server + optional Dev Container
-lives under [`dev/`](dev/README.md):
+lives under [`.devcontainer/`](.devcontainer/README.md):
 
 ```bash
-./dev/setup.sh
-docker compose -f dev/docker-compose.yml up -d --build
-./dev/create-netbox-token.sh
+./.devcontainer/setup.sh
+docker compose -f .devcontainer/docker-compose.yml up -d --build
+./.devcontainer/create-netbox-token.sh
 ```
 
 Then open the repo in a Dev Container, or run the Orb agent against
-`grpc://localhost:8080/diode` using `dev/agent.local.yaml`.
+`grpc://localhost:8080/diode` using `.devcontainer/agent.local.yaml`.
 
 ## Development
 
