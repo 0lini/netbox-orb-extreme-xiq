@@ -13,14 +13,23 @@ def collect_interface_ids(
 ) -> dict[str, str]:
     """Map each collected asset_interface_id to its device UUID.
 
-    Scans every PORT_TABLES key: vlan_properties rows matter so
-    interface-IP / PoE-config retrieves cover VLAN-facing interfaces that
-    never appear in port/LAG/PoE-state rows; port_capabilities rows carry
-    no asset_interface_id and contribute nothing.
+    Scans tables that carry ``asset_interface_id`` (port/LAG/VLAN/PoE-state).
+    ``port_capabilities`` has no interface UUID and is skipped. VLAN rows
+    matter so interface-IP / PoE-config retrieves cover VLAN-facing interfaces
+    that never appear in port/LAG/PoE-state rows.
     """
+    # Keys whose ConfigState rows expose asset_interface_id (see PORT_TABLES).
+    source_keys = (
+        "port_configs",
+        "port_states",
+        "vlan_properties",
+        "lag_configs",
+        "lag_states",
+        "poe_states",
+    )
     interface_to_device: dict[str, str] = {}
     for device_id, tables in tables_by_device.items():
-        for key in PORT_TABLES:
+        for key in source_keys:
             for row in tables.get(key) or []:
                 interface_id = str(row.get("asset_interface_id") or "")
                 if interface_id:
@@ -34,10 +43,11 @@ def attach_interface_id_tables(
     policy_name: str,
     failed_tables: list[str],
 ) -> None:
-    """Fetch PoE config + interface IPs by collected interface UUIDs.
+    """Fetch interface IPs by collected interface UUIDs.
 
-    These ConfigState tables have no device filter; rows are bucketed back
-    onto devices via the interface→device map from port/LAG/PoE-state rows.
+    ``retrieve-asset-interface-ip-address`` has no device filter; rows are
+    bucketed back onto devices via the interface→device map from port/LAG/
+    VLAN/PoE-state rows.
     """
     interface_to_device = collect_interface_ids(tables_by_device)
     for tables in tables_by_device.values():
@@ -71,9 +81,9 @@ def extract_port_tables(
     """Batched device-filtered port/LAG tables, then interface-UUID tables.
 
     Returns ``(tables_by_device, failed_tables)``. Independent device-filtered
-    tables retrieve concurrently; PoE-config / interface-IP tables run afterward
-    once ``asset_interface_id`` values are known. LAG membership comes from
-    nested ``member_ports`` on lag-config/state rows.
+    tables retrieve concurrently; interface-IP tables run afterward once
+    ``asset_interface_id`` values are known. LAG membership comes from
+    nested ``member_ports`` on lag-config rows.
     """
     tables_by_device, failed_tables = extract_device_table_buckets(
         client,

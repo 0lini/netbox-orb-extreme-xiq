@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ipaddress
 import math
 
 from netboxlabs.diode.sdk.ingester import (
@@ -32,7 +31,6 @@ from .common import (
     MANUFACTURER,
     PROVENANCE_TAGS,
     _cf_text,
-    _explicit_cidr,
     logger,
 )
 
@@ -48,25 +46,6 @@ def _status_for(asset: dict) -> str:
     if connected is False:
         return "offline"
     return "active"
-
-
-def _primary_ips_from_asset(asset: dict) -> dict[str, str]:
-    """Split Assets `ip_address` into primary_ip4 vs primary_ip6.
-
-    Assets reports a bare host with no mask. Inventing /32 or /128 would
-    create misleading host prefixes in NetBox, so a bare address is skipped.
-    Only values that already include a prefix length are asserted (fallback
-    when ConfigState did not yield a primary). Invalid values assert nothing.
-    """
-    cidr = _explicit_cidr(asset.get("ip_address"))
-    if not cidr:
-        return {}
-    try:
-        iface = ipaddress.ip_interface(cidr)
-    except ValueError:
-        return {}
-    key = "primary_ip4" if iface.version == 4 else "primary_ip6"
-    return {key: str(iface)}
 
 
 def _coord(value) -> float | None:
@@ -98,7 +77,6 @@ def _device_kwargs(
     *,
     site_name: str,
     location: Location | None,
-    cs_device: dict | None = None,
     vc_membership: dict | None = None,
     primary_ips: dict[str, str] | None = None,
 ) -> dict:
@@ -123,21 +101,22 @@ def _device_kwargs(
         role_name, role_slug = role
         kwargs["role"] = DeviceRole(name=role_name, slug=role_slug)
 
-    # Assets product_type / os_version preferred; ConfigState model_name /
-    # firmware_version fill gaps when Assets omitted them.
-    cs = cs_device or {}
-    product_type = asset.get("product_type") or cs.get("model_name")
+    # Assets product_type / os_version only — no ConfigState model_name /
+    # firmware_version fallback.
+    product_type = asset.get("product_type")
     if product_type:
         kwargs["device_type"] = DeviceType(
             model=device_type_model_for(product_type), manufacturer=MANUFACTURER
         )
         kwargs["manufacturer"] = MANUFACTURER
-    os_version = asset.get("os_version") or cs.get("firmware_version")
-    platform = platform_name(asset.get("function"), os_version)
+    platform = platform_name(asset.get("function"), asset.get("os_version"))
     if platform:
         kwargs["platform"] = Platform(name=platform, manufacturer=MANUFACTURER)
-    # ConfigState interface IPs (with mask_length) win; Assets CIDR is fallback.
-    kwargs.update(primary_ips or _primary_ips_from_asset(asset))
+    # Primary IPs come only from ConfigState interface rows (with mask_length).
+    # Assets `ip_address` is a bare host (OpenAPI: dotted decimal) — never assert
+    # it as Device primary_ip*, and never invent /32 or /128.
+    if primary_ips:
+        kwargs.update(primary_ips)
     if vc_membership:
         # Include platformone_cluster_id so Diode matches the same VC as the
         # top-level entity (NetBox VirtualChassis.name is not unique).
@@ -224,8 +203,8 @@ def devices_to_entities(
 
     `vc_memberships` is keyed by ConfigState device UUID (`cs_device_id`).
     `primary_ips_by_cs_id` supplies Device primary_ip4/primary_ip6 from
-    ConfigState interface IPs (see `primary_ips_from_tables`); when absent,
-    Assets `ip_address` is used only if it already includes a prefix.
+    ConfigState interface IPs (see `primary_ips_from_tables`). Assets
+    `ip_address` is bare and is never asserted as a primary IP.
 
     Devices with ``virtual_chassis`` / ``vc_position`` are emitted before the
     first-class VirtualChassis entities that set ``master``. NetBox rejects
@@ -269,7 +248,6 @@ def devices_to_entities(
             record["asset"],
             site_name=site_name,
             location=location,
-            cs_device=record.get("cs_device"),
             vc_membership=membership,
             primary_ips=primary_ips,
         )

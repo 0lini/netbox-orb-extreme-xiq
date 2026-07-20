@@ -296,7 +296,7 @@ class Backend(WorkerBackend):
                 continue
             asset = record["asset"]
             site_name, _ = resolve_location(record.get("location"), asset)
-            product_type = asset.get("product_type") or (record.get("cs_device") or {}).get("model_name")
+            product_type = asset.get("product_type")
             entities.extend(
                 transform.ports_to_entities(
                     tables,

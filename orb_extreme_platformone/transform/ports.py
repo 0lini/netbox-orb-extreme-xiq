@@ -127,8 +127,8 @@ def primary_ips_from_tables(
     if asset_host and "/" in asset_host:
         asset_host = asset_host.split("/", 1)[0]
     if asset_host:
-        for row, cidr, iface in rows_with_cidr:
-            if str(iface.ip) == asset_host or str(row.get("address") or "").split("/", 1)[0] == asset_host:
+        for _row, cidr, iface in rows_with_cidr:
+            if str(iface.ip) == asset_host:
                 ranked.append((iface.version, cidr))
         if ranked:
             return _pick_primary_cidr(ranked)
@@ -171,28 +171,10 @@ def _by_key(records: list[dict]) -> dict[str, list[dict]]:
     return grouped
 
 
-def _by_interface_name(records: list[dict]) -> dict[str, list[dict]]:
-    """Index rows by interface_name for name-based VLAN joins."""
-    grouped: dict[str, list[dict]] = defaultdict(list)
-    for record in records:
-        name = record.get("interface_name")
-        if name:
-            grouped[str(name)].append(record)
-    return grouped
-
-
-def _vlan_records_for(
-    vlans_by_id: dict[str, list[dict]],
-    vlans_by_name: dict[str, list[dict]],
-    *,
-    interface_id: str | None,
-    name: str | None,
-) -> list[dict]:
-    """Prefer asset_interface_id joins; fall back to interface_name."""
+def _vlan_records_for(vlans_by_id: dict[str, list[dict]], *, interface_id: str | None) -> list[dict]:
+    """VLAN rows for an interface, joined only on asset_interface_id."""
     if interface_id and interface_id in vlans_by_id:
         return vlans_by_id[interface_id]
-    if name and name in vlans_by_name:
-        return vlans_by_name[name]
     return []
 
 
@@ -289,36 +271,14 @@ def _vlan_fields(vlan_records: list[dict]) -> dict:
     return fields
 
 
-def _vlan_fields_from_port_config(config: dict) -> dict:
-    """Fallback VLANs from AssetPortConfig when vlan-properties rows are absent.
+def _poe_mode(state: dict) -> str | None:
+    """NetBox poe_mode=pse when AssetPoePowerPortsState.supported is true.
 
-    `native_vlan` is the untagged VLAN on a trunk; `port_mode` True enables
-    tagging (Fabric Engine). Applied only as a fallback. Extreme reserved
-    VIDs (4060–4094) are omitted entirely (no VLAN fields, no mode).
-    """
-    native = _coerce_int(config.get("native_vlan"))
-    if native is None or native <= 0 or _is_extreme_reserved_vlan(native):
-        return {}
-    fields: dict = {"untagged_vlan": _vlan_ref(native)}
-    port_mode = config.get("port_mode")
-    # port_mode True means trunk on Fabric Engine, but without a tagged member
-    # list we must not assert mode=tagged (empty tagged_vlans). Leave mode
-    # unset in that case; False is a real access port.
-    if port_mode is False:
-        fields["mode"] = "access"
-    return fields
-
-
-def _poe_mode(config: dict, state: dict) -> str | None:
-    """NetBox poe_mode=pse when the port is a PoE PSE; omit otherwise.
-
-    `supported` (state) is authoritative; `enable` (config) True also implies
-    PSE. classification/standard → poe_type is intentionally not mapped:
-    OpenAPI has no verified value table for those integers.
+    ``AssetPoePowerPortsConfig.enable`` is not used: admin enable alone does
+    not mean the port is a PSE. classification/standard → poe_type is
+    intentionally not mapped (no verified OpenAPI value table).
     """
     if state.get("supported") is True:
-        return "pse"
-    if config.get("enable") is True:
         return "pse"
     return None
 
@@ -339,7 +299,6 @@ def _iface_base_kwargs(
     name: str,
     interface_id: str | None,
     config: dict,
-    poe_config: dict | None = None,
     poe_state: dict | None = None,
 ) -> dict:
     """Shared identity / admin / PoE fields for physical ports and LAG parents."""
@@ -349,7 +308,7 @@ def _iface_base_kwargs(
         interface_id=interface_id,
         enabled=config.get("enabled"),
     )
-    poe = _poe_mode(poe_config or {}, poe_state or {})
+    poe = _poe_mode(poe_state or {})
     if poe is not None:
         kwargs["poe_mode"] = poe
     return kwargs
@@ -364,7 +323,6 @@ def _port_kwargs(
     state: dict,
     vlan_records: list[dict],
     capability: dict | None = None,
-    poe_config: dict | None = None,
     poe_state: dict | None = None,
 ) -> dict:
     kwargs = _iface_base_kwargs(
@@ -372,7 +330,6 @@ def _port_kwargs(
         name=name,
         interface_id=interface_id,
         config=config,
-        poe_config=poe_config,
         poe_state=poe_state,
     )
 
@@ -403,22 +360,18 @@ def _port_kwargs(
     if capability is not None and isinstance(capability.get("management_port"), bool):
         kwargs["mgmt_only"] = capability["management_port"]
 
-    vlan_fields = _vlan_fields(vlan_records)
-    if not vlan_fields:
-        vlan_fields = _vlan_fields_from_port_config(config)
-    kwargs.update(vlan_fields)
+    kwargs.update(_vlan_fields(vlan_records))
     return kwargs
 
 
 def _lag_name(config: dict, state: dict) -> str | None:
-    """LAG Interface name: prefer `name`, else `lag-{lag_number}`."""
+    """LAG Interface name from Platform ONE ``name`` (switches always set one).
+
+    No ``lag-{n}`` invention from ``lag_number`` — NetBox requires a name, but
+    inventing one would diverge from the switch's auto-generated LAG name.
+    """
     name = config.get("name") or state.get("name")
-    if name:
-        return str(name)
-    lag_number = config.get("lag_number") or state.get("lag_number")
-    if lag_number is not None and str(lag_number):
-        return f"lag-{lag_number}"
-    return None
+    return str(name) if name else None
 
 
 def _lag_admin_enabled(port_config: dict | None = None) -> bool:
@@ -452,25 +405,14 @@ def _member_interface_names(lag_row: dict) -> list[str]:
     return names
 
 
-def _lag_membership(configs: list[dict], states: list[dict]) -> dict[str, str]:
-    """Map member interface name → LAG interface name.
-
-    Config membership is applied first; state membership fills gaps for
-    members not already claimed by any config LAG (``setdefault``). A member
-    already bound by config is never moved by state.
-    """
+def _lag_membership(configs: list[dict]) -> dict[str, str]:
+    """Map member interface name → LAG interface name from lag-config only."""
     membership: dict[str, str] = {}
     for config in configs:
         lag = _lag_name(config, {})
         if not lag:
             continue
         for member in _member_interface_names(config):
-            membership.setdefault(member, lag)
-    for state in states:
-        lag = _lag_name({}, state)
-        if not lag:
-            continue
-        for member in _member_interface_names(state):
             membership.setdefault(member, lag)
     return membership
 
@@ -482,7 +424,6 @@ def _lag_kwargs(
     interface_id: str | None,
     config: dict,
     vlan_records: list[dict],
-    poe_config: dict | None = None,
     poe_state: dict | None = None,
     port_config: dict | None = None,
     port_state: dict | None = None,
@@ -495,33 +436,29 @@ def _lag_kwargs(
     (Platform ONE's AssetLagConfig.enabled is observed always-false for
     in-service MLTs, and Diode maps an omitted bool to false). Shared joins
     on that interface id fill VLAN trunk/access, PoE, and (separately)
-    IPAddress entities. VLAN rows also join by `interface_name` when
-    `asset_interface_id` is missing. When port config/state also lists the
+    IPAddress entities. When port config/state also lists the
     same id, pull fields lag tables lack (`description`, `mark_connected`,
-    MAC, port-config VLAN fallback) — never speed/duplex/connector `type`,
-    which would overwrite `type=lag`.
+    MAC) — never speed/duplex/connector `type`, which would overwrite
+    `type=lag`. VLANs come only from vlan-properties.
 
     AssetLagConfig also carries LACP `mode` / `lacp_key` / `load_balance_algo`
     / `dynamic`, but Diode's Interface has no matching fields and the mode /
     algo integers have no published value table — leave them unmapped (see
-    README). `lag_number` is naming-only (`lag-{n}` fallback); it is not a
-    second custom field (redundant with `platformone_interface_id`).
+    README). `lag_number` is unused for NetBox naming (switches always supply
+    `name`); it is not a second custom field (redundant with
+    `platformone_interface_id`).
     """
     kwargs = _iface_base_kwargs(
         device=device,
         name=name,
         interface_id=interface_id,
         config=config,
-        poe_config=poe_config,
         poe_state=poe_state,
     )
     kwargs["type"] = "lag"
     kwargs["enabled"] = _lag_admin_enabled(port_config)
 
-    vlan_fields = _vlan_fields(vlan_records)
-    if not vlan_fields and port_config:
-        vlan_fields = _vlan_fields_from_port_config(port_config)
-    kwargs.update(vlan_fields)
+    kwargs.update(_vlan_fields(vlan_records))
 
     if port_config and port_config.get("description"):
         kwargs["description"] = port_config["description"]
@@ -571,8 +508,6 @@ def _lag_entities(
     lag_configs: list[dict],
     lag_states: list[dict],
     vlans: dict[str, list[dict]],
-    vlans_by_name: dict[str, list[dict]] | None = None,
-    poe_configs: dict[str, list[dict]],
     poe_states: dict[str, list[dict]],
     interface_ips: dict[str, list[dict]],
     port_configs: dict[str, list[dict]] | None = None,
@@ -584,14 +519,13 @@ def _lag_entities(
     lag_keys = set(lag_configs_by_key) | set(lag_states_by_key)
     port_configs = port_configs or {}
     port_states = port_states or {}
-    vlans_by_name = vlans_by_name or {}
 
     lag_interface_ids = {
         str(record["asset_interface_id"])
         for record in (*lag_configs, *lag_states)
         if record.get("asset_interface_id")
     }
-    membership = _lag_membership(lag_configs, lag_states)
+    membership = _lag_membership(lag_configs)
     lag_names: set[str] = set()
     entities: list[Entity] = []
     emitted_keys: dict[str, str] = {}
@@ -603,17 +537,13 @@ def _lag_entities(
         if not name:
             continue
         lag_names.add(name)
-        interface_id = config.get("asset_interface_id") or state.get("asset_interface_id")
-        interface_id_str = str(interface_id) if interface_id else None
+        # `key` is asset_interface_id (required on lag config/state).
         kwargs = _lag_kwargs(
             device=device,
             name=name,
-            interface_id=interface_id_str,
+            interface_id=key,
             config=config,
-            vlan_records=_vlan_records_for(
-                vlans, vlans_by_name, interface_id=interface_id_str or key, name=name
-            ),
-            poe_config=_optional_first_row(poe_configs, key, table="poe_configs"),
+            vlan_records=_vlan_records_for(vlans, interface_id=key),
             poe_state=_optional_first_row(poe_states, key, table="poe_states"),
             port_config=_optional_first_row(port_configs, key, table="port_configs"),
             port_state=_optional_first_row(port_states, key, table="port_states"),
@@ -633,9 +563,7 @@ def _physical_port_entities(
     configs: dict[str, list[dict]],
     states: dict[str, list[dict]],
     vlans: dict[str, list[dict]],
-    vlans_by_name: dict[str, list[dict]] | None = None,
     capabilities: dict[tuple[str, str], dict],
-    poe_configs: dict[str, list[dict]],
     poe_states: dict[str, list[dict]],
     interface_ips: dict[str, list[dict]],
     lag_names: set[str],
@@ -646,7 +574,6 @@ def _physical_port_entities(
     entities: list[Entity] = []
     emitted_port_names: set[str] = set(lag_names)
     emitted_keys: dict[str, str] = {}
-    vlans_by_name = vlans_by_name or {}
 
     for key in sorted(set(configs) | set(states)):
         config = _first_row(configs, key, table="port_configs")
@@ -654,25 +581,20 @@ def _physical_port_entities(
         name = str(config.get("name") or state.get("name") or "")
         if not name:
             continue
-        interface_id = config.get("asset_interface_id") or state.get("asset_interface_id")
-        # Skip rows that are the LAG interface itself (same asset_interface_id).
-        if interface_id and str(interface_id) in lag_interface_ids:
+        # `key` is asset_interface_id (required on port config/state).
+        if key in lag_interface_ids:
             continue
         if name in lag_names:
             continue
         port_device_id = str(config.get("asset_device_id") or state.get("asset_device_id") or "")
-        interface_id_str = str(interface_id) if interface_id else None
         kwargs = _port_kwargs(
             device=device,
             name=name,
-            interface_id=interface_id_str,
+            interface_id=key,
             config=config,
             state=state,
-            vlan_records=_vlan_records_for(
-                vlans, vlans_by_name, interface_id=interface_id_str or key, name=name
-            ),
+            vlan_records=_vlan_records_for(vlans, interface_id=key),
             capability=capabilities.get((port_device_id, name)),
-            poe_config=_optional_first_row(poe_configs, key, table="poe_configs"),
             poe_state=_optional_first_row(poe_states, key, table="poe_states"),
         )
         lag_parent = membership.get(name)
@@ -688,37 +610,12 @@ def _physical_port_entities(
     return entities, emitted_port_names, emitted_keys
 
 
-def _orphan_member_entities(
-    *,
-    device: str,
-    membership: dict[str, str],
-    emitted_port_names: set[str],
-) -> list[Entity]:
-    """Members known only from LAG membership (no port-config/state row yet)."""
-    entities: list[Entity] = []
-    for member_name, lag_parent in sorted(membership.items()):
-        if member_name in emitted_port_names:
-            continue
-        entities.append(
-            Entity(
-                interface=Interface(
-                    device=device,
-                    name=member_name,
-                    type=DEFAULT_INTERFACE_TYPE,
-                    lag=Interface(device=device, name=lag_parent, type="lag"),
-                    tags=PROVENANCE_TAGS,
-                )
-            )
-        )
-        emitted_port_names.add(member_name)
-    return entities
-
-
 def _orphan_ip_entities(
     *,
     device: str,
     interface_ips: dict[str, list[dict]],
     emitted_keys: dict[str, str],
+    interface_names: dict[str, str],
 ) -> list[Entity]:
     """IPs on interfaces that got no Interface entity above (e.g. VLAN/SVI
     interfaces, which appear in vlan_properties but not the port tables).
@@ -726,16 +623,19 @@ def _orphan_ip_entities(
     Emits a minimal Interface first so the IPAddress has a real assigned
     object, then the IP entities. ``type=virtual`` for these non-port rows
     (SVIs); NetBox requires a non-blank type.
+
+    Interface names come from already-fetched port/LAG/VLAN rows keyed by
+    ``asset_interface_id``. ``AssetInterfaceIpAddress`` has no interface_name
+    field in OpenAPI — do not invent one from the IP row.
     """
     entities: list[Entity] = []
     emitted_names: set[str] = set()
     for key, rows in sorted(interface_ips.items()):
         if key in emitted_keys:
             continue
-        name = next((row["interface_name"] for row in rows if row.get("interface_name")), None)
+        name = interface_names.get(key)
         if not name:
             continue
-        name = str(name)
         if name not in emitted_names:
             interface_id = next(
                 (str(row["asset_interface_id"]) for row in rows if row.get("asset_interface_id")),
@@ -760,8 +660,29 @@ def _orphan_ip_entities(
     return entities
 
 
+def _interface_names_by_id(tables: dict[str, list[dict]]) -> dict[str, str]:
+    """Map asset_interface_id → interface name from port/LAG/VLAN rows.
+
+    Prefer port/LAG ``name``, then vlan-properties ``interface_name``. First
+    non-empty name wins so later tables do not rename an already-known id.
+    """
+    names: dict[str, str] = {}
+    for key in ("port_configs", "port_states", "lag_configs", "lag_states"):
+        for row in tables.get(key) or []:
+            interface_id = str(row.get("asset_interface_id") or "")
+            name = str(row.get("name") or "").strip()
+            if interface_id and name:
+                names.setdefault(interface_id, name)
+    for row in tables.get("vlan_properties") or []:
+        interface_id = str(row.get("asset_interface_id") or "")
+        name = str(row.get("interface_name") or "").strip()
+        if interface_id and name:
+            names.setdefault(interface_id, name)
+    return names
+
+
 # Row fields that carry a front-panel port name across the ConfigState port
-# tables (port/LAG `name`, vlan/IP/member `interface_name`, capabilities
+# tables (port/LAG `name`, vlan/member `interface_name`, capabilities
 # `port_name`). Normalized together so name-based joins stay consistent.
 _PORT_NAME_FIELDS = ("name", "interface_name", "port_name")
 
@@ -800,15 +721,16 @@ def ports_to_entities(
 
     `tables` holds the device's "port_configs", "port_states",
     "vlan_properties", "lag_configs", "lag_states", optional
-    "port_capabilities", "poe_configs", "poe_states", and "interface_ips"
+    "port_capabilities", "poe_states", and "interface_ips"
     rows. Physical ports are the union of config+state rows joined on
     asset_interface_id. LAG interfaces come from lag
     config/state (type `lag`); member ports get Diode `Interface.lag`
-    pointing at the parent LAG. Interface IP rows become Diode IPAddress
-    entities assigned to the matching interface. VLAN membership refs use
-    `vid` plus `name=str(vid)` (NetBox requires a name; switch-local names
-    are not site-scoped). Physical ports without a verified connector map
-    default to type `other`; SVI stubs use `virtual`.
+    pointing at the parent LAG (membership from lag-config only; members
+    without a port row are not stubbed). Interface IP rows become Diode
+    IPAddress entities assigned to the matching interface. VLAN membership
+    refs use `vid` plus `name=str(vid)` (NetBox requires a name;
+    switch-local names are not site-scoped). Physical ports without a
+    verified connector map default to type `other`; SVI stubs use `virtual`.
 
     Nested Interface ``device`` refs include site/role/device_type when
     known — Diode rejects name-only Device stubs during generate-diff.
@@ -829,9 +751,7 @@ def ports_to_entities(
     states = _by_key(tables.get("port_states") or [])
     vlan_rows = tables.get("vlan_properties") or []
     vlans = _by_key(vlan_rows)
-    vlans_by_name = _by_interface_name(vlan_rows)
     capabilities = _capabilities_by_port(tables.get("port_capabilities") or [])
-    poe_configs = _by_key(tables.get("poe_configs") or [])
     poe_states = _by_key(tables.get("poe_states") or [])
     interface_ips = _by_key(tables.get("interface_ips") or [])
     lag_configs = tables.get("lag_configs") or []
@@ -842,8 +762,6 @@ def ports_to_entities(
         lag_configs=lag_configs,
         lag_states=lag_states,
         vlans=vlans,
-        vlans_by_name=vlans_by_name,
-        poe_configs=poe_configs,
         poe_states=poe_states,
         interface_ips=interface_ips,
         port_configs=configs,
@@ -851,14 +769,12 @@ def ports_to_entities(
     )
     entities = list(lag_entities)
 
-    port_entities, emitted_port_names, port_keys = _physical_port_entities(
+    port_entities, _emitted_port_names, port_keys = _physical_port_entities(
         device=device_ref,
         configs=configs,
         states=states,
         vlans=vlans,
-        vlans_by_name=vlans_by_name,
         capabilities=capabilities,
-        poe_configs=poe_configs,
         poe_states=poe_states,
         interface_ips=interface_ips,
         lag_names=lag_names,
@@ -869,13 +785,11 @@ def ports_to_entities(
     emitted_keys.update(port_keys)
 
     entities.extend(
-        _orphan_member_entities(
+        _orphan_ip_entities(
             device=device_ref,
-            membership=membership,
-            emitted_port_names=emitted_port_names,
+            interface_ips=interface_ips,
+            emitted_keys=emitted_keys,
+            interface_names=_interface_names_by_id(tables),
         )
-    )
-    entities.extend(
-        _orphan_ip_entities(device=device_ref, interface_ips=interface_ips, emitted_keys=emitted_keys)
     )
     return entities
