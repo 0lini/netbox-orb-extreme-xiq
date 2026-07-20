@@ -127,11 +127,16 @@ def primary_ips_from_tables(
     if asset_host and "/" in asset_host:
         asset_host = asset_host.split("/", 1)[0]
     if asset_host:
-        for _row, cidr, iface in rows_with_cidr:
-            if str(iface.ip) == asset_host:
-                ranked.append((iface.version, cidr))
-        if ranked:
-            return _pick_primary_cidr(ranked)
+        try:
+            asset_address = ipaddress.ip_address(asset_host)
+        except ValueError:
+            asset_address = None
+        if asset_address is not None:
+            for _row, cidr, iface in rows_with_cidr:
+                if iface.ip == asset_address:
+                    ranked.append((iface.version, cidr))
+            if ranked:
+                return _pick_primary_cidr(ranked)
 
     return {}
 
@@ -405,11 +410,17 @@ def _member_interface_names(lag_row: dict) -> list[str]:
     return names
 
 
-def _lag_membership(configs: list[dict]) -> dict[str, str]:
-    """Map member interface name → LAG interface name from lag-config only."""
+def _lag_membership(configs: list[dict], states: list[dict]) -> dict[str, str]:
+    """Map lag-config member names to LAG names from paired config/state rows.
+
+    Membership lists live on lag-config; the LAG ``name`` may appear only on
+    the paired lag-state row (same ``asset_interface_id``).
+    """
+    states_by_key = _by_key(states)
     membership: dict[str, str] = {}
     for config in configs:
-        lag = _lag_name(config, {})
+        state = _first_row(states_by_key, _record_key(config), table="lag_states")
+        lag = _lag_name(config, state)
         if not lag:
             continue
         for member in _member_interface_names(config):
@@ -477,6 +488,7 @@ def _ip_entities_for_interface(
     device: str,
     interface_name: str,
     rows: list[dict],
+    interface_type: str = DEFAULT_INTERFACE_TYPE,
 ) -> list[Entity]:
     entities: list[Entity] = []
     seen: set[str] = set()
@@ -493,7 +505,7 @@ def _ip_entities_for_interface(
                     assigned_object_interface=Interface(
                         device=device,
                         name=interface_name,
-                        type=DEFAULT_INTERFACE_TYPE,
+                        type=interface_type,
                     ),
                     tags=PROVENANCE_TAGS,
                 )
@@ -520,12 +532,11 @@ def _lag_entities(
     port_configs = port_configs or {}
     port_states = port_states or {}
 
-    lag_interface_ids = {
-        str(record["asset_interface_id"])
-        for record in (*lag_configs, *lag_states)
-        if record.get("asset_interface_id")
-    }
-    membership = _lag_membership(lag_configs)
+    # Only suppress duplicate physical-port rows for LAGs we actually emit.
+    # Unnamed LAG rows are skipped below; their interface ids must still be
+    # free to surface as ordinary ports when port tables also list them.
+    lag_interface_ids: set[str] = set()
+    membership = _lag_membership(lag_configs, lag_states)
     lag_names: set[str] = set()
     entities: list[Entity] = []
     emitted_keys: dict[str, str] = {}
@@ -550,8 +561,14 @@ def _lag_entities(
         )
         entities.append(Entity(interface=Interface(**kwargs)))
         emitted_keys[key] = name
+        lag_interface_ids.add(key)
         entities.extend(
-            _ip_entities_for_interface(device=device, interface_name=name, rows=interface_ips.get(key, []))
+            _ip_entities_for_interface(
+                device=device,
+                interface_name=name,
+                rows=interface_ips.get(key, []),
+                interface_type="lag",
+            )
         )
 
     return entities, lag_names, lag_interface_ids, membership, emitted_keys
@@ -604,7 +621,12 @@ def _physical_port_entities(
         emitted_port_names.add(name)
         emitted_keys[key] = name
         entities.extend(
-            _ip_entities_for_interface(device=device, interface_name=name, rows=interface_ips.get(key, []))
+            _ip_entities_for_interface(
+                device=device,
+                interface_name=name,
+                rows=interface_ips.get(key, []),
+                interface_type=str(kwargs.get("type") or DEFAULT_INTERFACE_TYPE),
+            )
         )
 
     return entities, emitted_port_names, emitted_keys
@@ -656,7 +678,14 @@ def _orphan_ip_entities(
                 )
             )
             emitted_names.add(name)
-        entities.extend(_ip_entities_for_interface(device=device, interface_name=name, rows=rows))
+        entities.extend(
+            _ip_entities_for_interface(
+                device=device,
+                interface_name=name,
+                rows=rows,
+                interface_type=VIRTUAL_INTERFACE_TYPE,
+            )
+        )
     return entities
 
 

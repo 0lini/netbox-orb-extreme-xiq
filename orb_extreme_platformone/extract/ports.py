@@ -15,8 +15,8 @@ def collect_interface_ids(
 
     Scans tables that carry ``asset_interface_id`` (port/LAG/VLAN/PoE-state).
     ``port_capabilities`` has no interface UUID and is skipped. VLAN rows
-    matter so interface-IP / PoE-config retrieves cover VLAN-facing interfaces
-    that never appear in port/LAG/PoE-state rows.
+    matter so interface-IP retrieves cover VLAN-facing interfaces that never
+    appear in port/LAG/PoE-state rows.
     """
     # Keys whose ConfigState rows expose asset_interface_id (see PORT_TABLES).
     source_keys = (

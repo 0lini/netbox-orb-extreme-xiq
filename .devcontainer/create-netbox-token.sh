@@ -27,8 +27,9 @@ fi
 STATUS_FILE="$(mktemp)"
 trap 'rm -f "$STATUS_FILE"' EXIT
 
-# Print the token on stdout only — never write plaintext into the container FS.
-TOKEN="$(
+# manage.py shell prints config banners to stdout; bracket the token so we can
+# extract it cleanly (never write plaintext into the container FS).
+RAW="$(
   docker exec -i "$CONTAINER" /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py shell <<'PY'
 from django.contrib.auth import get_user_model
 from users.models import Token
@@ -38,13 +39,22 @@ Token.objects.filter(user=u, description="local-dev").delete()
 # Explicit v1 so Authorization: Token <plaintext> works with Orb bootstrap.
 t = Token(user=u, description="local-dev", version=1)
 t.save()
-print(t.plaintext or t.token or "", end="")
+print("__ORB_NETBOX_TOKEN_BEGIN__")
+print(t.plaintext or t.token or "")
+print("__ORB_NETBOX_TOKEN_END__")
 PY
 )"
 
-TOKEN="$(printf '%s' "$TOKEN" | tr -d '\r\n')"
-if [[ ${#TOKEN} -lt 20 ]]; then
-  echo "Failed to create token (len=${#TOKEN})" >&2
+TOKEN="$(
+  printf '%s\n' "$RAW" | awk '
+    $0 == "__ORB_NETBOX_TOKEN_BEGIN__" {grab=1; next}
+    $0 == "__ORB_NETBOX_TOKEN_END__" {grab=0; next}
+    grab {print}
+  ' | tr -d '\r\n[:space:]'
+)"
+
+if [[ ${#TOKEN} -lt 20 || "$TOKEN" == *"loaded config"* ]]; then
+  echo "Failed to create clean token (len=${#TOKEN})" >&2
   exit 1
 fi
 
@@ -65,6 +75,12 @@ code="$(
 )"
 echo "Updated NETBOX_API_TOKEN in $ENV_LOCAL (len=${#TOKEN})"
 echo "API status HTTP $code"
+if [[ "$code" != "200" ]]; then
+  echo "NetBox API token check failed" >&2
+  head -c 400 "$STATUS_FILE" >&2 || true
+  echo >&2
+  exit 1
+fi
 if command -v jq >/dev/null; then
   jq -c '{netbox: .["netbox-version"], plugins: (.plugins|keys? // empty)}' "$STATUS_FILE" 2>/dev/null || true
 fi

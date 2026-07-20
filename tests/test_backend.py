@@ -218,8 +218,12 @@ def test_run_sets_device_primary_ip_from_configstate_interface_cidr():
     entities = list(Backend().run("platformone_worker", _policy()))
 
     devices = [e.device for e in entities if e.HasField("device")]
-    assert len(devices) == 1
-    assert devices[0].primary_ip4.address == "10.0.0.2/24"
+    # Main Device (no primary_ip) then follow-up Device that asserts primary_ip4
+    # after Interface IPAddress entities — avoids Diode apply dropping serial/CFs.
+    assert len(devices) == 2
+    assert not devices[0].HasField("primary_ip4")
+    assert devices[0].serial == "SN42"
+    assert devices[1].primary_ip4.address == "10.0.0.2/24"
 
 
 @responses.activate

@@ -41,9 +41,9 @@ Platform ONE (Assets + ConfigState)
 | Switch ports (ConfigState) | `Interface` — name, admin state (`enabled`), link state (`mark_connected`), speed/duplex (verified codes), `type` (verified codes else `other`), description, MAC (uppercase), `mgmt_only`, `poe_mode`, untagged/tagged VLANs with 802.1Q `mode`, `platformone_interface_id` custom field |
 | VLAN membership (ConfigState) | Interface `untagged_vlan` / `tagged_vlans` by `vid` with `name=str(vid)` (NetBox requires a name; switch-local names are not site-scoped, so VID is the stable placeholder; named VLAN sync via `retrieve-asset-vlan-config` is not used) |
 | Interface IP addresses (ConfigState) | `IPAddress` — address + `mask_length`, `status` `active`, assigned to the matching interface (bare addresses without a prefix are skipped; SVI/orphan IPs also emit a minimal Interface named from vlan/port/LAG rows) |
-| Link aggregation (ConfigState) | `Interface` — LAG parent (`type=lag`, name, admin `enabled`, VLAN trunk/access, `poe_mode` when joined, optional description/MAC from duplicate port rows, interface CFs); member ports use the same physical-port fields plus Diode `Interface.lag` |
+| Link aggregation (ConfigState) | `Interface` — LAG parent (`type=lag`, name, admin `enabled` from duplicate port-config or default up, VLAN trunk/access, `poe_mode` when joined, optional description/MAC from duplicate port rows, interface CFs); member ports use the same physical-port fields plus Diode `Interface.lag` |
 | Inferred clusters (ConfigState) | `VirtualChassis` — name from peer names, master = primary member (`device_one`), member `vc_position`, provenance tags, `platformone_cluster_id` custom field |
-| AP radios (ConfigState) | `Interface` — radio name, admin `enabled`, `type` (IEEE 802.11 when known, else `other` like Meraki radios), `rf_role=ap`, `tx_power`, `primary_mac_address` (BSSID, uppercase), `rf_channel_frequency` / `rf_channel_width`, linked `wireless_lans`, interface CFs |
+| AP radios (ConfigState) | `Interface` — radio name, admin `enabled`, `type` (`ieee802.11*` when known including `ieee802.11be`; else `other` without RF fields), `rf_role=ap` + `tx_power` / channel fields only on wireless types, `primary_mac_address` (BSSID, uppercase), linked `wireless_lans`, interface CFs |
 | SSIDs / WLANs (ConfigState) | `WirelessLAN` — `ssid`, `status` (`active`/`disabled`; unknown → `active`), `auth_type` / `auth_cipher` (unknown → `open` / `auto`, Meraki-style); deduped by SSID across APs (not site-scoped) |
 
 The worker asserts a **fixed field set**: each field is either always
@@ -469,7 +469,9 @@ Membership is taken from nested `member_ports` on **lag-config** rows only.
 
 - **LAG parent** is an `Interface` with `type=lag`, name from Platform ONE
   `name` (switches auto-generate one; rows without a name are skipped — no
-  invented `lag-{n}`), admin `enabled` from config, and
+  invented `lag-{n}`), admin `enabled` from a duplicate port-config row when
+  present (otherwise default admin-up — Platform ONE's lag-config `enabled`
+  is observed always-false for in-service MLTs), and
   `platformone_interface_id` from `asset_interface_id` (the existing interface
   UUID CF). Shared
   joins on that interface id apply vlan-properties (untagged / tagged VLANs by
@@ -514,14 +516,15 @@ switch-only). Tables used:
 - `retrieve-asset-ssid-config` / `retrieve-asset-ssid-state`
 
 Each radio becomes a NetBox `Interface` with native RF fields: `rf_role`
-always `"ap"`, `enabled` from wireless-interface config, `type` from
-`radio_mode` when it maps to a known IEEE 802.11 NetBox type (otherwise
-`other`, matching Meraki AP radios), `tx_power` from `power`,
-`primary_mac_address` from `bssid` (uppercase), `rf_channel_frequency` from
-IEEE channel formulas on `band` + `channel` (including string labels such as
-`BAND_5_GHZ`), and `rf_channel_width` when `channel_width` is already a
-standard MHz value (20/40/80/160/320). NetBox's `rf_channel` string is not
-asserted.
+always `"ap"` when `type` is an `ieee802.11*` wireless type, `enabled` from
+wireless-interface config, `type` from `radio_mode` (including
+`ieee802.11be` for Wi‑Fi 7; unknown/missing mode → `other` **without** RF
+fields — NetBox rejects `rf_role` / channel fields on non-wireless types),
+`tx_power` from `power`, `primary_mac_address` from `bssid` (uppercase),
+`rf_channel_frequency` from IEEE channel formulas on `band` + `channel`
+(including string labels such as `BAND_5_GHZ`), and `rf_channel_width` when
+`channel_width` is already a standard MHz value (20/40/80/160/320). NetBox's
+`rf_channel` string is not asserted.
 
 SSIDs become `WirelessLAN` entities (`ssid`, `status`, `auth_type`,
 `auth_cipher` — see status/auth tables above). They are deduped by SSID name
@@ -545,9 +548,9 @@ AssetDevice UUIDs, and transforms each complete in-scope pair to a NetBox
   chassis; identical placeholders like `"Default"` fall through to distinct
   member device names. Clusters with no distinct peer or member names are
   skipped (no invented `cluster-{uuid}`). Duplicate computed names across
-  clusters are emitted as-is with a warning: the unique `platformone_cluster_id`
-  custom field makes NetBox reject the collision at ingest, surfacing the
-  upstream data problem instead of hiding it behind an invented suffix.
+  clusters are emitted as-is with a warning: NetBox does not unique on
+  VirtualChassis name, so identity relies on the unique
+  `platformone_cluster_id` custom field rather than name collision rejection.
 - **Master** is `device_one`; members get `vc_position` 1 and 2. Device
   membership entities are emitted before the VirtualChassis `master` field so
   a fresh create does not hit NetBox's "master is not assigned to this virtual
