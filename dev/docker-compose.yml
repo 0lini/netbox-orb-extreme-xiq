@@ -26,7 +26,14 @@ services:
         condition: service_started
     env_file: ./netbox/env/netbox.env
     healthcheck:
-      start_period: 180s
+      # First boot runs DB migrations + the Diode plugin install; on slow or
+      # contended hosts (e.g. Codespaces building the workspace image in
+      # parallel) this can take many minutes. A passing check still marks the
+      # container healthy immediately, so a long start_period only affects the
+      # first, migration-heavy boot -- it does not delay steady-state boots.
+      # Without enough grace, `docker compose up` aborts the whole Dev Container
+      # with "dependency failed to start: netbox is unhealthy".
+      start_period: 900s
       timeout: 5s
       interval: 15s
       retries: 10
