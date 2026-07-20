@@ -393,14 +393,13 @@ def _port_kwargs(
 
 
 def _lag_name(config: dict, state: dict) -> str | None:
-    """LAG Interface name: prefer `name`, else `lag-{lag_number}`."""
+    """LAG Interface name from Platform ONE ``name`` (switches always set one).
+
+    No ``lag-{n}`` invention from ``lag_number`` — NetBox requires a name, but
+    inventing one would diverge from the switch's auto-generated LAG name.
+    """
     name = config.get("name") or state.get("name")
-    if name:
-        return str(name)
-    lag_number = config.get("lag_number") or state.get("lag_number")
-    if lag_number is not None and str(lag_number):
-        return f"lag-{lag_number}"
-    return None
+    return str(name) if name else None
 
 
 def _lag_admin_enabled(port_config: dict | None = None) -> bool:
@@ -485,8 +484,9 @@ def _lag_kwargs(
     AssetLagConfig also carries LACP `mode` / `lacp_key` / `load_balance_algo`
     / `dynamic`, but Diode's Interface has no matching fields and the mode /
     algo integers have no published value table — leave them unmapped (see
-    README). `lag_number` is naming-only (`lag-{n}` fallback); it is not a
-    second custom field (redundant with `platformone_interface_id`).
+    README). `lag_number` is unused for NetBox naming (switches always supply
+    `name`); it is not a second custom field (redundant with
+    `platformone_interface_id`).
     """
     kwargs = _iface_base_kwargs(
         device=device,

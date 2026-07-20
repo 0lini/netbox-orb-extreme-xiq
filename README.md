@@ -472,10 +472,11 @@ ConfigState `retrieve-asset-lag-config` / `retrieve-asset-lag-state` (batched
 by `asset_device_id`, same pattern as ports) map to NetBox LAG interfaces.
 Membership is taken from the nested `member_ports` list on those rows.
 
-- **LAG parent** is an `Interface` with `type=lag`, name from `name` (or
-  `lag-{lag_number}` when name is absent), admin `enabled` from config, and
+- **LAG parent** is an `Interface` with `type=lag`, name from Platform ONE
+  `name` (switches auto-generate one; rows without a name are skipped — no
+  invented `lag-{n}`), admin `enabled` from config, and
   `platformone_interface_id` from `asset_interface_id` (the existing interface
-  UUID CF — `lag_number` is naming-only, not a second custom field). Shared
+  UUID CF). Shared
   joins on that interface id apply vlan-properties (untagged / tagged VLANs by
   `vid` + `name=str(vid)` and 802.1Q `mode`), PoE (`poe_mode`), and interface IP addresses the
   same way as for physical ports. When AssetPortConfig/State also returns the

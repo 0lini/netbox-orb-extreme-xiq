@@ -764,15 +764,15 @@ def test_ports_to_entities_nests_device_site_role_and_type(stub_sdk):
     assert device["device_type"]._kw["model"] == "5320-48P-8XE-FabricEngine"
 
 
-def test_ports_to_entities_lag_without_name_uses_lag_number(stub_sdk):
+def test_ports_to_entities_skips_lag_without_name(stub_sdk):
+    """Switches auto-generate LAG names; do not invent lag-{n} from lag_number."""
     lag = {**LAG_CONFIG, "name": None, "member_ports": []}
     entities = transform.ports_to_entities(
         _tables(port_configs=[], port_states=[], vlan_properties=[], lag_configs=[lag], lag_states=[]),
         device="sw-idf1",
     )
 
-    assert entities[0]._kw["interface"]._kw["name"] == "lag-1"
-    assert entities[0]._kw["interface"]._kw["type"] == "lag"
+    assert entities == []
 
 
 def test_ports_to_entities_member_only_from_lag_still_emits_interface(stub_sdk):
