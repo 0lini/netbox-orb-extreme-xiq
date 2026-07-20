@@ -197,11 +197,11 @@ same-named environment variable; policy config takes precedence.
   with `PLATFORMONE_API_URL`. Both `PLATFORMONE_API_URL` and
   `NETBOX_API_URL` must be `https://` for remote hosts. Plaintext `http://`
   is allowed only for local-dev hosts (loopback, `*.local`, compose
-  `netbox`) so the local stack can bootstrap.
+  hostname `netbox`) when bootstrapping against a lab NetBox.
 
 ### Security notes
 
-Full posture, local-stack caveats, and residual risks: [`SECURITY.md`](SECURITY.md).
+Full posture and residual risks: [`SECURITY.md`](SECURITY.md).
 
 - Keep `BOOTSTRAP: false` on scheduled runs; the NetBox bootstrap token is
   write-capable schema access and should not stay mounted afterward.
@@ -209,24 +209,6 @@ Full posture, local-stack caveats, and residual risks: [`SECURITY.md`](SECURITY.
 - Outbound HTTP does not follow redirects (login password / NetBox token stay
   on the configured origin).
 - Never commit dry-run JSON or live inventory exports to git.
-
-## Development
-
-### Local NetBox + Diode test stack
-
-Compose stack + Dev Container under [`.devcontainer/`](.devcontainer/README.md)
-(NetBox with Diode plugin, Python workspace). Diode itself is set up with the
-[official quickstart](https://github.com/netboxlabs/diode) via `setup.sh`.
-Codespaces starts the stack without Docker-in-Docker.
-
-```bash
-./.devcontainer/setup.sh
-docker compose -f .devcontainer/docker-compose.yml up -d --build
-./.devcontainer/create-netbox-token.sh
-```
-
-Or reopen in a Dev Container / Codespace. Point Orb at
-`grpc://localhost:8080/diode` with `.devcontainer/agent.local.yaml`.
 
 ## Development
 
