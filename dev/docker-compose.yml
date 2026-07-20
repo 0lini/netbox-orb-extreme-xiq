@@ -25,6 +25,12 @@ services:
       netbox-redis-cache:
         condition: service_started
     env_file: ./netbox/env/netbox.env
+    # When opened as a Codespace/Dev Container, NetBox is reached through the
+    # GitHub *.app.github.dev HTTPS proxy, so Django needs those cross-origin
+    # hosts in CSRF_TRUSTED_ORIGINS or every form POST (incl. login) fails with
+    # "CSRF verification failed". Harmless for plain localhost access.
+    environment:
+      CSRF_TRUSTED_ORIGINS: https://*.app.github.dev https://*.githubpreview.dev
     healthcheck:
       # First boot runs DB migrations + the Diode plugin install; on slow or
       # contended hosts (e.g. Codespaces building the workspace image in
