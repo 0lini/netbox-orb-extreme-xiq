@@ -275,7 +275,10 @@ else
 fi
 
 # Agent policy pointed at local Diode (host network / published ports).
-cat >"$DEV/agent.local.yaml" <<EOF
+# Preserve an existing file so re-running setup does not flip BOOTSTRAP back
+# to true after the operator has disabled it.
+if [[ ! -f "$DEV/agent.local.yaml" ]]; then
+  cat >"$DEV/agent.local.yaml" <<EOF
 # Generated local Orb Agent policy — Diode target is the compose-published port.
 orb:
   config_manager:
@@ -301,10 +304,12 @@ orb:
           NETBOX_API_TOKEN: \${NETBOX_API_TOKEN}
           PLATFORMONE_API_TOKEN: \${PLATFORMONE_API_TOKEN}
           classification: ALL
-          name_source: hostname
         scope:
           sites: ["*"]
 EOF
+else
+  echo "Using existing $DEV/agent.local.yaml"
+fi
 
 # workers.txt install path for a repo-root mount at /opt/orb
 cat >"$DEV/workers.local.txt" <<EOF

@@ -166,11 +166,15 @@ class Backend(WorkerBackend):
         config = policy.config
 
         if _cfg(config, "BOOTSTRAP", False):
+            netbox_url = _cfg_or_env(config, "NETBOX_API_URL")
+            netbox_token = _cfg_or_env(config, "NETBOX_API_TOKEN")
+            if not netbox_url or not netbox_token:
+                raise ValueError(
+                    "BOOTSTRAP is enabled but NETBOX_API_URL / NETBOX_API_TOKEN "
+                    "are missing; provide both or set BOOTSTRAP: false"
+                )
             logger.info("Policy %s: running bootstrap (custom fields + provenance tags)", policy_name)
-            bootstrap.ensure_schema(
-                _cfg_or_env(config, "NETBOX_API_URL"),
-                _cfg_or_env(config, "NETBOX_API_TOKEN"),
-            )
+            bootstrap.ensure_schema(netbox_url, netbox_token)
 
         client = _build_client(config)
         classification = _cfg(config, "classification", DEFAULT_CLASSIFICATION)

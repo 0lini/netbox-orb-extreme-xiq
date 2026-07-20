@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 import responses
 from worker.models import Config, Policy
 
@@ -627,3 +628,17 @@ def test_collect_interface_ids_includes_vlan_only_interfaces():
         "if-port": "cs-uuid-42",
         "if-svi": "cs-uuid-42",
     }
+
+
+def test_bootstrap_true_without_netbox_creds_fails_closed():
+    """BOOTSTRAP must not silently no-op when NetBox credentials are missing."""
+    policy = Policy(
+        config=Config(
+            package="orb_extreme_platformone",
+            BOOTSTRAP=True,
+            PLATFORMONE_API_TOKEN="tok",
+        ),
+        scope={"sites": ["*"]},
+    )
+    with pytest.raises(ValueError, match="BOOTSTRAP is enabled"):
+        list(Backend().run("platformone_worker", policy))

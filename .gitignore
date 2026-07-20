@@ -8,6 +8,9 @@ dist/
 .ruff_cache/
 .env
 test.json
+*.dry-run.json
+dry-run-output/
+dry_run_output/
 
 # Local NetBox + Diode test stack secrets / generated files
 dev/.env.local
