@@ -114,10 +114,10 @@ services:
     env_file:
       - path: ./.env.local
         required: false
+    # Do not depend on netbox-worker: it waits for netbox service_healthy, which
+    # would undo the service_started relaxation below and delay Dev Container attach.
     depends_on:
       netbox:
-        condition: service_started
-      netbox-worker:
         condition: service_started
       ingress-nginx:
         condition: service_started
