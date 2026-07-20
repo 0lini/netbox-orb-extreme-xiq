@@ -147,7 +147,11 @@ def _auth_from_encryption(encryption: str | None) -> tuple[str, str]:
 
 
 def _split_if_names(value) -> list[str]:
-    """Normalize AssetSsid*.if_names into a list of interface name strings."""
+    """Normalize AssetSsid*.if_names (OpenAPI string) into interface names.
+
+    Accepts a single name, a comma-separated string, or a list. No speculative
+    JSON / alternate-separator parsing.
+    """
     if value is None:
         return []
     if isinstance(value, list):
@@ -155,27 +159,15 @@ def _split_if_names(value) -> list[str]:
     text = str(value).strip()
     if not text:
         return []
-    if text.startswith("[") and text.endswith("]"):
-        # JSON-ish list serialized as a string.
-        inner = text[1:-1].strip()
-        if not inner:
-            return []
-        parts = [part.strip().strip("'\"") for part in inner.split(",")]
-        return [part for part in parts if part]
-    for sep in (",", ";", "|"):
-        if sep in text:
-            return [part.strip() for part in text.split(sep) if part.strip()]
+    if "," in text:
+        return [part.strip() for part in text.split(",") if part.strip()]
     return [text]
 
 
 def _wireless_radio_key(row: dict) -> str | None:
-    """Join key for wireless config/state rows.
-
-    ``asset_interface_id`` is required on both wireless-interface schemas; no
-    name-based fallback (would collide across APs if device scoping failed).
-    """
+    """Join key: required ``asset_interface_id`` on wireless-interface rows."""
     interface_id = str(row.get("asset_interface_id") or "").strip()
-    return f"id:{interface_id}" if interface_id else None
+    return interface_id or None
 
 
 def _wlan_status(enabled) -> str:
@@ -209,10 +201,11 @@ def _radio_interface_kwargs(
         device=device,
         name=name,
         interface_id=interface_id or None,
-        enabled=config.get("enabled") if "enabled" in config else None,
+        enabled=config.get("enabled"),
     )
     kwargs["rf_role"] = "ap"
-    radio_type = _radio_type(state.get("radio_mode") or config.get("radio_mode"))
+    # radio_mode exists only on AssetWirelessInterfaceState, not config.
+    radio_type = _radio_type(state.get("radio_mode"))
     if radio_type is not None:
         kwargs["type"] = radio_type
     tx_power = _tx_power(state.get("power"))

@@ -25,5 +25,4 @@ def extract_wireless_tables(
         WIRELESS_TABLES,
         policy_name=policy_name,
         degradation="wireless sync without it",
-        row_device_id=lambda row: str(row.get("asset_device_id") or ""),
     )

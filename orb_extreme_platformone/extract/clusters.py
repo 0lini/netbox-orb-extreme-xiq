@@ -34,12 +34,17 @@ def extract_inferred_clusters(client: PlatformOneClient, asset_device_ids: list[
         for cluster in client.retrieve("inferred-cluster", {filter_field: inferred_ids}):
             one = str(cluster.get("device_one_id") or "")
             two = str(cluster.get("device_two_id") or "")
-            # Members the map misses are out of scope; transform skips
-            # those clusters, so the raw InferredDevice UUID passes through.
+            one_asset = inferred_to_asset.get(one)
+            two_asset = inferred_to_asset.get(two)
+            # Skip when either member is out of scope (no AssetDevice remap).
+            if not one_asset or not two_asset:
+                continue
             remapped = {
                 **cluster,
-                "device_one_id": inferred_to_asset.get(one, one),
-                "device_two_id": inferred_to_asset.get(two, two),
+                "device_one_id": one_asset,
+                "device_two_id": two_asset,
             }
-            by_id[str(remapped.get("id"))] = remapped
+            cluster_id = str(remapped.get("id") or "")
+            if cluster_id:
+                by_id[cluster_id] = remapped
     return [by_id[key] for key in sorted(by_id)]

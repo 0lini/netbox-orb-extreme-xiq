@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 
 from orb_extreme_platformone.client import PlatformOneApiError, PlatformOneClient
@@ -12,12 +12,6 @@ logger = logging.getLogger("orb_extreme_platformone.extract")
 
 # Catalog: transform key -> (retrieve-* table, GetRequest filter field).
 TableCatalog = dict[str, tuple[str, str]]
-RowDeviceIdFn = Callable[[dict], str]
-
-
-def _default_row_device_id(row: dict) -> str:
-    """Prefer asset_device_id; fall back to device_id (vlan/PoE tables)."""
-    return str(row.get("asset_device_id") or row.get("device_id") or "")
 
 
 def retrieve_parallel(
@@ -83,13 +77,14 @@ def extract_device_table_buckets(
     *,
     policy_name: str,
     degradation: str,
-    row_device_id: RowDeviceIdFn = _default_row_device_id,
     failed_tables: list[str] | None = None,
 ) -> tuple[dict[str, dict[str, list[dict]]], list[str]]:
     """Batched device-filtered retrieves, bucketed by device UUID.
 
     Returns ``(tables_by_device, failed_tables)``. Each device gets an empty
     list per catalog key; successful rows append into the matching bucket.
+    Rows are keyed by the catalog's GetRequest filter field
+    (``asset_device_id`` or ``device_id``) — no cross-field fallback.
     """
     failures = failed_tables if failed_tables is not None else []
     tables_by_device: dict[str, dict[str, list[dict]]] = {
@@ -98,17 +93,19 @@ def extract_device_table_buckets(
     if not device_ids or not catalog:
         return tables_by_device, failures
 
-    jobs = [(table, {filter_field: device_ids}) for table, filter_field in catalog.values()]
-    for key, rows in retrieve_ok(
+    # Preserve catalog order for deterministic retrieve_ok contexts.
+    catalog_items = list(catalog.items())
+    jobs = [(table, {filter_field: device_ids}) for _, (table, filter_field) in catalog_items]
+    for (key, (_, filter_field)), rows in retrieve_ok(
         client,
         jobs,
-        list(catalog),
+        catalog_items,
         policy_name=policy_name,
         failed_tables=failures,
         degradation=degradation,
     ):
         for row in rows:
-            device_id = row_device_id(row)
+            device_id = str(row.get(filter_field) or "")
             if device_id in tables_by_device:
                 tables_by_device[device_id][key].append(row)
     return tables_by_device, failures

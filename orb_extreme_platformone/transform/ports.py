@@ -127,8 +127,8 @@ def primary_ips_from_tables(
     if asset_host and "/" in asset_host:
         asset_host = asset_host.split("/", 1)[0]
     if asset_host:
-        for row, cidr, iface in rows_with_cidr:
-            if str(iface.ip) == asset_host or str(row.get("address") or "").split("/", 1)[0] == asset_host:
+        for _row, cidr, iface in rows_with_cidr:
+            if str(iface.ip) == asset_host:
                 ranked.append((iface.version, cidr))
         if ranked:
             return _pick_primary_cidr(ranked)
@@ -582,14 +582,13 @@ def _lag_entities(
         if not name:
             continue
         lag_names.add(name)
-        interface_id = config.get("asset_interface_id") or state.get("asset_interface_id")
-        interface_id_str = str(interface_id) if interface_id else None
+        # `key` is asset_interface_id (required on lag config/state).
         kwargs = _lag_kwargs(
             device=device,
             name=name,
-            interface_id=interface_id_str,
+            interface_id=key,
             config=config,
-            vlan_records=_vlan_records_for(vlans, interface_id=interface_id_str or key),
+            vlan_records=_vlan_records_for(vlans, interface_id=key),
             poe_config=_optional_first_row(poe_configs, key, table="poe_configs"),
             poe_state=_optional_first_row(poe_states, key, table="poe_states"),
             port_config=_optional_first_row(port_configs, key, table="port_configs"),
@@ -629,21 +628,19 @@ def _physical_port_entities(
         name = str(config.get("name") or state.get("name") or "")
         if not name:
             continue
-        interface_id = config.get("asset_interface_id") or state.get("asset_interface_id")
-        # Skip rows that are the LAG interface itself (same asset_interface_id).
-        if interface_id and str(interface_id) in lag_interface_ids:
+        # `key` is asset_interface_id (required on port config/state).
+        if key in lag_interface_ids:
             continue
         if name in lag_names:
             continue
         port_device_id = str(config.get("asset_device_id") or state.get("asset_device_id") or "")
-        interface_id_str = str(interface_id) if interface_id else None
         kwargs = _port_kwargs(
             device=device,
             name=name,
-            interface_id=interface_id_str,
+            interface_id=key,
             config=config,
             state=state,
-            vlan_records=_vlan_records_for(vlans, interface_id=interface_id_str or key),
+            vlan_records=_vlan_records_for(vlans, interface_id=key),
             capability=capabilities.get((port_device_id, name)),
             poe_config=_optional_first_row(poe_configs, key, table="poe_configs"),
             poe_state=_optional_first_row(poe_states, key, table="poe_states"),
