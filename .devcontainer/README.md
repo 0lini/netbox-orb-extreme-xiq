@@ -32,6 +32,19 @@ docker compose -f .devcontainer/docker-compose.yml --profile '*' up -d --build
 
 Then **Dev Containers: Rebuild Container**.
 
+If `up` fails with `bind: address already in use` on port 8000/8080 (common on
+Podman/Bazzite after a partial start):
+
+```bash
+ss -ltnp | grep -E ':8000|:8080'
+# stop whatever holds the port, e.g. an old container:
+docker ps -a --format '{{.ID}} {{.Names}} {{.Ports}}' | grep -E '8000|8080'
+docker rm -f <container-id>
+# or, if it is a host process:
+# kill <pid>
+docker compose -f .devcontainer/docker-compose.yml --profile '*' up -d --build
+```
+
 ## Quick start
 
 **Dev Container / Codespaces:** reopen in container (`initializeCommand` runs

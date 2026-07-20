@@ -77,6 +77,14 @@ fi
 
 echo
 echo "Cleanup done."
+if command -v ss >/dev/null 2>&1; then
+  for port in 8000 8080; do
+    if ss -ltn "sport = :$port" 2>/dev/null | grep -q ":$port"; then
+      echo "Warning: host port $port is still in use (NetBox/Diode publish will fail):"
+      ss -ltnp "sport = :$port" 2>/dev/null || ss -ltn "sport = :$port" 2>/dev/null || true
+    fi
+  done
+fi
 echo "  bash ./.devcontainer/setup.sh"
 echo "  docker compose -f .devcontainer/docker-compose.yml --profile '*' up -d --build"
 echo "Then: Dev Containers: Rebuild Container"
