@@ -60,6 +60,10 @@ services:
   netbox-postgres:
     image: docker.io/postgres:18-alpine
     env_file: ./netbox/env/postgres.env
+    # postgres:18 refuses a volume mounted directly at /var/lib/postgresql/data;
+    # keep the mount there but point PGDATA at a subdirectory of it.
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - netbox-postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -92,6 +96,10 @@ services:
   postgres:
     image: docker.io/postgres:18-alpine
     env_file: ./diode/.env
+    # postgres:18 refuses a volume mounted directly at /var/lib/postgresql/data;
+    # keep the mount there but point PGDATA at a subdirectory of it.
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
     # Clear upstream command that writes into a tmpfs initdir (broken under rootless Podman).
     entrypoint: ["docker-entrypoint.sh"]
     command: ["postgres"]
