@@ -31,9 +31,13 @@ docker compose -f dev/docker-compose.yml up -d --build
 | NetBox UI | http://localhost:8000 (`admin` / `admin`) |
 | Diode gRPC | `grpc://localhost:8080/diode` |
 
+Published ports bind to **127.0.0.1 only** so the demo NetBox (`admin`/`admin`)
+and Diode ingress are not reachable from other hosts on the LAN.
+
 Generated secrets and agent env land in gitignored files (`dev/.env.local`,
 `dev/diode/.env`, `dev/netbox/env/*.env`). Templates live next to them as
-`*.env.example`.
+`*.env.example`. Re-running `./dev/setup.sh` keeps existing secret files so
+DB/Redis passwords stay aligned with volumes.
 
 After NetBox is up, mint a REST API token for bootstrap:
 
@@ -61,11 +65,14 @@ tags are created. Set it to `false` afterward.
 
 ## Dev Container
 
-1. Run `./dev/setup.sh` once on the host (creates OAuth secrets before compose starts).
-2. Command Palette → **Dev Containers: Reopen in Container**.
+1. Command Palette → **Dev Containers: Reopen in Container**.
+2. `initializeCommand` runs `./dev/setup.sh` on the host before compose starts
+   (idempotent: existing secret files are kept).
 
-That uses `.devcontainer/devcontainer.json`, which starts the same
-`dev/docker-compose.yml` and attaches to the `workspace` service. Inside the
+That uses `.devcontainer/devcontainer.json`, which starts `dev/docker-compose.yml`
+and attaches to the `workspace` service (`runServices: ["workspace"]`; compose
+`depends_on` brings up NetBox, Diode, and `netbox-worker`). Image tags stay
+unpinned — rebuild with compose when the Dockerfile changes. Inside the
 container, NetBox is `http://netbox:8080` and Diode is
 `grpc://ingress-nginx:80/diode`.
 

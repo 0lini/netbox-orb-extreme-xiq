@@ -89,9 +89,22 @@ def _headers(token: str) -> dict:
     return {"Authorization": f"Token {token}", "Content-Type": "application/json"}
 
 
-def _lookup(url: str, token: str, name: str) -> dict | None:
-    resp = requests.get(url, headers=_headers(token), params={"name": name}, timeout=30)
+def _request(method: str, url: str, token: str, **kwargs):
+    """NetBox REST call that never follows redirects (token must not leave origin)."""
+    kwargs.setdefault("timeout", 30)
+    kwargs.setdefault("allow_redirects", False)
+    resp = requests.request(method, url, headers=_headers(token), **kwargs)
+    if 300 <= resp.status_code < 400:
+        raise requests.HTTPError(
+            f"NetBox unexpected redirect {resp.status_code} for {url}",
+            response=resp,
+        )
     resp.raise_for_status()
+    return resp
+
+
+def _lookup(url: str, token: str, name: str) -> dict | None:
+    resp = _request("GET", url, token, params={"name": name})
     results = resp.json().get("results") or []
     return results[0] if results else None
 
@@ -106,22 +119,26 @@ def _ensure_all(url: str, token: str, definitions: list[dict]) -> None:
     for definition in definitions:
         existing = _lookup(url, token, definition["name"])
         if existing is None:
-            resp = requests.post(url, headers=_headers(token), json=definition, timeout=30)
-            resp.raise_for_status()
+            _request("POST", url, token, json=definition)
             continue
         desired_unique = definition.get("unique")
         if desired_unique is not None and existing.get("unique") != desired_unique:
-            resp = requests.patch(
+            _request(
+                "PATCH",
                 f"{url}{existing['id']}/",
-                headers=_headers(token),
+                token,
                 json={"unique": desired_unique},
-                timeout=30,
             )
-            resp.raise_for_status()
 
 
 def ensure_schema(netbox_url: str | None, netbox_token: str | None) -> None:
-    """Idempotently create the custom-field definitions and provenance tags."""
+    """Idempotently create the custom-field definitions and provenance tags.
+
+    When either URL or token is missing the call is a no-op so scheduled
+    runs without bootstrap credentials stay quiet. Callers that set
+    ``BOOTSTRAP: true`` should fail closed before invoking this (see
+    ``backend.Backend.run``).
+    """
     if not netbox_url or not netbox_token:
         return
     base = require_https_url(netbox_url, what="NETBOX_API_URL")

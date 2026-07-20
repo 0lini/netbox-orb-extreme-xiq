@@ -195,13 +195,19 @@ same-named environment variable; policy config takes precedence.
   putting secrets in `agent.yaml`.
 - **Base URL:** `https://cloudapi.extremecloudiq.com` by default; override
   with `PLATFORMONE_API_URL`. Both `PLATFORMONE_API_URL` and
-  `NETBOX_API_URL` must be `https://` URLs; plaintext `http://` is rejected.
+  `NETBOX_API_URL` must be `https://` for remote hosts. Plaintext `http://`
+  is allowed only for local-dev hosts (loopback, `*.local`, compose
+  `netbox`) so the local stack can bootstrap.
 
 ### Security notes
+
+Full posture, local-stack caveats, and residual risks: [`SECURITY.md`](SECURITY.md).
 
 - Keep `BOOTSTRAP: false` on scheduled runs; the NetBox bootstrap token is
   write-capable schema access and should not stay mounted afterward.
 - API error logs truncate upstream response bodies so diagnostics stay short.
+- Outbound HTTP does not follow redirects (login password / NetBox token stay
+  on the configured origin).
 - Never commit dry-run JSON or live inventory exports to git.
 
 ## Development

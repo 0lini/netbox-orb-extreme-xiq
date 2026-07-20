@@ -125,7 +125,16 @@ class PlatformOneClient:
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
-        resp = self._session().post(url, headers=headers, json=payload, timeout=self._timeout)
+        # Fail closed on redirects so a 307 cannot replay the password body.
+        resp = self._session().post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=self._timeout,
+            allow_redirects=False,
+        )
+        if 300 <= resp.status_code < 400:
+            raise PlatformOneApiError(f"Platform ONE login unexpected redirect ({resp.status_code})")
         if resp.status_code != 200:
             detail = truncate_error_body(resp.text)
             raise PlatformOneApiError(f"Platform ONE login failed ({resp.status_code}): {detail}")
@@ -148,7 +157,18 @@ class PlatformOneClient:
         url = f"{self._base_url}{path}"
         for attempt in (1, 2):
             headers = self._auth_headers()
-            resp = self._session().post(url, headers=headers, params=params, json=body, timeout=self._timeout)
+            resp = self._session().post(
+                url,
+                headers=headers,
+                params=params,
+                json=body,
+                timeout=self._timeout,
+                allow_redirects=False,
+            )
+            if 300 <= resp.status_code < 400:
+                raise PlatformOneApiError(
+                    f"Platform ONE API unexpected redirect {resp.status_code} for {path}"
+                )
             if resp.status_code == 401 and attempt == 1 and self._username and self._password:
                 with self._lock:
                     self._token_expiry = 0.0
