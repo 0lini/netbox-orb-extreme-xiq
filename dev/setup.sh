@@ -35,7 +35,9 @@ generate_hex() {
   local n="${1:-40}"
   while true; do
     local s
-    s="$(head -c "$((n + 8))" /dev/urandom | xxd -p | tr -d '\n' | head -c "$n")"
+    # `od` (coreutils) is used instead of `xxd` (ships with vim, not guaranteed
+    # on a bare host) so setup does not hang when xxd is absent.
+    s="$(head -c "$((n + 8))" /dev/urandom | od -An -v -tx1 | tr -d ' \n' | head -c "$n")"
     if [[ ${#s} -eq "$n" ]]; then
       printf '%s' "$s"
       return
