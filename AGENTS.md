@@ -7,8 +7,9 @@ Platform ONE discovery worker for the NetBox Labs Orb Agent (extract →
 transform → Diode → NetBox). There is no in-repo frontend/backend service; the
 "application" is the worker package plus its standalone dry-run entrypoint.
 
-`.devcontainer/` holds the optional local NetBox+Diode compose stack and the
-compose-based Dev Container (workspace on the same network). Codespaces uses
+`.devcontainer/` holds an optional local NetBox (Diode plugin) compose stack, a
+compose-based Dev Container, and Diode via the **official Diode quickstart**
+(downloaded by `setup.sh` into `.devcontainer/diode/`). Codespaces uses
 `dockerComposeFile` — no Docker-in-Docker required.
 
 Standard commands are documented in `README.md`, `pyproject.toml`
