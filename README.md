@@ -413,6 +413,15 @@ Assets `ip_address` is a bare host (OpenAPI: dotted decimal). It is used only
 to *match* a ConfigState interface IP in step 3 — never asserted as Device
 `primary_ip*`, and never padded with `/32` or `/128`.
 
+The worker emits Device entities **without** `primary_ip*` first (so serial and
+custom fields apply cleanly), then Interface + IPAddress entities, then a
+follow-up Device that asserts `primary_ip4` / `primary_ip6`. That ordering
+avoids a Diode apply failure where NetBox rejects an update that sets
+`primary_ip*` before the address is assigned to the device — which previously
+dropped sibling fields such as `serial` and `platformone_device_id` from the
+same change set. If Diode still parallelizes the follow-up ahead of the
+IPAddress apply, the primary IP lands on the next Orb tick.
+
 ### Switch ports
 
 Every in-scope device whose Assets `function` is a switch OS has its ports
