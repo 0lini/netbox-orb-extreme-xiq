@@ -215,7 +215,9 @@ Full posture, local-stack caveats, and residual risks: [`SECURITY.md`](SECURITY.
 ### Local NetBox + Diode test stack
 
 Compose stack + Dev Container under [`.devcontainer/`](.devcontainer/README.md)
-(NetBox, Diode, Python workspace). Codespaces starts it without Docker-in-Docker.
+(NetBox with Diode plugin, Python workspace). Diode itself is set up with the
+[official quickstart](https://github.com/netboxlabs/diode) via `setup.sh`.
+Codespaces starts the stack without Docker-in-Docker.
 
 ```bash
 ./.devcontainer/setup.sh
