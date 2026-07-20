@@ -137,7 +137,8 @@ fi
 # --- Official Diode quickstart (downloads compose / nginx / .env / oauth clients) ---
 # Keep existing secrets so Postgres/Redis volumes stay valid (same idea as NetBox
 # env above). Upstream quickstart only fills missing files, but minting a new
-# .env or OAuth clients against leftover volumes breaks auth until down -v.
+# .env or OAuth clients against leftover volumes breaks auth until Diode volumes
+# are wiped (do not use parent compose down -v — that also drops NetBox data).
 CREDS="$DIODE/oauth2/client/client-credentials.json"
 DIODE_COMPOSE="$DIODE/docker-compose.yaml"
 DIODE_ENV="$DIODE/.env"
@@ -169,8 +170,9 @@ Error: Diode secrets are missing (.env and/or client-credentials.json) but Diode
 Postgres/Redis Docker volumes still exist. Re-running the official quickstart
 would generate new passwords that no longer match persisted data.
 
-Restore the missing files, or wipe volumes and re-run setup:
-  docker compose -f "$DEV/docker-compose.yml" down -v
+Restore the missing files, or wipe Diode volumes only (not NetBox) and re-run:
+  docker compose -f "$DEV/docker-compose.yml" down
+  docker volume ls -q | grep -E '(^|_)diode-(postgres|redis)-data\$' | xargs -r docker volume rm
   ./.devcontainer/setup.sh
 
 To proceed anyway (breaks an existing Diode volume), set DIODE_FORCE_QUICKSTART=1.
