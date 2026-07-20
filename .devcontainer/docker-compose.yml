@@ -122,8 +122,6 @@ services:
       ingress-nginx:
         condition: service_started
     command: sleep infinity
-    profiles:
-      - devcontainer
 
 volumes:
   netbox-media-files:
