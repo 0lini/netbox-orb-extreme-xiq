@@ -169,14 +169,13 @@ def _split_if_names(value) -> list[str]:
 
 
 def _wireless_radio_key(row: dict) -> str | None:
+    """Join key for wireless config/state rows.
+
+    ``asset_interface_id`` is required on both wireless-interface schemas; no
+    name-based fallback (would collide across APs if device scoping failed).
+    """
     interface_id = str(row.get("asset_interface_id") or "").strip()
-    if interface_id:
-        return f"id:{interface_id}"
-    device_id = str(row.get("asset_device_id") or "").strip()
-    name = str(row.get("name") or "").strip()
-    if device_id and name:
-        return f"name:{device_id}:{name}"
-    return None
+    return f"id:{interface_id}" if interface_id else None
 
 
 def _wlan_status(enabled) -> str:

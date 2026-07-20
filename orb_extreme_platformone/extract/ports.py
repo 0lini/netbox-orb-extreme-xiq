@@ -13,14 +13,23 @@ def collect_interface_ids(
 ) -> dict[str, str]:
     """Map each collected asset_interface_id to its device UUID.
 
-    Scans every PORT_TABLES key: vlan_properties rows matter so
-    interface-IP / PoE-config retrieves cover VLAN-facing interfaces that
-    never appear in port/LAG/PoE-state rows; port_capabilities rows carry
-    no asset_interface_id and contribute nothing.
+    Scans tables that carry ``asset_interface_id`` (port/LAG/VLAN/PoE-state).
+    ``port_capabilities`` has no interface UUID and is skipped. VLAN rows
+    matter so interface-IP / PoE-config retrieves cover VLAN-facing interfaces
+    that never appear in port/LAG/PoE-state rows.
     """
+    # Keys whose ConfigState rows expose asset_interface_id (see PORT_TABLES).
+    source_keys = (
+        "port_configs",
+        "port_states",
+        "vlan_properties",
+        "lag_configs",
+        "lag_states",
+        "poe_states",
+    )
     interface_to_device: dict[str, str] = {}
     for device_id, tables in tables_by_device.items():
-        for key in PORT_TABLES:
+        for key in source_keys:
             for row in tables.get(key) or []:
                 interface_id = str(row.get("asset_interface_id") or "")
                 if interface_id:

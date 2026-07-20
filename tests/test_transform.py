@@ -91,22 +91,16 @@ def test_devices_to_entities_skips_bare_primary_ip6(stub_sdk):
     assert "primary_ip4" not in device
 
 
-def test_devices_to_entities_keeps_primary_ip_when_prefix_is_present(stub_sdk):
+def test_devices_to_entities_ignores_assets_ip_even_with_prefix(stub_sdk):
+    """Assets OpenAPI documents a bare host; never assert Assets ip_address
+    as Device primary_ip* even if a caller somehow supplies a CIDR string.
+    """
     asset = {**SWITCH_ASSET, "ip_address": "10.0.0.2/24"}
     entities = transform.devices_to_entities([_record(asset=asset)])
 
     device = entities[-1]._kw["device"]._kw
-    assert device["primary_ip4"] == "10.0.0.2/24"
-    assert "primary_ip6" not in device
-
-
-def test_devices_to_entities_keeps_primary_ip6_when_prefix_is_present(stub_sdk):
-    asset = {**SWITCH_ASSET, "ip_address": "2001:db8::1/64"}
-    entities = transform.devices_to_entities([_record(asset=asset)])
-
-    device = entities[-1]._kw["device"]._kw
-    assert device["primary_ip6"] == "2001:db8::1/64"
     assert "primary_ip4" not in device
+    assert "primary_ip6" not in device
 
 
 def test_devices_to_entities_uses_configstate_primary_ips_by_cs_id(stub_sdk):
@@ -550,18 +544,30 @@ def test_ports_to_entities_emits_interface_ip_addresses(stub_sdk):
     assert all(ip["assigned_object_interface"]._kw["device"]._kw["name"] == "sw-idf1" for ip in ip_entities)
 
 
-def test_ports_to_entities_emits_svi_ips_via_interface_name(stub_sdk):
+def test_ports_to_entities_emits_svi_ips_via_vlan_interface_name(stub_sdk):
     """An IP on an interface with no port/LAG row (e.g. a VLAN/SVI interface)
-    emits a minimal Interface, then the IPAddress assigned to it."""
+    emits a minimal Interface, then the IPAddress assigned to it.
+
+    Name comes from vlan-properties (or port/LAG rows), not from the IP row —
+    AssetInterfaceIpAddress has no interface_name in OpenAPI.
+    """
     ips = [
         {
             "asset_interface_id": "if-svi",
-            "interface_name": "vlan10",
             "address": "10.0.10.1",
             "mask_length": 24,
         }
     ]
-    entities = transform.ports_to_entities(_tables(vlan_properties=[], interface_ips=ips), device="sw-idf1")
+    svi_vlan = {
+        "device_id": "cs-uuid-42",
+        "asset_interface_id": "if-svi",
+        "interface_name": "vlan10",
+        "port_vlan": 10,
+        "vlans": [{"vlan_number": 10}],
+    }
+    entities = transform.ports_to_entities(
+        _tables(vlan_properties=[svi_vlan], interface_ips=ips), device="sw-idf1"
+    )
 
     # Physical port 1/1 from default fixtures, then the SVI interface + its IP.
     iface_entities = [e._kw["interface"]._kw for e in entities if "interface" in e._kw]
@@ -573,6 +579,23 @@ def test_ports_to_entities_emits_svi_ips_via_interface_name(stub_sdk):
     ip_entities = [e._kw["ip_address"]._kw for e in entities if "ip_address" in e._kw]
     assert [ip["address"] for ip in ip_entities] == ["10.0.10.1/24"]
     assert ip_entities[0]["assigned_object_interface"]._kw["name"] == "vlan10"
+
+
+def test_ports_to_entities_skips_orphan_ips_without_known_interface_name(stub_sdk):
+    """IP rows whose asset_interface_id is not in port/LAG/VLAN tables are skipped."""
+    ips = [
+        {
+            "asset_interface_id": "if-unknown",
+            "address": "10.0.10.1",
+            "mask_length": 24,
+            # Non-schema field must not be used as a name source.
+            "interface_name": "vlan10",
+        }
+    ]
+    entities = transform.ports_to_entities(_tables(vlan_properties=[], interface_ips=ips), device="sw-idf1")
+
+    assert not [e for e in entities if "ip_address" in e._kw]
+    assert not [e for e in entities if "interface" in e._kw and e._kw["interface"]._kw["name"] == "vlan10"]
 
 
 def test_ports_to_entities_skips_interface_ips_without_mask_length(stub_sdk):
@@ -907,7 +930,6 @@ def test_ports_to_entities_lag_joins_poe_and_ip_like_physical_ports(stub_sdk):
     ips = [
         {
             "asset_interface_id": "lag-if-1",
-            "interface_name": "lag1",
             "address": "10.0.0.1",
             "mask_length": 24,
         }

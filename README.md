@@ -36,11 +36,11 @@ Platform ONE (Assets + ConfigState)
 
 | Platform ONE source | NetBox objects |
 |---------------------|----------------|
-| Devices (Assets API) | `Device` — name (Assets `host_name` when present), serial, status (`active`/`offline`; unknown → `active`, Meraki-style), role (from Assets `function` when present; no static default), device type and manufacturer, platform (OS family + version), primary IPv4 or IPv6, provenance tags, `platformone_device_id` custom field |
+| Devices (Assets API) | `Device` — name (Assets `host_name` when present), serial, status (`active`/`offline`; unknown → `active`, Meraki-style), role (from Assets `function` when present; no static default), device type and manufacturer, platform (OS family + version), primary IPv4/IPv6 from ConfigState interface IPs (Assets `ip_address` is match-only), provenance tags, `platformone_device_id` custom field |
 | Device locations (ConfigState) | `Site` (optional latitude/longitude) plus a nested `Location` chain (building → floor), falling back to the Assets API's flat site name |
 | Switch ports (ConfigState) | `Interface` — name, admin state (`enabled`), link state (`mark_connected`), speed/duplex (verified codes), `type` (verified codes else `other`), description, MAC (uppercase), `mgmt_only`, `poe_mode`, untagged/tagged VLANs with 802.1Q `mode`, `platformone_interface_id` custom field |
 | VLAN membership (ConfigState) | Interface `untagged_vlan` / `tagged_vlans` by `vid` with `name=str(vid)` (NetBox requires a name; switch-local names are not site-scoped, so VID is the stable placeholder; named VLAN sync via `retrieve-asset-vlan-config` is not used) |
-| Interface IP addresses (ConfigState) | `IPAddress` — address + `mask_length`, `status` `active`, assigned to the matching interface (bare addresses without a prefix are skipped; SVI/orphan IPs also emit a minimal Interface) |
+| Interface IP addresses (ConfigState) | `IPAddress` — address + `mask_length`, `status` `active`, assigned to the matching interface (bare addresses without a prefix are skipped; SVI/orphan IPs also emit a minimal Interface named from vlan/port/LAG rows) |
 | Link aggregation (ConfigState) | `Interface` — LAG parent (`type=lag`, name, admin `enabled`, VLAN trunk/access, `poe_mode` when joined, optional description/MAC from duplicate port rows, interface CFs); member ports use the same physical-port fields plus Diode `Interface.lag` |
 | Inferred clusters (ConfigState) | `VirtualChassis` — name from peer names, master = primary member (`device_one`), member `vc_position`, provenance tags, `platformone_cluster_id` custom field |
 | AP radios (ConfigState) | `Interface` — radio name, admin `enabled`, `type` (IEEE 802.11 when known, else `other` like Meraki radios), `rf_role=ap`, `tx_power`, `primary_mac_address` (BSSID, uppercase), `rf_channel_frequency` / `rf_channel_width`, linked `wireless_lans`, interface CFs |
@@ -404,7 +404,7 @@ used with the same mapping.
 
 ### Primary IP
 
-Device `primary_ip4` / `primary_ip6` prefer ConfigState
+Device `primary_ip4` / `primary_ip6` come only from ConfigState
 `retrieve-asset-interface-ip-address` rows that already carry a real prefix
 (`address` + `mask_length`):
 
@@ -412,8 +412,9 @@ Device `primary_ip4` / `primary_ip6` prefer ConfigState
 2. else IPs on interfaces flagged `management_port` in port capabilities
 3. else an interface IP whose host matches the Assets management address
 
-Assets `ip_address` is only used when it already includes a prefix length.
-Bare Assets hosts are never padded with `/32` or `/128`.
+Assets `ip_address` is a bare host (OpenAPI: dotted decimal). It is used only
+to *match* a ConfigState interface IP in step 3 — never asserted as Device
+`primary_ip*`, and never padded with `/32` or `/128`.
 
 ### Switch ports
 
@@ -450,7 +451,10 @@ transformed from ConfigState tables joined on `asset_interface_id`
   assigned to the matching interface, using `address` + `mask_length`. Bare
   addresses without a prefix are skipped (no invented `/32` or `/128`). IPs on
   interfaces with no port/LAG row (e.g. SVIs) also emit a minimal `Interface`
-  first so the address has a real assigned object; `type` is `virtual`.
+  first so the address has a real assigned object; the Interface name comes
+  from vlan-properties / port / LAG rows joined on `asset_interface_id`
+  (`AssetInterfaceIpAddress` has no interface name in OpenAPI); `type` is
+  `virtual`.
 - **Speed, duplex, and connector use verified codes only.** ConfigState
   reports `oper_speed`, `oper_duplex`, and `connector_type` as integer codes
   with no value table in its OpenAPI spec. Only codes confirmed against

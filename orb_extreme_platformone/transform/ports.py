@@ -719,6 +719,7 @@ def _orphan_ip_entities(
     device: str,
     interface_ips: dict[str, list[dict]],
     emitted_keys: dict[str, str],
+    interface_names: dict[str, str],
 ) -> list[Entity]:
     """IPs on interfaces that got no Interface entity above (e.g. VLAN/SVI
     interfaces, which appear in vlan_properties but not the port tables).
@@ -726,16 +727,19 @@ def _orphan_ip_entities(
     Emits a minimal Interface first so the IPAddress has a real assigned
     object, then the IP entities. ``type=virtual`` for these non-port rows
     (SVIs); NetBox requires a non-blank type.
+
+    Interface names come from already-fetched port/LAG/VLAN rows keyed by
+    ``asset_interface_id``. ``AssetInterfaceIpAddress`` has no interface_name
+    field in OpenAPI — do not invent one from the IP row.
     """
     entities: list[Entity] = []
     emitted_names: set[str] = set()
     for key, rows in sorted(interface_ips.items()):
         if key in emitted_keys:
             continue
-        name = next((row["interface_name"] for row in rows if row.get("interface_name")), None)
+        name = interface_names.get(key)
         if not name:
             continue
-        name = str(name)
         if name not in emitted_names:
             interface_id = next(
                 (str(row["asset_interface_id"]) for row in rows if row.get("asset_interface_id")),
@@ -760,8 +764,29 @@ def _orphan_ip_entities(
     return entities
 
 
+def _interface_names_by_id(tables: dict[str, list[dict]]) -> dict[str, str]:
+    """Map asset_interface_id → interface name from port/LAG/VLAN rows.
+
+    Prefer port/LAG ``name``, then vlan-properties ``interface_name``. First
+    non-empty name wins so later tables do not rename an already-known id.
+    """
+    names: dict[str, str] = {}
+    for key in ("port_configs", "port_states", "lag_configs", "lag_states"):
+        for row in tables.get(key) or []:
+            interface_id = str(row.get("asset_interface_id") or "")
+            name = str(row.get("name") or "").strip()
+            if interface_id and name:
+                names.setdefault(interface_id, name)
+    for row in tables.get("vlan_properties") or []:
+        interface_id = str(row.get("asset_interface_id") or "")
+        name = str(row.get("interface_name") or "").strip()
+        if interface_id and name:
+            names.setdefault(interface_id, name)
+    return names
+
+
 # Row fields that carry a front-panel port name across the ConfigState port
-# tables (port/LAG `name`, vlan/IP/member `interface_name`, capabilities
+# tables (port/LAG `name`, vlan/member `interface_name`, capabilities
 # `port_name`). Normalized together so name-based joins stay consistent.
 _PORT_NAME_FIELDS = ("name", "interface_name", "port_name")
 
@@ -876,6 +901,11 @@ def ports_to_entities(
         )
     )
     entities.extend(
-        _orphan_ip_entities(device=device_ref, interface_ips=interface_ips, emitted_keys=emitted_keys)
+        _orphan_ip_entities(
+            device=device_ref,
+            interface_ips=interface_ips,
+            emitted_keys=emitted_keys,
+            interface_names=_interface_names_by_id(tables),
+        )
     )
     return entities
