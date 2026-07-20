@@ -630,8 +630,12 @@ def test_collect_interface_ids_includes_vlan_only_interfaces():
     }
 
 
-def test_bootstrap_true_without_netbox_creds_fails_closed():
+def test_bootstrap_true_without_netbox_creds_fails_closed(monkeypatch):
     """BOOTSTRAP must not silently no-op when NetBox credentials are missing."""
+    # Credentials fall back to the environment, so clear any ambient values
+    # (e.g. the Dev Container injects NETBOX_API_URL/NETBOX_API_TOKEN).
+    monkeypatch.delenv("NETBOX_API_URL", raising=False)
+    monkeypatch.delenv("NETBOX_API_TOKEN", raising=False)
     policy = Policy(
         config=Config(
             package="orb_extreme_platformone",
