@@ -1,4 +1,4 @@
-# Lean workspace image for package development.
+# Workspace image for the compose Dev Container.
 FROM docker.io/python:3.14-bookworm
 
 RUN apt-get update \

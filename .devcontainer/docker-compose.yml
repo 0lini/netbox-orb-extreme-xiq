@@ -1,10 +1,9 @@
-# Local NetBox + Diode for orb worker E2E.
-# Usage:
+# Local NetBox + Diode + Dev Container workspace.
+#
+# Dev Container: reopen in container (runs setup.sh, starts this compose).
+# Host only:
 #   ./.devcontainer/setup.sh
 #   docker compose -f .devcontainer/docker-compose.yml up -d --build
-#
-# The Dev Container is a separate Python workspace (see devcontainer.json);
-# it does not start this stack.
 
 name: orb-platformone-test
 
@@ -27,11 +26,11 @@ services:
       netbox-redis-cache:
         condition: service_started
     env_file: ./netbox/env/netbox.env
-    # Codespaces / *.app.github.dev UI access needs these CSRF origins.
     environment:
+      # Needed for Codespaces / *.app.github.dev UI form posts.
       CSRF_TRUSTED_ORIGINS: https://*.app.github.dev https://*.githubpreview.dev
     healthcheck:
-      # First boot runs migrations + Diode plugin install (can take several minutes).
+      # First boot: DB migrations + Diode plugin (can take several minutes).
       start_period: 900s
       timeout: 5s
       interval: 15s
@@ -113,6 +112,32 @@ services:
       timeout: 5s
       retries: 15
     restart: on-failure
+
+  # Same network as NetBox/Diode. Profile keeps `compose up` on the host lean.
+  workspace:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    working_dir: /workspaces/netbox-orb-extreme-platformone
+    volumes:
+      - ..:/workspaces/netbox-orb-extreme-platformone:z
+    environment:
+      NETBOX_API_URL: http://netbox:8080
+      DIODE_TARGET: grpc://ingress-nginx:80/diode
+      DIODE_CLIENT_ID: diode-ingest
+    env_file:
+      - path: ./.env.local
+        required: false
+    depends_on:
+      netbox:
+        condition: service_started
+      netbox-worker:
+        condition: service_started
+      ingress-nginx:
+        condition: service_started
+    command: sleep infinity
+    profiles:
+      - devcontainer
 
 volumes:
   netbox-media-files:

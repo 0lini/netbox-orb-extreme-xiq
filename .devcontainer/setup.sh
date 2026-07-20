@@ -322,30 +322,19 @@ cat <<EOF
 
 Setup complete.
 
-Next:
-  export PATH="\$HOME/.local/bin:/home/linuxbrew/.linuxbrew/bin:\$PATH"
   docker compose -f "$DEV/docker-compose.yml" up -d --build
+  ./.devcontainer/create-netbox-token.sh   # once NetBox is healthy
 
-NetBox:  http://localhost:8000  (admin / admin)
-Diode:   grpc://localhost:8080/diode
+NetBox http://localhost:8000 (admin/admin)  Diode grpc://localhost:8080/diode
+Secrets: $DEV/.env.local , $DEV/netbox/env/*.env , $CREDS
 
-After NetBox is healthy, create an API token for bootstrap:
-  ./.devcontainer/create-netbox-token.sh
-
-Credentials written to (gitignored):
-  $DEV/.env.local
-  $DEV/netbox/env/*.env
-  $CREDS
-Templates (safe to commit): $DEV/netbox/env/*.env.example
-
-Run the orb agent against this stack (from repo root):
+Orb agent (from repo root):
   set -a; source "$DEV/.env.local"; set +a
-  # also export PLATFORMONE_API_TOKEN=...
+  export PLATFORMONE_API_TOKEN=...
   docker run --rm --network host \\
     -v "\$PWD:/opt/orb/" \\
     -e INSTALL_WORKERS_PATH=/opt/orb/.devcontainer/workers.local.txt \\
     -e DIODE_CLIENT_ID -e DIODE_CLIENT_SECRET \\
-    -e PLATFORMONE_API_TOKEN \\
-    -e NETBOX_API_URL -e NETBOX_API_TOKEN \\
+    -e PLATFORMONE_API_TOKEN -e NETBOX_API_URL -e NETBOX_API_TOKEN \\
     netboxlabs/orb-agent:latest run -c /opt/orb/.devcontainer/agent.local.yaml
 EOF

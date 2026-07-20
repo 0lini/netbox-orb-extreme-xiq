@@ -1,29 +1,31 @@
-# Dev Container + optional NetBox/Diode stack
+# Local NetBox + Diode + Dev Container
 
-## Dev Container (default)
+One compose stack under `.devcontainer/`: NetBox (with Diode plugin), Diode, and
+a Python workspace. Codespaces / VS Code Dev Containers start it via
+`devcontainer.json` (no Docker-in-Docker required).
 
-Reopen in a Dev Container for a Python workspace (`pip install -e '.[dev]'`).
-It does **not** start NetBox or Diode.
+## Quick start
 
-## Local NetBox + Diode stack (optional E2E)
+**Dev Container / Codespaces:** reopen in container. `setup.sh` runs on the host
+first; compose brings up NetBox, Diode, and the workspace.
 
-Run on the **host** (Docker/Podman) when you need a real ingest path:
+**Host only:**
 
 ```bash
 ./.devcontainer/setup.sh
 docker compose -f .devcontainer/docker-compose.yml up -d --build
-./.devcontainer/create-netbox-token.sh
+./.devcontainer/create-netbox-token.sh   # after NetBox is up
 ```
 
 | Service | URL |
 |---------|-----|
-| NetBox UI | http://localhost:8000 (`admin` / `admin`) |
-| Diode gRPC | `grpc://localhost:8080/diode` |
+| NetBox | http://localhost:8000 (`admin` / `admin`) |
+| Diode | `grpc://localhost:8080/diode` |
+| In workspace | NetBox `http://netbox:8080`, Diode `grpc://ingress-nginx:80/diode` |
 
-Ports bind to **127.0.0.1** only. Secrets land in gitignored files under
-`.devcontainer/` (`.env.local`, `diode/.env`, `netbox/env/*.env`).
+Ports bind to **127.0.0.1** only. Secrets are gitignored under `.devcontainer/`.
 
-### Orb agent against the stack
+## Orb agent
 
 ```bash
 set -a; source .devcontainer/.env.local; set +a
@@ -40,20 +42,7 @@ docker run --rm --network host \
 
 Set `BOOTSTRAP: false` in `.devcontainer/agent.local.yaml` after the first run.
 
-### From inside the Dev Container
-
-With the stack up on the host, use `host.docker.internal` (the Dev Container
-adds this host mapping):
-
-- NetBox: `http://host.docker.internal:8000`
-- Diode: `grpc://host.docker.internal:8080/diode`
-
-### NetBox MCP
-
-After `./.devcontainer/create-netbox-token.sh`, `.cursor/mcp.json` launches
-`.devcontainer/netbox-mcp.sh` (reads `.env.local`).
-
-### Tear down
+## Tear down
 
 ```bash
 docker compose -f .devcontainer/docker-compose.yml down -v

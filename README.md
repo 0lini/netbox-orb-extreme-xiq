@@ -214,20 +214,17 @@ Full posture, local-stack caveats, and residual risks: [`SECURITY.md`](SECURITY.
 
 ### Local NetBox + Diode test stack
 
-Optional E2E stack (NetBox + Diode) and a lean Python Dev Container live under
-[`.devcontainer/`](.devcontainer/README.md).
+Compose stack + Dev Container under [`.devcontainer/`](.devcontainer/README.md)
+(NetBox, Diode, Python workspace). Codespaces starts it without Docker-in-Docker.
 
 ```bash
-# Dev Container: reopen in container (package work only)
-
-# E2E stack on the host:
 ./.devcontainer/setup.sh
 docker compose -f .devcontainer/docker-compose.yml up -d --build
 ./.devcontainer/create-netbox-token.sh
 ```
 
-Then run the Orb agent against `grpc://localhost:8080/diode` using
-`.devcontainer/agent.local.yaml`.
+Or reopen in a Dev Container / Codespace. Point Orb at
+`grpc://localhost:8080/diode` with `.devcontainer/agent.local.yaml`.
 
 ## Development
 

@@ -7,10 +7,9 @@ Platform ONE discovery worker for the NetBox Labs Orb Agent (extract →
 transform → Diode → NetBox). There is no in-repo frontend/backend service; the
 "application" is the worker package plus its standalone dry-run entrypoint.
 
-`.devcontainer/` has two parts:
-
-1. A lean Dev Container (Python workspace) for package development.
-2. An optional NetBox+Diode Docker Compose stack for full E2E ingest tests.
+`.devcontainer/` holds the optional local NetBox+Diode compose stack and the
+compose-based Dev Container (workspace on the same network). Codespaces uses
+`dockerComposeFile` — no Docker-in-Docker required.
 
 Standard commands are documented in `README.md`, `pyproject.toml`
 (`[tool.pytest.ini_options]`, `[tool.ruff]`) and `.github/workflows/ci.yml`.
@@ -34,8 +33,6 @@ Non-obvious notes:
   (`PLATFORMONE_USERNAME`/`PLATFORMONE_PASSWORD` or `PLATFORMONE_API_TOKEN`,
   read from env or a local `.env`). There is no offline/demo mode for it; use
   the pytest suite to validate pipeline logic without credentials.
-- Full E2E (`./.devcontainer/setup.sh` +
-  `docker compose -f .devcontainer/docker-compose.yml up`) requires Docker plus
-  real Platform ONE credentials and a Diode/NetBox target; it is optional and
-  not needed for package-level development. The Dev Container does not start
-  that stack automatically.
+- Full E2E (`./.devcontainer/setup.sh` + compose / Dev Container) requires
+  Docker plus real Platform ONE credentials; it is optional for package-level
+  development.
