@@ -25,7 +25,7 @@ or Docker not running.
 ### Full local reset
 
 ```bash
-bash ./.devcontainer/cleanup.sh --volumes --secrets
+bash ./.devcontainer/cleanup.sh --all
 bash ./.devcontainer/setup.sh
 docker compose -f .devcontainer/docker-compose.yml --profile '*' up -d --build
 ```
