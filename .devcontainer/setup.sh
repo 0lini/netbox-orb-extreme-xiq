@@ -325,8 +325,6 @@ Setup complete.
 Next:
   export PATH="\$HOME/.local/bin:/home/linuxbrew/.linuxbrew/bin:\$PATH"
   docker compose -f "$DEV/docker-compose.yml" up -d --build
-  # optional: omit the workspace service with:
-  #   docker compose -f "$DEV/docker-compose.yml" up -d --build --scale workspace=0
 
 NetBox:  http://localhost:8000  (admin / admin)
 Diode:   grpc://localhost:8080/diode

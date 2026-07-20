@@ -5,9 +5,12 @@
 This repo is a single Python package: `orb_extreme_platformone`, an Extreme
 Platform ONE discovery worker for the NetBox Labs Orb Agent (extract →
 transform → Diode → NetBox). There is no in-repo frontend/backend service; the
-"application" is the worker package plus its standalone dry-run entrypoint. An
-optional local NetBox+Diode Docker stack lives under `.devcontainer/` for full
-E2E.
+"application" is the worker package plus its standalone dry-run entrypoint.
+
+`.devcontainer/` has two parts:
+
+1. A lean Dev Container (Python workspace) for package development.
+2. An optional NetBox+Diode Docker Compose stack for full E2E ingest tests.
 
 Standard commands are documented in `README.md`, `pyproject.toml`
 (`[tool.pytest.ini_options]`, `[tool.ruff]`) and `.github/workflows/ci.yml`.
@@ -34,4 +37,5 @@ Non-obvious notes:
 - Full E2E (`./.devcontainer/setup.sh` +
   `docker compose -f .devcontainer/docker-compose.yml up`) requires Docker plus
   real Platform ONE credentials and a Diode/NetBox target; it is optional and
-  not needed for package-level development.
+  not needed for package-level development. The Dev Container does not start
+  that stack automatically.

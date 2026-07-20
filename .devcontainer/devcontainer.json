@@ -1,18 +1,16 @@
 {
-  "name": "Platform ONE Orb + NetBox/Diode",
-  "dockerComposeFile": ["docker-compose.yml"],
-  "service": "workspace",
-  "workspaceFolder": "/workspaces/netbox-orb-extreme-platformone",
-  "shutdownAction": "stopCompose",
-  "runServices": ["workspace"],
+  "name": "Platform ONE Orb worker",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "postCreateCommand": "pip install -e '.[dev]'",
+  "runArgs": ["--add-host=host.docker.internal:host-gateway"],
   "forwardPorts": [8000, 8080],
   "portsAttributes": {
-    "8000": { "label": "NetBox", "onAutoForward": "notify" },
-    "8080": { "label": "Diode", "onAutoForward": "silent" }
+    "8000": { "label": "NetBox (host stack)", "onAutoForward": "notify" },
+    "8080": { "label": "Diode (host stack)", "onAutoForward": "silent" }
   },
-  "initializeCommand": "./.devcontainer/setup.sh",
-  "postCreateCommand": "pip install -e '.[dev]'",
-  "postStartCommand": "echo NetBox: $NETBOX_API_URL  Diode: $DIODE_TARGET",
   "customizations": {
     "vscode": {
       "extensions": [

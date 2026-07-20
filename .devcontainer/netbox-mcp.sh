@@ -14,11 +14,13 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 
-# Prefer an explicit NETBOX_URL. Inside the Dev Container / compose network,
-# resolve via the `netbox` service DNS even if .env.local still says localhost.
+# Prefer an explicit NETBOX_URL. Resolve in order: compose DNS `netbox`,
+# host.docker.internal (Dev Container → host-published stack), then .env.local.
 if [[ -z "${NETBOX_URL:-}" ]]; then
   if getent hosts netbox >/dev/null 2>&1; then
     NETBOX_URL="http://netbox:8080"
+  elif getent hosts host.docker.internal >/dev/null 2>&1; then
+    NETBOX_URL="http://host.docker.internal:8000"
   else
     NETBOX_URL="${NETBOX_API_URL:-http://localhost:8000}"
   fi

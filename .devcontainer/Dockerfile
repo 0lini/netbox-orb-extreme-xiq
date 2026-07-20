@@ -1,8 +1,8 @@
-# Lean workspace image (avoid the Microsoft yarn apt source breakage).
+# Lean workspace image for package development.
 FROM docker.io/python:3.14-bookworm
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends jq curl git \
+  && apt-get install -y --no-install-recommends git curl jq \
   && rm -rf /var/lib/apt/lists/* \
   && pip install --no-cache-dir uv
 

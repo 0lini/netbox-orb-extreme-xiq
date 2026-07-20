@@ -15,7 +15,7 @@ public issue with live credentials, inventory exports, or exploit details.
 |---------|------|
 | `orb_extreme_platformone/` | Production worker: Platform ONE HTTP client, NetBox bootstrap REST, Diode entity mapping |
 | `agent.yaml` / `workers.txt` | Orb Agent policy + install path (env-substituted secrets) |
-| `.devcontainer/` | **Local demo only** — NetBox + Diode + workspace Dev Container; not a production deployment template |
+| `.devcontainer/` | Lean Python Dev Container + **optional** local NetBox/Diode compose stack (demo only; not a production template) |
 | `.github/workflows/ci.yml` | Lint + pytest on PRs |
 
 ---
@@ -101,7 +101,8 @@ plaintext secrets.
 ### Intended use
 
 Exercise the worker against a real Diode ingest path on a developer machine
-(Docker/Podman). See `.devcontainer/README.md`.
+(Docker/Podman). See `.devcontainer/README.md`. The Dev Container is a separate
+Python workspace and does not start this stack.
 
 ### Controls in place
 
@@ -114,9 +115,6 @@ Exercise the worker against a real Diode ingest path on a developer machine
   `BOOTSTRAP` back to `true`).
 - Diode nginx authenticates ingest/reconciler gRPC with `auth_request`.
 - NetBox Diode plugin secret is mounted read-only under `/run/secrets`.
-- Dev Container runs `./.devcontainer/setup.sh` as host `initializeCommand`
-  before compose starts; workspace image tags stay unpinned (rebuild when the
-  Dockerfile changes).
 - NetBox MCP launcher (`.devcontainer/netbox-mcp.sh`) embeds no secrets; it
   reads gitignored `.env.local` and pins the MCP package to a release tag.
 
@@ -162,8 +160,8 @@ Ordered by practical impact:
    `pyproject.toml` uses lower bounds only.
 5. Prefer **env-only secrets** in Orb policy (stop winning from `config:` for
    credential keys) if Orb can guarantee env substitution without YAML values.
-6. Align Codespaces/Dev Container **port visibility** to private/localhost
-   where the host product supports it (`forwardPorts` still present for IDE UX).
+6. Prefer **private/localhost** port visibility where the host product supports
+   it when forwarding NetBox/Diode ports from a remote IDE.
 
 ---
 
