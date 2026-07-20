@@ -28,6 +28,7 @@ def test_require_https_url_accepts_https_hosts(url):
         "http://127.0.0.1:8000",
         "http://[::1]:8000",
         "http://netbox.local",
+        "http://netbox:8080",
         " http://localhost:8000/ ",
     ],
 )

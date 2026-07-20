@@ -35,8 +35,9 @@ services:
       - ./netbox/plugins.py:/etc/netbox/config/plugins.py:z,ro
       - ./netbox/secrets:/run/secrets:z,ro
       - netbox-media-files:/opt/netbox/netbox/media:rw
+    # Loopback only — local demo stack must not listen on the LAN.
     ports:
-      - "8000:8080"
+      - "127.0.0.1:8000:8080"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -106,16 +107,16 @@ services:
     restart: on-failure
 
   # Dev Container / interactive workspace on the same network as NetBox + Diode.
+  # Image tags stay floating; rebuild with compose --build when the Dockerfile changes.
   workspace:
     build:
       context: ..
       dockerfile: .devcontainer/Dockerfile
-    image: orb-platformone-workspace:local
-    pull_policy: never
     working_dir: /workspaces/netbox-orb-extreme-platformone
     volumes:
       - ..:/workspaces/netbox-orb-extreme-platformone:z
     environment:
+      # Override host-oriented URLs from .env.local for in-network DNS.
       NETBOX_API_URL: http://netbox:8080
       DIODE_TARGET: grpc://ingress-nginx:80/diode
       DIODE_CLIENT_ID: diode-ingest
@@ -126,6 +127,8 @@ services:
     depends_on:
       netbox:
         condition: service_healthy
+      netbox-worker:
+        condition: service_started
       ingress-nginx:
         condition: service_started
     command: sleep infinity
