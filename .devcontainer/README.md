@@ -9,6 +9,19 @@ server** comes from the [official quickstart](https://github.com/netboxlabs/diod
 > `.devcontainer/` in new setups. If Cursor fails with that old path, pull
 > latest and use **Dev Containers: Rebuild Container**.
 
+### If Dev Container `initializeCommand` fails
+
+Cursor often shows only a generic error and hides the script output. On the
+**host** (repo root):
+
+```bash
+bash ./.devcontainer/setup.sh
+cat .devcontainer/setup.log
+```
+
+Common causes: missing `jq`, leftover Diode Docker volumes without secrets,
+or Docker not running.
+
 ## Quick start
 
 **Dev Container / Codespaces:** reopen in container (`initializeCommand` runs

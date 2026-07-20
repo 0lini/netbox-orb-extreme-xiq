@@ -10,6 +10,17 @@ NETBOX_SECRETS="$DEV/netbox/secrets"
 NETBOX_HOST="${NETBOX_HOST:-http://netbox:8080}"
 DIODE_QUICKSTART_URL="${DIODE_QUICKSTART_URL:-https://raw.githubusercontent.com/netboxlabs/diode/release/diode-server/docker/scripts/quickstart.sh}"
 
+# Log immediately — Cursor hides initializeCommand stderr, and early exits
+# (missing jq, etc.) previously left no file to inspect.
+SETUP_LOG="$DEV/setup.log"
+mkdir -p "$DEV"
+if [[ -z "${_ORB_SETUP_LOGGING:-}" ]]; then
+  export _ORB_SETUP_LOGGING=1
+  bash "$0" "$@" 2>&1 | tee "$SETUP_LOG"
+  exit "${PIPESTATUS[0]}"
+fi
+echo "Logging setup to $SETUP_LOG"
+
 generate_secret() {
   while true; do
     local s
@@ -61,16 +72,7 @@ if ((BASH_VERSINFO[0] < 4)); then
   exit 1
 fi
 
-# Persist output for Dev Containers (Cursor often hides initializeCommand stderr).
-SETUP_LOG="$DEV/setup.log"
-mkdir -p "$DEV" "$NETBOX_SECRETS" "$DEV/netbox/env" "$DIODE"
-if [[ -z "${_ORB_SETUP_LOGGING:-}" ]]; then
-  export _ORB_SETUP_LOGGING=1
-  # Re-exec so a tee'd log still preserves the real exit code.
-  bash "$0" "$@" 2>&1 | tee "$SETUP_LOG"
-  exit "${PIPESTATUS[0]}"
-fi
-echo "Logging setup to $SETUP_LOG"
+mkdir -p "$NETBOX_SECRETS" "$DEV/netbox/env" "$DIODE"
 
 # --- NetBox compose env (gitignored); keep existing so volumes stay valid ---
 NETBOX_ENV="$DEV/netbox/env/netbox.env"
