@@ -15,6 +15,7 @@ dry_run_output/
 # Local NetBox + Diode test stack (secrets + official Diode quickstart output)
 .devcontainer/.env.local
 .devcontainer/agent.local.yaml
+.devcontainer/setup.log
 .devcontainer/netbox/secrets/
 .devcontainer/netbox/env/*.env
 !.devcontainer/netbox/env/*.env.example
