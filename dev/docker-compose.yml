@@ -58,7 +58,7 @@ services:
     ports: []
 
   netbox-postgres:
-    image: docker.io/postgres:16-alpine
+    image: docker.io/postgres:18-alpine
     env_file: ./netbox/env/postgres.env
     volumes:
       - netbox-postgres-data:/var/lib/postgresql/data
@@ -90,7 +90,7 @@ services:
 
   # Rootless Podman: replace Diode's tmpfs initdb approach with a bind-mounted script.
   postgres:
-    image: docker.io/postgres:16-alpine
+    image: docker.io/postgres:18-alpine
     env_file: ./diode/.env
     # Clear upstream command that writes into a tmpfs initdir (broken under rootless Podman).
     entrypoint: ["docker-entrypoint.sh"]
