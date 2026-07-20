@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Create a NetBox API token for admin and store it in dev/.env.local
+# Create a NetBox API token for admin and store it in .devcontainer/.env.local
 #
 # Uses a v1 token so existing clients (Orb bootstrap, curl with
 # `Authorization: Token …`) keep working. NetBox 4.6 defaults to v2 Bearer tokens.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_LOCAL="$ROOT/dev/.env.local"
+ENV_LOCAL="$ROOT/.devcontainer/.env.local"
 
 if [[ ! -f "$ENV_LOCAL" ]]; then
-  echo "Run ./dev/setup.sh first" >&2
+  echo "Run ./.devcontainer/setup.sh first" >&2
   exit 1
 fi
 
@@ -17,7 +17,7 @@ if [[ -n "${NETBOX_CONTAINER:-}" ]]; then
   CONTAINER="$NETBOX_CONTAINER"
 else
   CONTAINER="$(
-    docker compose -f "$ROOT/dev/docker-compose.yml" ps -q netbox 2>/dev/null | head -n1
+    docker compose -f "$ROOT/.devcontainer/docker-compose.yml" ps -q netbox 2>/dev/null | head -n1
   )"
   if [[ -z "$CONTAINER" ]]; then
     CONTAINER="orb-platformone-test-netbox-1"

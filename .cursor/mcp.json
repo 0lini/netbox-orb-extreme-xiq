@@ -2,8 +2,8 @@
   "mcpServers": {
     "netbox": {
       "command": "bash",
-      "args": ["${workspaceFolder}/dev/netbox-mcp.sh"],
-      "envFile": "${workspaceFolder}/dev/.env.local"
+      "args": ["${workspaceFolder}/.devcontainer/netbox-mcp.sh"],
+      "envFile": "${workspaceFolder}/.devcontainer/.env.local"
     }
   }
 }

@@ -13,10 +13,10 @@ dry-run-output/
 dry_run_output/
 
 # Local NetBox + Diode test stack secrets / generated files
-dev/.env.local
-dev/diode/.env
-dev/diode/oauth2/client/client-credentials.json
-dev/netbox/secrets/
-dev/netbox/env/*.env
-!dev/netbox/env/*.env.example
-dev/agent.local.yaml
+.devcontainer/.env.local
+.devcontainer/diode/.env
+.devcontainer/diode/oauth2/client/client-credentials.json
+.devcontainer/netbox/secrets/
+.devcontainer/netbox/env/*.env
+!.devcontainer/netbox/env/*.env.example
+.devcontainer/agent.local.yaml

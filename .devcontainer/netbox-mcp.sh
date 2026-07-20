@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Launch the NetBox Labs read-only MCP server with local Orb stack credentials.
-# Maps NETBOX_API_* (dev/.env.local) to the NETBOX_URL / NETBOX_TOKEN names the
-# server expects. No secrets are embedded here.
+# Maps NETBOX_API_* (.devcontainer/.env.local) to the NETBOX_URL / NETBOX_TOKEN
+# names the server expects. No secrets are embedded here.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="${NETBOX_MCP_ENV_FILE:-$ROOT/dev/.env.local}"
+ENV_FILE="${NETBOX_MCP_ENV_FILE:-$ROOT/.devcontainer/.env.local}"
 
 if [[ -f "$ENV_FILE" ]]; then
   set -a
@@ -14,8 +14,7 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 
-# Prefer an explicit NETBOX_URL. Inside the Dev Container / compose network,
-# resolve via the `netbox` service DNS even if .env.local still says localhost.
+# Prefer an explicit NETBOX_URL; else compose DNS, then .env.local / localhost.
 if [[ -z "${NETBOX_URL:-}" ]]; then
   if getent hosts netbox >/dev/null 2>&1; then
     NETBOX_URL="http://netbox:8080"
@@ -27,7 +26,7 @@ export NETBOX_URL
 export NETBOX_TOKEN="${NETBOX_TOKEN:-${NETBOX_API_TOKEN:-}}"
 
 if [[ -z "${NETBOX_TOKEN}" ]]; then
-  echo "netbox-mcp: set NETBOX_API_TOKEN (e.g. source dev/.env.local) or NETBOX_TOKEN" >&2
+  echo "netbox-mcp: set NETBOX_API_TOKEN (e.g. source .devcontainer/.env.local) or NETBOX_TOKEN" >&2
   exit 1
 fi
 
