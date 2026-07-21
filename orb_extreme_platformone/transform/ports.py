@@ -586,10 +586,9 @@ def _physical_port_entities(
     lag_names: set[str],
     lag_interface_ids: set[str],
     membership: dict[str, str],
-) -> tuple[list[Entity], set[str], dict[str, str]]:
+) -> tuple[list[Entity], dict[str, str]]:
     """Emit physical (non-LAG) port interfaces joined on asset_interface_id."""
     entities: list[Entity] = []
-    emitted_port_names: set[str] = set(lag_names)
     emitted_keys: dict[str, str] = {}
 
     for key in sorted(set(configs) | set(states)):
@@ -618,7 +617,6 @@ def _physical_port_entities(
         if lag_parent:
             kwargs["lag"] = Interface(device=device, name=lag_parent, type="lag")
         entities.append(Entity(interface=Interface(**kwargs)))
-        emitted_port_names.add(name)
         emitted_keys[key] = name
         entities.extend(
             _ip_entities_for_interface(
@@ -629,7 +627,7 @@ def _physical_port_entities(
             )
         )
 
-    return entities, emitted_port_names, emitted_keys
+    return entities, emitted_keys
 
 
 def _orphan_ip_entities(
@@ -798,7 +796,7 @@ def ports_to_entities(
     )
     entities = list(lag_entities)
 
-    port_entities, _emitted_port_names, port_keys = _physical_port_entities(
+    port_entities, port_keys = _physical_port_entities(
         device=device_ref,
         configs=configs,
         states=states,

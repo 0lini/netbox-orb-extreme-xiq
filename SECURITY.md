@@ -39,7 +39,7 @@ public issue with live credentials, inventory exports, or exploit details.
 
 - Remote hosts require `https://`.
 - Plaintext `http://` is allowed only for loopback, `*.local`, and the
-  compose hostname `netbox` (local lab NetBox on a Docker network).
+  Docker hostname `netbox` (local lab NetBox on a Docker network).
 - Userinfo is rejected (`https://legit@evil.com`, `user:pass@host`) to block
   URL-confusion credential theft.
 - Query strings and fragments are rejected.

@@ -78,7 +78,6 @@ def _device_kwargs(
     site_name: str,
     location: Location | None,
     vc_membership: dict | None = None,
-    primary_ips: dict[str, str] | None = None,
 ) -> dict:
     custom_fields: dict = {}
     if asset.get("device_id") is not None:
@@ -112,11 +111,6 @@ def _device_kwargs(
     platform = platform_name(asset.get("function"), asset.get("os_version"))
     if platform:
         kwargs["platform"] = Platform(name=platform, manufacturer=MANUFACTURER)
-    # Primary IPs come only from ConfigState interface rows (with mask_length).
-    # Assets `ip_address` is a bare host (OpenAPI: dotted decimal) — never assert
-    # it as Device primary_ip*, and never invent /32 or /128.
-    if primary_ips:
-        kwargs.update(primary_ips)
     if vc_membership:
         # Include platformone_cluster_id so Diode matches the same VC as the
         # top-level entity (NetBox VirtualChassis.name is not unique).
@@ -191,7 +185,6 @@ def devices_to_entities(
     site_scope: set[str] | None = None,
     virtual_chassis_entities: list[Entity] | None = None,
     vc_memberships: dict[str, dict] | None = None,
-    primary_ips_by_cs_id: dict[str, dict[str, str]] | None = None,
 ) -> list[Entity]:
     """Map device records to Diode entities: one Site per distinct site, one
     nested Location per Building/Floor level in use, Devices, then
@@ -202,8 +195,8 @@ def devices_to_entities(
     directly with an unscoped list, pass `site_scope` here instead.
 
     `vc_memberships` is keyed by ConfigState device UUID (`cs_device_id`).
-    `primary_ips_by_cs_id` supplies Device primary_ip4/primary_ip6 from
-    ConfigState interface IPs (see `primary_ips_from_tables`). Assets
+    Primary IPs are applied separately via `primary_ip_device_entities` after
+    Interface/IPAddress entities (see backend tick ordering). Assets
     `ip_address` is bare and is never asserted as a primary IP.
 
     Devices with ``virtual_chassis`` / ``vc_position`` are emitted before the
@@ -243,13 +236,11 @@ def devices_to_entities(
         location = location_cache.get((site_name, tuple(location_path))) if location_path else None
         cs_device_id = record.get("cs_device_id")
         membership = (vc_memberships or {}).get(cs_device_id) if cs_device_id else None
-        primary_ips = (primary_ips_by_cs_id or {}).get(cs_device_id) if cs_device_id else None
         kwargs = _device_kwargs(
             record["asset"],
             site_name=site_name,
             location=location,
             vc_membership=membership,
-            primary_ips=primary_ips,
         )
         entities.append(Entity(device=Device(**kwargs)))
 

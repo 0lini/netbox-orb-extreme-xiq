@@ -17,7 +17,7 @@ import pytest
 import responses
 from worker.models import Config, Policy
 
-from orb_extreme_platformone.backend import INTERFACE_ID_TABLES, PORT_TABLES, WIRELESS_TABLES, Backend
+from orb_extreme_platformone.backend import INTERFACE_ID_TABLES, PORT_TABLES, Backend
 from orb_extreme_platformone.client import DEFAULT_BASE_URL, configstate_response_key
 from orb_extreme_platformone.extract.ports import collect_interface_ids
 from tests.conftest import CS_SWITCH, SWITCH_ASSET
@@ -58,11 +58,6 @@ def _mock_empty_port_and_lag_tables():
 def _mock_interface_id_tables_empty():
     """Empty mocks for interface-IP (fetched when interface UUIDs exist)."""
     for table, _ in INTERFACE_ID_TABLES.values():
-        _mock_cs(table, configstate_response_key(table), [])
-
-
-def _mock_empty_wireless_tables():
-    for table, _ in WIRELESS_TABLES.values():
         _mock_cs(table, configstate_response_key(table), [])
 
 

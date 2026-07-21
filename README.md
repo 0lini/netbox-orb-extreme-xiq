@@ -159,10 +159,11 @@ First-run procedure:
    NetBox token from the runtime environment once bootstrap has succeeded).
 
 Bootstrap uses the NetBox REST API directly because field definitions are
-schema rather than data; it skips gracefully when no NetBox token is set.
-Use a least-privilege NetBox token that can create/update custom fields and
-tags only — not a full superuser token — and keep it out of the scheduled
-worker once `BOOTSTRAP` is false.
+schema rather than data. When `BOOTSTRAP: true`, missing `NETBOX_API_URL` /
+`NETBOX_API_TOKEN` fail the tick (fail-closed). Use a least-privilege NetBox
+token that can create/update custom fields and tags only — not a full
+superuser token — and keep it out of the scheduled worker once `BOOTSTRAP`
+is false.
 
 > **Tip:** set `common.diode.dry_run: true` in `agent.yaml` first to inspect
 > the generated JSON before ingesting anything. Do **not** commit dry-run
@@ -196,8 +197,8 @@ same-named environment variable; policy config takes precedence.
 - **Base URL:** `https://cloudapi.extremecloudiq.com` by default; override
   with `PLATFORMONE_API_URL`. Both `PLATFORMONE_API_URL` and
   `NETBOX_API_URL` must be `https://` for remote hosts. Plaintext `http://`
-  is allowed only for local-dev hosts (loopback, `*.local`, compose
-  hostname `netbox`) when bootstrapping against a lab NetBox.
+  is allowed only for local-dev hosts (loopback, `*.local`, Docker hostname
+  `netbox`) when bootstrapping against a lab NetBox.
 
 ### Security notes
 
