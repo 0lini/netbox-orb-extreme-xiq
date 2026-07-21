@@ -897,7 +897,8 @@ def test_ports_to_entities_skips_lag_row_duplicated_in_port_tables(stub_sdk):
     assert ports[0]["name"] == "lag1"
     assert ports[0]["type"] == "lag"
     assert ports[0]["description"] == "core lag"
-    assert ports[0]["mark_connected"] is True
+    # NetBox rejects mark_connected on type=lag; omit it so the LAG applies.
+    assert "mark_connected" not in ports[0]
     assert ports[0]["primary_mac_address"] == "AA:BB:CC:DD:EE:99"
     assert "untagged_vlan" not in ports[0]
     assert "mode" not in ports[0]

@@ -469,8 +469,9 @@ Membership is taken from nested `member_ports` on **lag-config** rows only.
   joins on that interface id apply vlan-properties (untagged / tagged VLANs by
   `vid` + `name=str(vid)` and 802.1Q `mode`), PoE (`poe_mode`), and interface IP addresses the
   same way as for physical ports. When AssetPortConfig/State also returns the
-  LAG's `asset_interface_id`, description, `mark_connected`, and
-  `primary_mac_address` are taken from those rows;
+  LAG's `asset_interface_id`, description and
+  `primary_mac_address` are taken from those rows (`mark_connected` is
+  omitted — NetBox rejects it on `type=lag`);
   speed/duplex/connector type are not, so `type=lag` is never overwritten.
   Port-table duplicates are not emitted as a second Interface.
 - **Members** set Diode `Interface.lag` to the parent LAG (by device + name)

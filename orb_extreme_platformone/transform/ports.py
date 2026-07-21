@@ -448,9 +448,10 @@ def _lag_kwargs(
     in-service MLTs, and Diode maps an omitted bool to false). Shared joins
     on that interface id fill VLAN trunk/access, PoE, and (separately)
     IPAddress entities. When port config/state also lists the
-    same id, pull fields lag tables lack (`description`, `mark_connected`,
-    MAC) — never speed/duplex/connector `type`, which would overwrite
-    `type=lag`. VLANs come only from vlan-properties.
+    same id, pull fields lag tables lack (`description`, MAC) — never
+    `mark_connected` (NetBox rejects it on type=lag) and never
+    speed/duplex/connector `type`, which would overwrite `type=lag`. VLANs
+    come only from vlan-properties.
 
     AssetLagConfig also carries LACP `mode` / `lacp_key` / `load_balance_algo`
     / `dynamic`, but Diode's Interface has no matching fields and the mode /
@@ -474,9 +475,9 @@ def _lag_kwargs(
     if port_config and port_config.get("description"):
         kwargs["description"] = port_config["description"]
     if port_state:
-        oper_state = port_state.get("oper_state")
-        if oper_state is not None:
-            kwargs["mark_connected"] = oper_state == OPER_STATE_UP
+        # Do not assert mark_connected on LAG parents: NetBox rejects
+        # "LAG interfaces cannot be marked as connected" and the whole
+        # change set (including CF / VLAN / MAC) fails to apply.
         mac = _normalized_mac(port_state.get("mac_address"))
         if mac:
             kwargs["primary_mac_address"] = mac
