@@ -171,4 +171,4 @@ def stub_sdk(monkeypatch):
 
 def cf(custom_field_value_kw: dict):
     """Unwrap a stubbed CustomFieldValue's kwargs back to its plain scalar."""
-    return custom_field_value_kw.get("text", custom_field_value_kw.get("json"))
+    return custom_field_value_kw["text"]

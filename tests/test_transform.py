@@ -103,14 +103,17 @@ def test_devices_to_entities_ignores_assets_ip_even_with_prefix(stub_sdk):
     assert "primary_ip6" not in device
 
 
-def test_devices_to_entities_uses_configstate_primary_ips_by_cs_id(stub_sdk):
-    entities = transform.devices_to_entities(
+def test_primary_ip_device_entities_sets_configstate_primary_ips(stub_sdk):
+    entities = transform.primary_ip_device_entities(
         [_record()],
         primary_ips_by_cs_id={"cs-uuid-42": {"primary_ip4": "10.0.0.2/24"}},
     )
 
-    device = entities[-1]._kw["device"]._kw
+    assert len(entities) == 1
+    device = entities[0]._kw["device"]._kw
     assert device["primary_ip4"] == "10.0.0.2/24"
+    assert device["name"] == "sw-idf1"
+    assert "serial" not in device
 
 
 def test_primary_ips_from_tables_prefers_is_primary():
@@ -894,7 +897,8 @@ def test_ports_to_entities_skips_lag_row_duplicated_in_port_tables(stub_sdk):
     assert ports[0]["name"] == "lag1"
     assert ports[0]["type"] == "lag"
     assert ports[0]["description"] == "core lag"
-    assert ports[0]["mark_connected"] is True
+    # NetBox rejects mark_connected on type=lag; omit it so the LAG applies.
+    assert "mark_connected" not in ports[0]
     assert ports[0]["primary_mac_address"] == "AA:BB:CC:DD:EE:99"
     assert "untagged_vlan" not in ports[0]
     assert "mode" not in ports[0]

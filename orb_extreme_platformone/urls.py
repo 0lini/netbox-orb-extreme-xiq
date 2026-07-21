@@ -6,7 +6,7 @@ import ipaddress
 from urllib.parse import urlparse
 
 # Plaintext http:// is only allowed for these hostnames (plus loopback IPs
-# and *.local). The compose service name ``netbox`` is listed explicitly —
+# and *.local). The Docker service hostname ``netbox`` is listed explicitly —
 # do not treat every single-label name as safe.
 _LOCAL_HTTP_HOSTS = frozenset({"localhost", "netbox"})
 
@@ -15,7 +15,7 @@ def _is_local_dev_host(hostname: str | None) -> bool:
     """True for loopback and explicitly allowlisted local-dev hostnames.
 
     Allows plaintext ``http://`` only when tokens cannot leave the machine
-    (loopback, ``*.local`` mDNS, or a compose ``netbox`` service).
+    (loopback, ``*.local`` mDNS, or a local Docker ``netbox`` hostname).
     Public/remote hosts still require HTTPS.
     """
     if not hostname:
