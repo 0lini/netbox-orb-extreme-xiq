@@ -141,17 +141,30 @@ def primary_ips_from_tables(
     return {}
 
 
-# ConfigState reports oper_speed / oper_duplex / connector_type as integer
-# codes with no value table in its OpenAPI spec. Only codes verified against
-# production hardware (or fixtures derived from that gear) are mapped;
-# unknown codes assert nothing. Admin `enabled` and link `mark_connected`
-# (from IF-MIB-style oper_state) are both asserted so admin-down vs link-down
-# stay distinguishable.
+# ConfigState reports oper_speed / connector_type as integer codes with no
+# OpenAPI value table; only codes verified against production hardware (or
+# fixtures derived from that gear) are mapped. Duplex and PoE classification
+# enums are verified from the Platform ONE data model (see README).
+# Admin `enabled` and link `mark_connected` (IF-MIB-style oper_state) are
+# both asserted so admin-down vs link-down stay distinguishable.
 #
-# Verified in-repo today: oper_speed 4, oper_duplex 2, connector_type 1/2.
-# Config-side speed/duplex integers remain unverified and are not used.
+# Verified in-repo today: oper_speed 4, connector_type 1/2.
+# Config-side speed integers remain unverified and are not used as fallbacks.
 VERIFIED_OPER_SPEED_KBPS = {4: 1_000_000}
-VERIFIED_DUPLEX = {2: "full"}
+# retrieve-asset-port-state.oper_duplex / retrieve-asset-port-config.duplex:
+# 0=UNSET, 1=HALF_DUPLEX, 2=FULL_DUPLEX, 3=NONE, 4=AUTO. Prefer oper_duplex;
+# config duplex is fallback when oper is unset. AUTO is config-only.
+VERIFIED_OPER_DUPLEX = {1: "half", 2: "full"}
+VERIFIED_CONFIG_DUPLEX = {1: "half", 2: "full", 4: "auto"}
+# retrieve-asset-poe-power-ports-config.classification → Diode poe_type.
+# 0=UNSET, 1=AF, 2=AF_HIGH, 3=AT, 4=BT_TYPE3, 5=BT_TYPE4, 6=PRE_AT, 7=PRE_BT.
+# Diode only accepts IEEE type1–4 / passive; AF_HIGH and PRE_* are omitted.
+VERIFIED_POE_CLASSIFICATION = {
+    1: "type1-ieee802.3af",
+    3: "type2-ieee802.3at",
+    4: "type3-ieee802.3bt",
+    5: "type4-ieee802.3bt",
+}
 OPER_STATE_UP = 1
 
 # (oper_speed, connector_type) -> NetBox interface type. connector_type:
@@ -280,11 +293,29 @@ def _poe_mode(state: dict) -> str | None:
     """NetBox poe_mode=pse when AssetPoePowerPortsState.supported is true.
 
     ``AssetPoePowerPortsConfig.enable`` is not used: admin enable alone does
-    not mean the port is a PSE. classification/standard → poe_type is
-    intentionally not mapped (no verified OpenAPI value table).
+    not mean the port is a PSE.
     """
     if state.get("supported") is True:
         return "pse"
+    return None
+
+
+def _poe_type(config: dict) -> str | None:
+    """Map AssetPoePowerPortsConfig.classification to Diode poe_type."""
+    code = _coerce_int(config.get("classification"))
+    if code is None:
+        return None
+    return VERIFIED_POE_CLASSIFICATION.get(code)
+
+
+def _duplex(state: dict, config: dict) -> str | None:
+    """Prefer oper_duplex; fall back to config duplex when oper is unset."""
+    oper = _coerce_int(state.get("oper_duplex"))
+    if oper is not None and oper in VERIFIED_OPER_DUPLEX:
+        return VERIFIED_OPER_DUPLEX[oper]
+    cfg = _coerce_int(config.get("duplex"))
+    if cfg is not None and cfg in VERIFIED_CONFIG_DUPLEX:
+        return VERIFIED_CONFIG_DUPLEX[cfg]
     return None
 
 
@@ -305,6 +336,7 @@ def _iface_base_kwargs(
     interface_id: str | None,
     config: dict,
     poe_state: dict | None = None,
+    poe_config: dict | None = None,
 ) -> dict:
     """Shared identity / admin / PoE fields for physical ports and LAG parents."""
     kwargs = _interface_identity_kwargs(
@@ -316,6 +348,9 @@ def _iface_base_kwargs(
     poe = _poe_mode(poe_state or {})
     if poe is not None:
         kwargs["poe_mode"] = poe
+    poe_type = _poe_type(poe_config or {})
+    if poe_type is not None:
+        kwargs["poe_type"] = poe_type
     return kwargs
 
 
@@ -329,6 +364,7 @@ def _port_kwargs(
     vlan_records: list[dict],
     capability: dict | None = None,
     poe_state: dict | None = None,
+    poe_config: dict | None = None,
 ) -> dict:
     kwargs = _iface_base_kwargs(
         device=device,
@@ -336,6 +372,7 @@ def _port_kwargs(
         interface_id=interface_id,
         config=config,
         poe_state=poe_state,
+        poe_config=poe_config,
     )
 
     # Link state maps to mark_connected, never to `enabled` -- admin state is
@@ -347,7 +384,7 @@ def _port_kwargs(
     speed = VERIFIED_OPER_SPEED_KBPS.get(state.get("oper_speed"))
     if speed is not None:
         kwargs["speed"] = speed
-    duplex = VERIFIED_DUPLEX.get(state.get("oper_duplex"))
+    duplex = _duplex(state, config)
     if duplex is not None:
         kwargs["duplex"] = duplex
     # NetBox requires type; verified speed+connector wins, else ``other``.
@@ -436,6 +473,7 @@ def _lag_kwargs(
     config: dict,
     vlan_records: list[dict],
     poe_state: dict | None = None,
+    poe_config: dict | None = None,
     port_config: dict | None = None,
     port_state: dict | None = None,
 ) -> dict:
@@ -454,11 +492,10 @@ def _lag_kwargs(
     come only from vlan-properties.
 
     AssetLagConfig also carries LACP `mode` / `lacp_key` / `load_balance_algo`
-    / `dynamic`, but Diode's Interface has no matching fields and the mode /
-    algo integers have no published value table — leave them unmapped (see
-    README). `lag_number` is unused for NetBox naming (switches always supply
-    `name`); it is not a second custom field (redundant with
-    `platformone_interface_id`).
+    / `dynamic` with verified integer enums (see README), but Diode's Interface
+    has no matching LACP fields — leave them unmapped. `lag_number` is unused
+    for NetBox naming (switches always supply `name`); it is not a second
+    custom field (redundant with `platformone_interface_id`).
     """
     kwargs = _iface_base_kwargs(
         device=device,
@@ -466,6 +503,7 @@ def _lag_kwargs(
         interface_id=interface_id,
         config=config,
         poe_state=poe_state,
+        poe_config=poe_config,
     )
     kwargs["type"] = "lag"
     kwargs["enabled"] = _lag_admin_enabled(port_config)
@@ -522,6 +560,7 @@ def _lag_entities(
     lag_states: list[dict],
     vlans: dict[str, list[dict]],
     poe_states: dict[str, list[dict]],
+    poe_configs: dict[str, list[dict]],
     interface_ips: dict[str, list[dict]],
     port_configs: dict[str, list[dict]] | None = None,
     port_states: dict[str, list[dict]] | None = None,
@@ -557,6 +596,7 @@ def _lag_entities(
             config=config,
             vlan_records=_vlan_records_for(vlans, interface_id=key),
             poe_state=_optional_first_row(poe_states, key, table="poe_states"),
+            poe_config=_optional_first_row(poe_configs, key, table="poe_configs"),
             port_config=_optional_first_row(port_configs, key, table="port_configs"),
             port_state=_optional_first_row(port_states, key, table="port_states"),
         )
@@ -583,6 +623,7 @@ def _physical_port_entities(
     vlans: dict[str, list[dict]],
     capabilities: dict[tuple[str, str], dict],
     poe_states: dict[str, list[dict]],
+    poe_configs: dict[str, list[dict]],
     interface_ips: dict[str, list[dict]],
     lag_names: set[str],
     lag_interface_ids: set[str],
@@ -613,6 +654,7 @@ def _physical_port_entities(
             vlan_records=_vlan_records_for(vlans, interface_id=key),
             capability=capabilities.get((port_device_id, name)),
             poe_state=_optional_first_row(poe_states, key, table="poe_states"),
+            poe_config=_optional_first_row(poe_configs, key, table="poe_configs"),
         )
         lag_parent = membership.get(name)
         if lag_parent:
@@ -749,7 +791,7 @@ def ports_to_entities(
 
     `tables` holds the device's "port_configs", "port_states",
     "vlan_properties", "lag_configs", "lag_states", optional
-    "port_capabilities", "poe_states", and "interface_ips"
+    "port_capabilities", "poe_states", "poe_configs", and "interface_ips"
     rows. Physical ports are the union of config+state rows joined on
     asset_interface_id. LAG interfaces come from lag
     config/state (type `lag`); member ports get Diode `Interface.lag`
@@ -781,6 +823,7 @@ def ports_to_entities(
     vlans = _by_key(vlan_rows)
     capabilities = _capabilities_by_port(tables.get("port_capabilities") or [])
     poe_states = _by_key(tables.get("poe_states") or [])
+    poe_configs = _by_key(tables.get("poe_configs") or [])
     interface_ips = _by_key(tables.get("interface_ips") or [])
     lag_configs = tables.get("lag_configs") or []
     lag_states = tables.get("lag_states") or []
@@ -791,6 +834,7 @@ def ports_to_entities(
         lag_states=lag_states,
         vlans=vlans,
         poe_states=poe_states,
+        poe_configs=poe_configs,
         interface_ips=interface_ips,
         port_configs=configs,
         port_states=states,
@@ -804,6 +848,7 @@ def ports_to_entities(
         vlans=vlans,
         capabilities=capabilities,
         poe_states=poe_states,
+        poe_configs=poe_configs,
         interface_ips=interface_ips,
         lag_names=lag_names,
         lag_interface_ids=lag_interface_ids,

@@ -430,6 +430,7 @@ def test_ports_to_entities_maps_poe_mode_pse_when_supported(stub_sdk):
         "supported": True,
     }
     poe_config = {
+        "device_id": "cs-uuid-42",
         "asset_interface_id": "if-uuid-1",
         "interface_name": "1/1",
         "enable": False,
@@ -442,7 +443,7 @@ def test_ports_to_entities_maps_poe_mode_pse_when_supported(stub_sdk):
 
     port = entities[0]._kw["interface"]._kw
     assert port["poe_mode"] == "pse"
-    assert "poe_type" not in port
+    assert port["poe_type"] == "type1-ieee802.3af"
 
 
 def test_ports_to_entities_omits_poe_when_not_supported(stub_sdk):
@@ -466,14 +467,84 @@ def test_ports_to_entities_ignores_poe_config_enable_without_supported(stub_sdk)
         "asset_interface_id": "if-uuid-1",
         "supported": False,
     }
-    # poe_configs are no longer fetched; even if present in tables, ignored.
-    poe_config = {"asset_interface_id": "if-uuid-1", "enable": True}
+    poe_config = {"asset_interface_id": "if-uuid-1", "enable": True, "classification": 3}
     entities = transform.ports_to_entities(
         _tables(vlan_properties=[], poe_states=[poe_state], poe_configs=[poe_config]),
         device="sw-idf1",
     )
 
-    assert "poe_mode" not in entities[0]._kw["interface"]._kw
+    port = entities[0]._kw["interface"]._kw
+    assert "poe_mode" not in port
+    assert port["poe_type"] == "type2-ieee802.3at"
+
+
+def test_ports_to_entities_maps_poe_classification_bt_and_omits_unmapped(stub_sdk):
+    """IEEE BT maps to Diode poe_type; AF_HIGH / PRE_* have no Diode value."""
+    poe_state = {
+        "device_id": "cs-uuid-42",
+        "asset_interface_id": "if-uuid-1",
+        "supported": True,
+    }
+    for classification, expected in (
+        (4, "type3-ieee802.3bt"),
+        (5, "type4-ieee802.3bt"),
+        (2, None),
+        (6, None),
+        (7, None),
+        (0, None),
+    ):
+        poe_config = {"asset_interface_id": "if-uuid-1", "classification": classification}
+        port = (
+            transform.ports_to_entities(
+                _tables(vlan_properties=[], poe_states=[poe_state], poe_configs=[poe_config]),
+                device="sw-idf1",
+            )[0]
+            ._kw["interface"]
+            ._kw
+        )
+        if expected is None:
+            assert "poe_type" not in port
+        else:
+            assert port["poe_type"] == expected
+
+
+def test_ports_to_entities_maps_oper_duplex_half(stub_sdk):
+    state = {**PORT_STATE, "oper_duplex": 1}
+    port = (
+        transform.ports_to_entities(_tables(port_states=[state], vlan_properties=[]), device="sw-idf1")[0]
+        ._kw["interface"]
+        ._kw
+    )
+    assert port["duplex"] == "half"
+
+
+def test_ports_to_entities_falls_back_to_config_duplex_auto(stub_sdk):
+    """When oper_duplex is unset, config duplex (incl. AUTO) is used."""
+    state = {**PORT_STATE, "oper_duplex": 0}
+    config = {**PORT_CONFIG, "duplex": 4}
+    port = (
+        transform.ports_to_entities(
+            _tables(port_configs=[config], port_states=[state], vlan_properties=[]),
+            device="sw-idf1",
+        )[0]
+        ._kw["interface"]
+        ._kw
+    )
+    assert port["duplex"] == "auto"
+
+
+def test_ports_to_entities_prefers_oper_duplex_over_config(stub_sdk):
+    state = {**PORT_STATE, "oper_duplex": 2}
+    config = {**PORT_CONFIG, "duplex": 1}
+    port = (
+        transform.ports_to_entities(
+            _tables(port_configs=[config], port_states=[state], vlan_properties=[]),
+            device="sw-idf1",
+        )[0]
+        ._kw["interface"]
+        ._kw
+    )
+    assert port["duplex"] == "full"
 
 
 def test_ports_to_entities_does_not_use_native_vlan_without_vlan_properties(stub_sdk):

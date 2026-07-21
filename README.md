@@ -38,10 +38,10 @@ Platform ONE (Assets + ConfigState)
 |---------------------|----------------|
 | Devices (Assets API) | `Device` — name (Assets `host_name` when present), serial, status (`active`/`offline`; unknown → `active`, Meraki-style), role (from Assets `function` when present; no static default), device type and manufacturer, platform (OS family + version), primary IPv4/IPv6 from ConfigState interface IPs (Assets `ip_address` is match-only), provenance tags, `platformone_device_id` custom field |
 | Device locations (ConfigState) | `Site` (optional latitude/longitude) plus a nested `Location` chain (building → floor), falling back to the Assets API's flat site name |
-| Switch ports (ConfigState) | `Interface` — name, admin state (`enabled`), link state (`mark_connected`), speed/duplex (verified codes), `type` (verified codes else `other`), description, MAC (uppercase), `mgmt_only`, `poe_mode`, untagged/tagged VLANs with 802.1Q `mode`, `platformone_interface_id` custom field |
+| Switch ports (ConfigState) | `Interface` — name, admin state (`enabled`), link state (`mark_connected`), speed/duplex (verified codes), `type` (verified codes else `other`), description, MAC (uppercase), `mgmt_only`, `poe_mode` / `poe_type`, untagged/tagged VLANs with 802.1Q `mode`, `platformone_interface_id` custom field |
 | VLAN membership (ConfigState) | Interface `untagged_vlan` / `tagged_vlans` by `vid` with `name=str(vid)` (NetBox requires a name; switch-local names are not site-scoped, so VID is the stable placeholder; named VLAN sync via `retrieve-asset-vlan-config` is not used) |
 | Interface IP addresses (ConfigState) | `IPAddress` — address + `mask_length`, `status` `active`, assigned to the matching interface (bare addresses without a prefix are skipped; SVI/orphan IPs also emit a minimal Interface named from vlan/port/LAG rows) |
-| Link aggregation (ConfigState) | `Interface` — LAG parent (`type=lag`, name, admin `enabled` from duplicate port-config or default up, VLAN trunk/access, `poe_mode` when joined, optional description/MAC from duplicate port rows, interface CFs); member ports use the same physical-port fields plus Diode `Interface.lag` |
+| Link aggregation (ConfigState) | `Interface` — LAG parent (`type=lag`, name, admin `enabled` from duplicate port-config or default up, VLAN trunk/access, `poe_mode`/`poe_type` when joined, optional description/MAC from duplicate port rows, interface CFs); member ports use the same physical-port fields plus Diode `Interface.lag` |
 | Inferred clusters (ConfigState) | `VirtualChassis` — name from peer names, master = primary member (`device_one`), member `vc_position`, provenance tags, `platformone_cluster_id` custom field |
 | AP radios (ConfigState) | `Interface` — radio name, admin `enabled`, `type` (`ieee802.11*` when known including `ieee802.11be`; else `other` without RF fields), `rf_role=ap` + `tx_power` / channel fields only on wireless types, `primary_mac_address` (BSSID, uppercase), linked `wireless_lans`, interface CFs |
 | SSIDs / WLANs (ConfigState) | `WirelessLAN` — `ssid`, `status` (`active`/`disabled`; unknown → `active`), `auth_type` / `auth_cipher` (unknown → `open` / `auto`, Meraki-style); deduped by SSID across APs (not site-scoped) |
@@ -99,7 +99,7 @@ they are not separate optional features you turn on or off.
 | Phase | Always? | What is called | Why it waits |
 |-------|---------|----------------|--------------|
 | 1. Inventory | Yes | Assets `POST /assets/v1/devices`; ConfigState `retrieve-asset-device`; `retrieve-asset-location` | — |
-| 2. Switch tables | When switches are in scope | Device-filtered port/LAG/VLAN/capabilities/PoE-state tables (`retrieve-asset-port-config`, `-port-state`, `-port-capabilities`, `-interface-vlan-properties`, `-lag-config`, `-lag-state`, `-poe-power-ports-state`). LAG membership comes from nested `member_ports` on lag-config/state rows. | Needs AssetDevice UUIDs from phase 1 |
+| 2. Switch tables | When switches are in scope | Device-filtered port/LAG/VLAN/capabilities/PoE tables (`retrieve-asset-port-config`, `-port-state`, `-port-capabilities`, `-interface-vlan-properties`, `-lag-config`, `-lag-state`, `-poe-power-ports-state`, `-poe-power-ports-config`). LAG membership comes from nested `member_ports` on lag-config/state rows. | Needs AssetDevice UUIDs from phase 1 |
 | 3. Interface extras | When phase 2 collected any `asset_interface_id`s | `retrieve-asset-interface-ip-address` | That table filters by interface UUID only (no device filter), so IDs must come from phase 2 |
 | 4. Wireless | When APs are in scope | `retrieve-asset-wireless-interface`, `-wireless-interface-state`, `-ssid-config`, `-ssid-state` | Needs AssetDevice UUIDs from phase 1 |
 | 5. Clusters | Yes (degrades if empty/fail) | `retrieve-inferred-device`, then `retrieve-inferred-cluster` twice (`device_one_id` / `device_two_id`) | Cluster member filters are InferredDevice UUIDs, not AssetDevice UUIDs |
@@ -419,9 +419,11 @@ transformed from ConfigState tables joined on `asset_interface_id`
 - **Management-only** comes from `AssetPortCapabilities.management_port`
   (`retrieve-asset-port-capabilities`).
 - **PoE mode** is `pse` when `AssetPoePowerPortsState.supported` is true;
-  otherwise omitted. Admin `enable` on PoE config is not used. PoE
-  `classification` / `standard` → `poe_type` is **not** mapped: those
-  integers have no verified value table in the OpenAPI spec.
+  otherwise omitted. Admin `enable` on PoE config is not used.
+  **PoE type** comes from `retrieve-asset-poe-power-ports-config`
+  `classification`: AF → `type1-ieee802.3af`, AT → `type2-ieee802.3at`,
+  BT_TYPE3/BT_TYPE4 → `type3`/`type4-ieee802.3bt`. AF_HIGH, PRE_AT, and
+  PRE_BT have no Diode `poe_type` value and are omitted.
 - **VLANs and 802.1Q mode** come only from
   `retrieve-asset-interface-vlan-properties`: `port_vlan` becomes the
   untagged VLAN, the nested VLAN map (minus the untagged VLAN) becomes the
@@ -442,16 +444,16 @@ transformed from ConfigState tables joined on `asset_interface_id`
   from vlan-properties / port / LAG rows joined on `asset_interface_id`
   (`AssetInterfaceIpAddress` has no interface name in OpenAPI); `type` is
   `virtual`.
-- **Speed, duplex, and connector use verified codes only.** ConfigState
-  reports `oper_speed`, `oper_duplex`, and `connector_type` as integer codes
-  with no value table in its OpenAPI spec. Only codes confirmed against
-  production hardware are mapped (`oper_speed 4` = 1 Gbit/s, `oper_duplex 2`
-  = full, `connector_type 1/2` = copper/fiber, yielding `1000base-t` /
-  `1000base-x-sfp`); unknown codes leave speed/duplex unset but set
-  Interface `type` to `other` (NetBox requires a non-blank type; same
-  fallback as AP radios / Meraki). Config-side `speed` /
-  `duplex` integers are likewise unverified and are not used as fallbacks.
-  MACs are uppercased (Meraki posture).
+- **Speed, duplex, and connector use verified codes only.** `oper_speed`
+  and `connector_type` have no OpenAPI value table; only codes confirmed
+  against production hardware are mapped (`oper_speed 4` = 1 Gbit/s,
+  `connector_type 1/2` = copper/fiber → `1000base-t` / `1000base-x-sfp`).
+  Unknown speed/connector codes leave speed unset but set Interface `type`
+  to `other` (NetBox requires a non-blank type). **Duplex** uses the
+  verified Platform ONE enum on `oper_duplex` (1 = half, 2 = full);
+  when oper is unset, config `duplex` is the fallback (also 4 = auto).
+  Config-side `speed` remains unverified and is not used. MACs are
+  uppercased (Meraki posture).
 
 ### LAG interfaces and membership
 
@@ -467,7 +469,7 @@ Membership is taken from nested `member_ports` on **lag-config** rows only.
   `platformone_interface_id` from `asset_interface_id` (the existing interface
   UUID CF). Shared
   joins on that interface id apply vlan-properties (untagged / tagged VLANs by
-  `vid` + `name=str(vid)` and 802.1Q `mode`), PoE (`poe_mode`), and interface IP addresses the
+  `vid` + `name=str(vid)` and 802.1Q `mode`), PoE (`poe_mode` / `poe_type`), and interface IP addresses the
   same way as for physical ports. When AssetPortConfig/State also returns the
   LAG's `asset_interface_id`, description and
   `primary_mac_address` are taken from those rows (`mark_connected` is
@@ -479,17 +481,16 @@ Membership is taken from nested `member_ports` on **lag-config** rows only.
   config/state/capability/PoE/VLAN data exists. Membership comes from
   lag-config `member_ports` only. Members with no port-config/state row are
   not stubbed.
-- **Not mapped (LACP / MLT extras):** AssetLagConfig also reports `mode`
-  (schema: STATIC / LACP / VLACP on Fabric Engine; STATIC / LACP /
-  HEALTH_CHECK on Switch Engine), `lacp_key` (string, VOSS only),
-  `load_balance_algo` (integer; VOSS always CUSTOM), and `dynamic`. Diode's
-  Interface exposes `lag` for membership and `mode` for **802.1Q**
-  access/tagged only — there is no `lacp_key`, load-balance, or LACP-mode
-  field. The `mode` / `load_balance_algo` integers have no published value
-  table in OpenAPI (same rule as unverified `oper_speed` codes), so they
-  are not guessed into `description` or invented custom fields. Revisit
-  when Platform ONE publishes enum tables or Diode/NetBox gains first-class
-  LACP attributes. Also not mapped: MLAG peer tables
+- **Not mapped (LACP / MLT extras):** AssetLagConfig also reports verified
+  enums for `mode` (0=UNSET, 1=STATIC, 2=LACP, 3=VLACP, 4=HEALTH_CHECK;
+  Fabric Engine: STATIC/LACP/VLACP; Switch Engine: STATIC/LACP/HEALTH_CHECK)
+  and `load_balance_algo` (0=UNSET, 1=L2, 2=L3, 3=L3_L4, 4=CUSTOM, 5=PORT;
+  Fabric Engine always CUSTOM), plus `lacp_key` (string, VOSS only) and
+  `dynamic`. Diode's Interface exposes `lag` for membership and `mode` for
+  **802.1Q** access/tagged only — there is no LACP-mode, load-balance, or
+  `lacp_key` field. Known enums are therefore left unmapped (not stuffed
+  into `description` or invented custom fields) until Diode/NetBox gains
+  first-class LACP attributes. Also not mapped: MLAG peer tables
   (`retrieve-asset-mlag-*`), RSMLT, or `InferredLag` (the asset lag tables
   already carry name, admin state, and membership under AssetDevice UUIDs).
   AssetLagState has no oper_state / MAC / speed of its own — those only
@@ -556,8 +557,9 @@ AssetDevice UUIDs, and transforms each complete in-scope pair to a NetBox
 
 Not mapped (no sensible Platform ONE source, or intentionally NetBox-owned):
 `description`, `domain`, `comments`, `owner`, Diode `metadata`, Device
-`vc_priority`. The OpenAPI `type` integer has no published value table, so
-it is not mapped.
+`vc_priority`. InferredCluster `type` is a verified enum (0=UNSET, 1=VIST
+Virtual Inter-Switch Trunking, 2=ISC Inter-Switch Connection), but Diode's
+`VirtualChassis` has no matching field, so it stays unmapped.
 
 ## Migrating from the XIQ worker
 
@@ -586,15 +588,15 @@ same objects instead of duplicating them.
 
 - LLDP neighbors → NetBox cables/topology
   (`retrieve-asset-lldp-neighbor-state` or `retrieve-inferred-physical-link`).
-- PoE draw / `poe_type` once classification and standard codes are verified
-  against live gear (`retrieve-asset-poe-power-ports-state`).
+- PoE draw (watts) from `retrieve-asset-poe-power-ports-state` once a NetBox
+  target is chosen; IEEE `poe_type` from classification is already mapped.
 - I-SID / Fabric-Attach service mapping
   (`retrieve-asset-l2-vsn-suni-config`, `-tuni-config`).
-- Extended verified enum tables (`oper_speed` / `oper_duplex` /
-  `connector_type` / wireless `radio_mode` / `encryption`) as more hardware
-  is observed.
+- Extended verified enum tables (`oper_speed` / `connector_type` / wireless
+  `radio_mode` / `encryption`) as more hardware is observed.
 - LACP attributes on LAG parents (`mode` / `lacp_key` / `load_balance_algo`)
-  once OpenAPI publishes integer enums or Diode/NetBox gains matching fields.
+  and InferredCluster `type` (VIST/ISC) once Diode/NetBox gains matching
+  fields (enums are already known).
 - MLAG peer correlation (`retrieve-asset-mlag-*`), if NetBox modeling for
   multi-chassis LAGs is needed beyond single-device LAG membership.
 - NetBox `rf_channel` string on radios, and WirelessLAN `scope_site`, once
