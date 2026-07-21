@@ -309,10 +309,17 @@ def _poe_type(config: dict) -> str | None:
 
 
 def _duplex(state: dict, config: dict) -> str | None:
-    """Prefer oper_duplex; fall back to config duplex when oper is unset."""
+    """Prefer oper_duplex; fall back to config duplex only when oper is unset.
+
+    Config fallback applies when ``oper_duplex`` is missing or UNSET (0).
+    NONE (3), AUTO (4), and unknown oper codes assert nothing — they must not
+    inherit configured half/full/auto.
+    """
     oper = _coerce_int(state.get("oper_duplex"))
     if oper is not None and oper in VERIFIED_OPER_DUPLEX:
         return VERIFIED_OPER_DUPLEX[oper]
+    if oper not in (None, 0):
+        return None
     cfg = _coerce_int(config.get("duplex"))
     if cfg is not None and cfg in VERIFIED_CONFIG_DUPLEX:
         return VERIFIED_CONFIG_DUPLEX[cfg]

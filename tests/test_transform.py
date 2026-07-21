@@ -533,6 +533,22 @@ def test_ports_to_entities_falls_back_to_config_duplex_auto(stub_sdk):
     assert port["duplex"] == "auto"
 
 
+def test_ports_to_entities_does_not_fallback_for_non_unset_oper_duplex(stub_sdk):
+    """NONE / unknown oper_duplex must not inherit configured duplex."""
+    config = {**PORT_CONFIG, "duplex": 1}
+    for oper_duplex in (3, 9):
+        state = {**PORT_STATE, "oper_duplex": oper_duplex}
+        port = (
+            transform.ports_to_entities(
+                _tables(port_configs=[config], port_states=[state], vlan_properties=[]),
+                device="sw-idf1",
+            )[0]
+            ._kw["interface"]
+            ._kw
+        )
+        assert "duplex" not in port
+
+
 def test_ports_to_entities_prefers_oper_duplex_over_config(stub_sdk):
     state = {**PORT_STATE, "oper_duplex": 2}
     config = {**PORT_CONFIG, "duplex": 1}
