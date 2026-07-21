@@ -7,7 +7,7 @@ Transform modules derive their entity table-key frozensets from these catalogs.
 from __future__ import annotations
 
 # {transform table key: (retrieve-* table, GetRequest device filter field)}.
-# vlan-properties and poe-state filter on `device_id`; all others use
+# vlan-properties and poe-state/config filter on `device_id`; all others use
 # `asset_device_id`. Extract buckets rows by whichever filter field the
 # catalog entry declares — no cross-field fallback.
 PORT_TABLES = {
@@ -18,6 +18,7 @@ PORT_TABLES = {
     "lag_states": ("asset-lag-state", "asset_device_id"),
     "port_capabilities": ("asset-port-capabilities", "asset_device_id"),
     "poe_states": ("asset-poe-power-ports-state", "device_id"),
+    "poe_configs": ("asset-poe-power-ports-config", "device_id"),
 }
 
 # Tables that only filter by asset_interface_id (no device filter). Fetched
